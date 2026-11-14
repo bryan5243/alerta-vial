@@ -1,0 +1,555 @@
+import { createMap } from './map-provider.js';
+import { parseLayerFile, summarize, importable } from './layers.js';
+import { fetchWaterways, KIND } from './osm-rivers.js';
+import { autoDetoursFor } from './nav.js';
+import { RIVER, ZSEV, LEVELS, STATUS, PTYPE, SEV, esc, ago, fmtTime, toast, ICON, waveSvg } from './common.js';
+
+const root = document.getElementById('root');
+let token = sessionStorage.getItem('av_token');
+let db = null, map = null, section = 'alert', editing = null, drawMode = null, drawCoords = [], drawShapes = [], pickShape = null, pending = {};
+
+const api = async (path, opts = {}) => {
+  const r = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...(opts.headers || {}) }, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const j = r.status === 204 ? {} : await r.json().catch(() => ({}));
+  if (r.status === 401) { token = null; sessionStorage.removeItem('av_token'); renderLogin(j.error); throw new Error('401'); }
+  if (!r.ok) { toast(j.error || 'Algo salió mal.', 'err'); throw new Error(j.error); }
+  return j;
+};
+
+/* ================= LOGIN ================= */
+function renderLogin(err) {
+  map = null;
+  root.innerHTML = `<div class="login"><form class="card" id="login">
+    <img src="/img/emovtt-logo.png" alt="EMOVTT Santa Rosa EP" style="height:64px;width:auto;margin:0 auto 18px;display:block">
+    <h1 style="margin-bottom:4px">Panel de administración</h1><p class="muted small" style="margin-bottom:20px">Alerta Vial · gestión de alertas, calles inundadas y desbordes</p>
+    <div class="field"><label for="u">Usuario</label><input id="u" autocomplete="username" value="admin"></div>
+    <div class="field"><label for="p">Contraseña</label><input id="p" type="password" autocomplete="current-password"><span class="err" id="lerr">${esc(err || '')}</span></div>
+    <button class="btn" style="width:100%">Entrar al panel</button>
+    <p class="small muted" style="margin-top:14px;text-align:center"><a href="/">Volver al mapa público</a></p></form></div>`;
+  document.getElementById('login').addEventListener('submit', async e => {
+    e.preventDefault();
+    const r = await fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user: e.target.u.value, password: e.target.p.value }) });
+    const j = await r.json();
+    if (!r.ok) { document.getElementById('lerr').textContent = j.error; return; }
+    token = j.token; sessionStorage.setItem('av_token', token); boot();
+  });
+}
+
+/* ================= SHELL ================= */
+const NAV = [
+  ['alert', 'Alerta', ICON.warn, 'Alerta'], ['points', 'Puntos críticos', ICON.pin, 'Puntos'], ['streets', 'Calles', ICON.drop, 'Calles'],
+  ['routes', 'Vías alternas', ICON.route, 'Vías'], ['rivers', 'Ríos', ICON.wave, 'Ríos'], ['zones', 'Desbordes', ICON.drop, 'Desbordes'], ['recommendations', 'Recomendaciones', ICON.info, 'Consejos'], ['reports', 'Reportes', ICON.inbox, 'Reportes'], ['layers', 'Capas', ICON.layers, 'Capas'], ['config', 'Configuración', ICON.settings, 'Ajustes'],
+];
+const HAS_MAP = { points: 1, streets: 1, routes: 1, rivers: 1, zones: 1, reports: 1, config: 1, layers: 1 };
+
+async function boot() {
+  try { db = await api('/api/admin/state'); } catch { return; }
+  renderShell();
+}
+function renderShell() {
+  const pend = (db.reports || []).filter(r => r.status === 'pendiente').length;
+  root.innerHTML = `<div class="app">
+    <nav class="side" aria-label="Secciones">
+      <div class="brand"><img src="/img/emovtt-logo-blanco.png" alt="EMOVTT Santa Rosa EP"><div>ALERTA VIAL<small>ADMINISTRACIÓN</small></div></div>
+      ${NAV.map(([k, l, i, sh]) => `<button class="navbtn ${k === section ? 'on' : ''}" data-s="${k}">${i}<span class="t"><span class="long">${l}</span><span class="short">${sh}</span></span>${k === 'reports' && pend ? `<span class="n">${pend}</span>` : ''}</button>`).join('')}
+      <div class="spacer"></div>
+      <a class="navbtn" href="/" target="_blank">${ICON.eye}<span class="t">Ver mapa público</span></a>
+      <button class="navbtn" id="logout">${ICON.logout}<span class="t">Salir</span></button>
+    </nav>
+    <div class="content">
+      <div class="topbar"><h2 id="title"></h2><span class="chip ${db.alert.effective}" id="top-level">${LEVELS[db.alert.effective]}</span><div class="spacer"></div><span class="small muted" id="top-weather"></span></div>
+      <div class="work ${HAS_MAP[section] ? '' : 'nomap'}"><div class="col" id="col"></div>${HAS_MAP[section] ? `<div class="mapcol"><div id="map"></div><div class="draw-tools" id="tools"></div><div class="draw-hint" id="hint"></div></div>` : ''}</div>
+    </div></div>`;
+  root.querySelectorAll('.navbtn[data-s]').forEach(b => b.addEventListener('click', () => { section = b.dataset.s; editing = null; cancelDraw(); renderShell(); }));
+  document.getElementById('logout').addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }).catch(() => {}); token = null; sessionStorage.removeItem('av_token'); renderLogin(); });
+  const w = db.weather; document.getElementById('top-weather').textContent = w.ok ? `${w.source}: ${w.rainNow} mm ahora · ${w.rainPast3h} mm/3h · sugiere ${LEVELS[db.alert.suggested]}` : 'Clima no disponible (sin conexión a Open-Meteo)';
+  map = null;
+  if (window.innerWidth <= 900) root.querySelector('.navbtn.on')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  if (HAS_MAP[section]) initMap().then(renderSection); else renderSection();
+}
+async function initMap() {
+  map = await createMap({ provider: db.config.mapProvider, el: document.getElementById('map'), center: db.config.center, zoom: db.config.zoom, googleKey: db.config.googleMapsKey });
+  map.onClick(onMapClick);
+}
+async function refresh() { db = await api('/api/admin/state'); document.getElementById('top-level').className = `chip ${db.alert.effective}`; document.getElementById('top-level').textContent = LEVELS[db.alert.effective]; renderSection(); }
+
+function renderSection() {
+  document.getElementById('title').textContent = NAV.find(n => n[0] === section)[1];
+  ({ alert: secAlert, points: secPoints, streets: secStreets, routes: secRoutes, rivers: secRivers, zones: secZones, recommendations: secRecs, reports: secReports, layers: secLayers, config: secConfig })[section]();
+}
+
+/* ================= ALERTA ================= */
+function secAlert() {
+  const a = db.alert, w = db.weather, cfg = db.config.weather, lm = db.config.levelMessages || {};
+  col(`
+    <div class="level-band ${a.effective}" style="border-radius:16px"><div class="lvl-icon">${a.effective === 'normal' ? ICON.check : ICON.warn}</div><div><div class="lvl-label">Publicado ahora: ${LEVELS[a.effective]}</div><div class="lvl-msg">${esc(lm[a.effective] || '')}${a.message ? ` · ${esc(a.message)}` : ''} · ${a.mode === 'auto' ? 'Modo automático' : 'Manual'}</div></div><div class="wave">${waveSvg}</div></div>
+    <div class="card">
+      <h3 style="margin-bottom:12px">Modo de activación</h3>
+      <div class="seg" role="radiogroup"><button class="${a.mode === 'auto' ? 'on' : ''}" data-mode="auto">Automático por clima</button><button class="${a.mode === 'manual' ? 'on' : ''}" data-mode="manual">Manual</button></div>
+      <p class="small muted" style="margin-top:10px">${a.mode === 'auto' ? `El nivel se calcula con Open-Meteo: ≥ ${cfg.rainThresholdMm} mm/h o ≥ ${cfg.rainThresholdMm3h} mm en 3 h activa alerta naranja; el triple activa roja. Ahora sugiere <b>${LEVELS[a.suggested]}</b>.` : 'Tú decides el nivel. El clima solo se muestra como referencia.'}</p>
+    </div>
+    <div class="card">
+      <h3 style="margin-bottom:12px">Nivel manual</h3>
+      <div class="lvl-grid">${Object.entries(LEVELS).map(([k, l]) => `<button class="lvl-opt ${a.level === k ? 'on' : ''}" data-level="${k}" ${a.mode === 'auto' ? 'disabled style="opacity:.5"' : ''}><span class="dot ${k}"></span>${l.replace('Alerta ', '')}</button>`).join('')}</div>
+    </div>
+    <div class="card">
+      <div class="section-head"><h3>Mensaje por color de alerta</h3></div>
+      <p class="small muted" style="margin:6px 0 14px">Cada color tiene su propio mensaje. El mapa público muestra el del nivel activo, sea automático o manual.</p>
+      ${Object.entries(LEVELS).map(([k, l]) => `<div class="field lvlmsg ${k === a.effective ? 'cur' : ''}"><label for="lm-${k}"><span class="dot ${k}"></span> ${l}${k === a.effective ? ' <span class="chip accent">publicado ahora</span>' : ''}</label><textarea id="lm-${k}" maxlength="300" rows="2">${esc(lm[k] || '')}</textarea></div>`).join('')}
+      <button class="btn" id="save-lm">Guardar mensajes</button>
+    </div>
+    <div class="card">
+      <div class="field"><label for="msg">Aviso adicional (opcional)</label><textarea id="msg" maxlength="300" placeholder="Ej. Evite circular por Av. Orellana entre 14:00 y 18:00.">${esc(a.message)}</textarea><span class="hint">Se muestra debajo del mensaje del color. Déjalo vacío si no hace falta.</span></div>
+      <button class="btn soft" id="save-msg">Guardar aviso</button>
+    </div>
+    ${w.ok ? `<div class="card"><h3 style="margin-bottom:10px">Clima observado · ${esc(w.source)}</h3><div class="kv"><b>Lluvia ahora</b><span>${w.rainNow} mm</span><b>Últimas 3 h</b><span>${w.rainPast3h} mm</span><b>Próximas 3 h</b><span>${w.rainNext3h} mm</span><b>Temperatura</b><span>${w.temperature} °C</span><b>Observado</b><span>${esc(w.observedAt)}</span></div></div>` : `<div class="card muted small">No hay conexión con Open-Meteo en este momento (${esc(w.error || '')}). El modo automático usará "Sin alerta" hasta recuperar datos; usa el modo manual si hay emergencia.</div>`}
+  `);
+  q('[data-mode]').forEach(b => b.onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { mode: b.dataset.mode } }); toast('Modo actualizado', 'ok'); refresh(); });
+  q('[data-level]').forEach(b => b.onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { level: b.dataset.level } }); toast(`Nivel: ${LEVELS[b.dataset.level]}`, 'ok'); refresh(); });
+  id('save-msg').onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { message: id('msg').value } }); toast('Aviso guardado', 'ok'); refresh(); };
+  id('save-lm').onclick = async () => { await api('/api/admin/config', { method: 'PUT', body: { levelMessages: Object.fromEntries(Object.keys(LEVELS).map(k => [k, id('lm-' + k).value])) } }); toast('Mensajes por color guardados', 'ok'); refresh(); };
+}
+
+/* ================= PUNTOS ================= */
+function secPoints() {
+  const e = editing || {};
+  col(`
+    <div class="card"><div class="section-head"><h3>${e.id ? 'Editar punto crítico' : 'Nuevo punto crítico'}</h3>${e.id ? `<button class="btn ghost sm" id="cancel">Cancelar</button>` : ''}</div>
+      <p class="small muted" style="margin:6px 0 14px">Haz clic en el mapa para ubicar el punto. Luego completa los datos.</p>
+      <form id="f" novalidate>
+        <div class="field"><label for="name">Nombre</label><input id="name" value="${esc(e.name || '')}" placeholder="Ej. Paso a desnivel Av. de las Américas"></div>
+        <div class="row"><div class="field"><label for="type">Tipo</label><select id="type">${opts(PTYPE, e.type || 'inundacion')}</select></div>
+        <div class="field"><label for="sev">Severidad</label><select id="sev">${opts(SEV, e.severity || 'alta')}</select></div></div>
+        <div class="field"><label for="desc">Descripción</label><textarea id="desc" placeholder="Qué pasa y qué debe hacer la gente">${esc(e.description || '')}</textarea></div>
+        <p class="small muted" id="pos" style="margin-bottom:12px">${e.lat != null ? `Ubicación: ${e.lat.toFixed(5)}, ${e.lng.toFixed(5)}` : 'Aún sin ubicación: toca el mapa.'}</p>
+        <div style="display:flex;gap:10px;align-items:center"><button class="btn">${e.id ? 'Guardar cambios' : 'Crear punto'}</button><label class="switch"><input type="checkbox" id="active" ${e.active !== false ? 'checked' : ''}> Activo ahora (visible y con aviso GPS)</label></div>
+        <label class="switch" style="margin-top:10px"><input type="checkbox" id="auto" ${e.auto ? 'checked' : ''}> Activarlo solo cuando la alerta sea naranja o roja</label>
+      </form></div>
+    <div class="section-head"><h3>Puntos registrados (${db.points.length})</h3>${db.points.length ? `<span class="small muted">${db.points.filter(p => p.active).length} activos ahora${db.alert.effective === 'naranja' || db.alert.effective === 'roja' ? ` · ${db.points.filter(p => !p.active && p.auto).length} encendidos por la alerta` : ''}</span>` : ''}</div>
+    ${db.points.length ? bulkBar('points', true) : ''}
+    ${db.points.length ? `<div class="card auto-card"><div><b>${ICON.route} Vías alternas automáticas</b><small>Para cada punto sin vía alterna, el sistema busca por las calles reales un desvío que no pase por ningún punto de riesgo. Cada vía queda ligada a su punto: aparece sola cuando el punto se activa.</small></div>
+      <button class="btn" id="auto-routes">${db.points.filter(p => !db.routes.some(r => r.avoids === p.id)).length ? `Generar para ${db.points.filter(p => !db.routes.some(r => r.avoids === p.id)).length} puntos` : 'Todos tienen vía alterna'}</button></div>` : ''}
+    <p class="small muted" style="margin:-4px 0 4px">Enciende el interruptor cuando el punto esté inundado: aparece en el mapa, el GPS avisa y se muestra su vía alterna.</p>
+    <div class="list">${db.points.length ? db.points.map(pointRow).join('') : emptyBox('Aún no hay puntos críticos. Toca el mapa para ubicar el primero, o conviértelos desde una capa KMZ en Capas.')}</div>`);
+  pending = { lat: e.lat, lng: e.lng };
+  drawMode = 'point'; setTools([]); hint('Toca el mapa para ubicar el punto crítico');
+  drawAll(); if (e.lat != null) setPick(e);
+  id('f').onsubmit = async ev => { ev.preventDefault(); const body = { name: id('name').value, type: id('type').value, severity: id('sev').value, description: id('desc').value, active: id('active').checked, auto: id('auto').checked, lat: pending.lat, lng: pending.lng };
+    await save('points', body); };
+  q('[data-pon]').forEach(cb => { cb.onclick = ev => ev.stopPropagation(); cb.onchange = async () => { await api(`/api/admin/points/${cb.dataset.pon}`, { method: 'PUT', body: { active: cb.checked } }); toast(cb.checked ? 'Punto activado: visible, con aviso GPS y su vía alterna' : 'Punto desactivado', 'ok'); refresh(); }; });
+  q('[data-mkroute]').forEach(b => b.onclick = ev => { ev.stopPropagation(); const p = db.points.find(x => x.id === b.dataset.mkroute); editing = { name: `Desvío por ${p.name}`, avoids: p.id, active: true }; section = 'routes'; renderShell(); setTimeout(() => map?.panTo(p, 17), 300); });
+  bindBulk('points');
+  if (id('auto-routes')) id('auto-routes').onclick = () => genAuto(db.points.filter(p => !db.routes.some(r => r.avoids === p.id)), id('auto-routes'));
+  q('[data-autoroute]').forEach(b => b.onclick = ev => { ev.stopPropagation(); genAuto([db.points.find(x => x.id === b.dataset.autoroute)], b); });
+  bindList('points');
+}
+
+// Genera y guarda vías alternas automáticas (OSRM) para los puntos indicados
+async function genAuto(points, btn) {
+  if (!points.length) { toast('Todos los puntos ya tienen vía alterna.', 'ok'); return; }
+  btn.disabled = true; let made = 0, none = [], i = 0;
+  for (const p of points) {
+    btn.textContent = `Generando ${++i} de ${points.length}…`;
+    let list = [];
+    try { list = await autoDetoursFor(p, db.points); } catch {}
+    if (!list.length) none.push(p.name);
+    for (const d of list) {
+      try { await api('/api/admin/routes', { method: 'POST', body: { name: `Desvío ${d.axis} · ${p.name}`, from: '', to: '', avoids: p.id, auto: true, active: true, coords: d.coords,
+        description: `Desvío automático que evita ${p.name}${d.extra > 30 ? ` (unos ${Math.round(d.extra / 10) * 10} m más)` : ''}.` } }); made++; } catch {}
+    }
+  }
+  toast(made ? `Se crearon ${made} vías alternas automáticas.${none.length ? ` Sin desvío posible para: ${none.slice(0, 3).join(', ')}${none.length > 3 ? '…' : ''}. Dibújalas a mano.` : ''}`
+    : 'No se pudo generar ninguna vía. Revisa la conexión a internet (usa el servicio de rutas de OpenStreetMap).', made ? 'ok' : 'err');
+  await refresh();
+}
+// Barra para activar o desactivar todo de una vez
+function bulkBar(kind, withAuto) {
+  return `<div class="bulk"><button class="btn soft sm" data-bulk="${kind}" data-v="1">${ICON.eye} Activar todos</button><button class="btn ghost sm" data-bulk="${kind}" data-v="0">${ICON.x} Desactivar todos</button>${withAuto ? `<button class="btn ghost sm" data-bulkauto="1" title="Todos se encienden solos cuando la alerta pase a naranja o roja">Auto con alerta naranja: todos</button><button class="btn ghost sm" data-bulkauto="0">Auto: ninguno</button>` : ''}</div>`;
+}
+function bindBulk(kind) {
+  q(`[data-bulk="${kind}"]`).forEach(b => b.onclick = async () => {
+    const on = b.dataset.v === '1';
+    if (!on && !confirm('¿Desactivar todos? Dejarán de verse en el mapa público y el GPS no avisará por ellos.')) return;
+    const r = await api(`/api/admin/${kind}/bulk`, { method: 'PUT', body: { active: on } }); toast(`${r.updated} ${on ? 'activados' : 'desactivados'}`, 'ok'); refresh();
+  });
+  q('[data-bulkauto]').forEach(b => b.onclick = async () => {
+    const on = b.dataset.bulkauto === '1';
+    const r = await api('/api/admin/points/bulk', { method: 'PUT', body: { auto: on } }); toast(on ? `${r.updated} puntos se activarán solos con alerta naranja o roja` : 'Activación automática quitada', 'ok'); refresh();
+  });
+}
+function pointRow(p) {
+  const rts = db.routes.filter(r => r.avoids === p.id);
+  const lit = !p.active && p.auto && ['naranja', 'roja'].includes(db.alert.effective);
+  return `<div class="item pt-row ${p.active || lit ? 'on' : 'inactive'}" data-focus-kind="points" data-focus="${p.id}"><span class="dot ${p.severity}" style="margin-top:6px"></span>
+    <div style="min-width:0;flex:1"><div class="title">${esc(p.name)}</div>
+      <div class="meta">${PTYPE[p.type] || ''}${p.auto ? ' · <span class="chip amarilla">se activa con alerta naranja/roja</span>' : ''}</div>
+      <div class="meta">${rts.length ? `${ICON.route} ${rts.length === 1 ? 'Vía alterna' : `${rts.length} vías alternas`}: ${rts.map(r => esc(r.name.replace(/ · .*$/, ''))).join(', ')}` : `<span class="pt-acts"><button class="btn soft sm" data-autoroute="${p.id}">${ICON.route} Generar automática</button><button class="btn ghost sm" data-mkroute="${p.id}">${ICON.edit} Dibujar a mano</button></span>`}</div></div>
+    <label class="pt-switch" title="${p.active ? 'Inundado: activo' : 'Sin agua: inactivo'}"><input type="checkbox" data-pon="${p.id}" ${p.active ? 'checked' : ''} aria-label="Activo ${esc(p.name)}"><span class="tg"></span><small>${p.active ? 'Activo' : lit ? 'Por alerta' : 'Inactivo'}</small></label>
+    <div class="acts"><button class="btn ghost" title="Editar" aria-label="Editar" data-edit="${p.id}">${ICON.edit}</button><button class="btn danger" title="Eliminar" aria-label="Eliminar" data-del="${p.id}">${ICON.trash}</button></div></div>`;
+}
+
+/* ================= CALLES / RUTAS ================= */
+function secStreets() { secLine('streets'); }
+function secRoutes() { secLine('routes'); }
+function secLine(kind) {
+  const e = editing || {}; const isStreet = kind === 'streets';
+  col(`
+    <div class="card"><div class="section-head"><h3>${e.id ? 'Editar' : 'Nueva'} ${isStreet ? 'calle inundada' : 'vía alterna'}</h3>${e.id ? `<button class="btn ghost sm" id="cancel">Cancelar</button>` : ''}</div>
+      <p class="small muted" style="margin:6px 0 10px">Pulsa <b>Dibujar</b> y toca el mapa en el inicio, en las esquinas por donde debe pasar y en el final. Con <b>Seguir las calles</b> la línea va sola por las calles reales entre cada toque.</p>
+      <label class="switch" style="margin-bottom:12px"><input type="checkbox" id="snap" ${snapOn ? 'checked' : ''}> Seguir las calles automáticamente</label>
+      <form id="f" novalidate>
+        <div class="field"><label for="name">Nombre</label><input id="name" value="${esc(e.name || '')}" placeholder="${isStreet ? 'Ej. Av. Francisco de Orellana (Carrión → Bonín)' : 'Ej. Desvío por Av. Benjamín Rosales'}"></div>
+        ${isStreet ? `<div class="row"><div class="field"><label for="status">Estado</label><select id="status">${opts(STATUS, e.status || 'inundada')}</select></div>
+          <div class="field"><label for="depth">Agua aprox. (cm)</label><input id="depth" type="number" min="0" max="300" value="${e.depthCm ?? ''}"></div></div>
+          <div class="field"><label for="note">Indicación</label><input id="note" value="${esc(e.note || '')}" placeholder="Ej. Cerrada en ambos sentidos. Use el paso superior."></div>`
+        : `<div class="row"><div class="field"><label for="from">Desde</label><input id="from" value="${esc(e.from || '')}" placeholder="Alborada"></div><div class="field"><label for="to">Hasta</label><input id="to" value="${esc(e.to || '')}" placeholder="Centro"></div></div>
+          <div class="field"><label for="avoids">Evita (punto crítico o calle)</label><select id="avoids"><option value="">— ninguno en particular —</option>
+            ${db.points.length ? `<optgroup label="Puntos críticos e intersecciones">${db.points.map(p => `<option value="${p.id}" ${e.avoids === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</optgroup>` : ''}
+            ${db.streets.length ? `<optgroup label="Calles">${db.streets.map(x => `<option value="${x.id}" ${e.avoids === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>` : ''}</select>
+            <span class="hint">Si eliges un punto o calle, esta vía solo aparece al público (y en el GPS) mientras ese punto esté activo.</span></div>
+          <div class="field"><label for="desc">Instrucciones para el conductor</label><textarea id="desc" placeholder="Describe el recorrido paso a paso">${esc(e.description || '')}</textarea></div>`}
+        <p class="small muted" id="pos" style="margin-bottom:12px">${(e.coords || []).length} puntos dibujados</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn">${e.id ? 'Guardar cambios' : (isStreet ? 'Publicar calle' : 'Publicar vía alterna')}</button><label class="switch"><input type="checkbox" id="active" ${e.active !== false ? 'checked' : ''}> Activa</label></div>
+      </form></div>
+    <h3>${isStreet ? 'Calles' : 'Vías alternas'} registradas (${db[kind].length})</h3>
+    ${db[kind].length ? bulkBar(kind) : ''}
+    <div class="list">${db[kind].length ? db[kind].map(x => itemRow(x, isStreet ? `${STATUS[x.status]}${x.depthCm ? ` · ~${x.depthCm} cm` : ''}` : `${esc(x.from || '')} → ${esc(x.to || '')}`, kind, isStreet ? x.status : 'ruta')).join('') : emptyBox(`Aún no hay ${isStreet ? 'calles' : 'vías alternas'}. Dibuja la primera sobre el mapa.`)}</div>`);
+  drawCoords = [...(e.coords || [])]; drawMode = null; segStack = [];
+  setTools([['draw', 'Dibujar', ICON.edit], ['undo', 'Deshacer', ICON.x], ['clear', 'Limpiar', ICON.trash]]);
+  drawAll();
+  id('snap').onchange = () => { snapOn = id('snap').checked; };
+  if (!e.id && e.avoids) { const t = q('[data-tool="draw"]')[0]; t?.click(); }
+  id('f').onsubmit = async ev => { ev.preventDefault();
+    const body = isStreet ? { name: id('name').value, status: id('status').value, depthCm: +id('depth').value || 0, note: id('note').value, coords: drawCoords, active: id('active').checked }
+      : { name: id('name').value, from: id('from').value, to: id('to').value, avoids: id('avoids').value, description: id('desc').value, coords: drawCoords, active: id('active').checked };
+    await save(kind, body); };
+  bindBulk(kind);
+  bindList(kind);
+}
+
+/* ================= RÍOS ================= */
+let osmFound = null, osmSel = new Set(), osmBusy = false;
+function secRivers() {
+  const e = editing || {}; db.rivers ||= [];
+  const have = new Set(db.rivers.map(r => r.name.toLowerCase()));
+  const c = db.config.center;
+  col(`
+    <div class="card osm-card"><div class="section-head"><h3>${ICON.wave} Ríos automáticos</h3></div>
+      <p class="small muted" style="margin:6px 0 12px">Trae los ríos, esteros y canales reales de la zona desde OpenStreetMap, ya trazados y en el sentido del agua. Tú solo eliges cuáles mostrar y cambias su estado cuando crezcan.</p>
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div class="field" style="margin:0;min-width:150px"><label for="osm-km">Alrededor del centro</label><select id="osm-km"><option value="3">3 km</option><option value="5" selected>5 km</option><option value="8">8 km</option><option value="12">12 km</option></select></div>
+        <label class="switch" style="margin-bottom:10px"><input type="checkbox" id="osm-streams" checked> Incluir esteros</label>
+        <button class="btn" id="osm-go" ${osmBusy ? 'disabled' : ''}>${osmBusy ? 'Buscando…' : `${ICON.download || ICON.upload} Buscar ríos de la zona`}</button>
+      </div>
+      ${osmFound ? (osmFound.length ? `
+        <div class="osm-list">${osmFound.map((w, i) => { const dup = have.has(w.name.toLowerCase()); return `<label class="osm-row ${dup ? 'dup' : ''}"><input type="checkbox" data-osm="${i}" ${osmSel.has(i) ? 'checked' : ''} ${dup ? 'disabled' : ''}><span class="osm-sw ${w.kind}"></span><span><b>${esc(w.name)}</b><small>${KIND[w.kind] || w.kind} · ${w.km} km${dup ? ' · ya agregado' : ''}</small></span></label>`; }).join('')}</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px"><button class="btn" id="osm-add" ${osmSel.size ? '' : 'disabled'}>Agregar ${osmSel.size || ''} al mapa</button><button class="btn ghost sm" id="osm-all">Seleccionar todos</button><button class="btn ghost sm" id="osm-close">Cerrar</button></div>`
+        : `<p class="small muted" style="margin-top:12px">No se encontraron cauces con nombre en ese radio. Prueba con un radio mayor.</p>`) : ''}
+    </div>
+    <h3>Ríos y canales en el mapa (${db.rivers.length})</h3>
+    <p class="small muted" style="margin:-4px 0 4px">Cambia el estado aquí mismo: <b>crecido</b> y <b>desbordado</b> aceleran el agua y avisan al público.</p>
+    <div class="list">${db.rivers.length ? db.rivers.map(x => itemRow(x, `<select class="rv-status" data-rstatus="${x.id}" aria-label="Estado de ${esc(x.name)}">${opts(RIVER, x.status)}</select> ${x.source === 'osm' ? '<span class="chip neutral">OpenStreetMap</span>' : ''} ${esc(x.note || '')}`, 'rivers', 'rio_' + x.status)).join('') : emptyBox('Aún no hay ríos. Pulsa “Buscar ríos de la zona” para traerlos automáticamente.')}</div>
+    <details class="card manual" ${e.id ? 'open' : ''}><summary><b>${e.id ? `Editar “${esc(e.name)}”` : 'Trazar un cauce a mano'}</b> <span class="small muted">· solo si no aparece en la búsqueda</span></summary>
+      ${e.id ? `<div style="text-align:right;margin-top:6px"><button class="btn ghost sm" id="cancel">Cancelar</button></div>` : ''}
+      <p class="small muted" style="margin:10px 0 14px">Pulsa <b>Dibujar</b> y marca el cauce en el sentido en que corre el agua.</p>
+      <form id="f" novalidate>
+        <div class="field"><label for="name">Nombre</label><input id="name" value="${esc(e.name || '')}" placeholder="Ej. Río Santa Rosa"></div>
+        <div class="field"><label for="status">Estado actual</label><select id="status">${opts(RIVER, e.status || 'normal')}</select></div>
+        <div class="field"><label for="note">Observación</label><input id="note" value="${esc(e.note || '')}" placeholder="Ej. Nivel alto, vigilancia permanente."></div>
+        <p class="small muted" id="pos" style="margin-bottom:12px">${(e.coords || []).length} puntos dibujados</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn">${e.id ? 'Guardar cambios' : 'Publicar río'}</button><label class="switch"><input type="checkbox" id="active" ${e.active !== false ? 'checked' : ''}> Visible</label></div>
+      </form></details>`);
+  drawCoords = [...(e.coords || [])]; drawMode = null;
+  const man = document.querySelector('details.manual');
+  const tools = () => setTools(man.open ? [['draw', 'Dibujar', ICON.edit], ['undo', 'Deshacer', ICON.x], ['clear', 'Limpiar', ICON.trash]] : []);
+  man.addEventListener('toggle', tools); tools();
+  drawAll();
+  id('f').onsubmit = async ev => { ev.preventDefault(); await save('rivers', { name: id('name').value, status: id('status').value, note: id('note').value, coords: drawCoords, active: id('active').checked, source: e.source || 'manual' }); };
+  id('osm-go').onclick = async () => {
+    osmBusy = true; secRivers();
+    try {
+      osmFound = await fetchWaterways({ lat: c.lat, lng: c.lng, km: +id('osm-km').value, kinds: id('osm-streams').checked ? ['river', 'canal', 'stream'] : ['river', 'canal'] });
+      osmSel = new Set(osmFound.map((w, i) => i).filter(i => osmFound[i].kind !== 'stream' && !have.has(osmFound[i].name.toLowerCase())));
+      if (osmFound.length) map?.fitBounds(osmFound.flatMap(w => w.coords));
+    } catch (err) { toast(err.message, 'err'); }
+    osmBusy = false; secRivers();
+  };
+  q('[data-osm]').forEach(cb => cb.onchange = () => { cb.checked ? osmSel.add(+cb.dataset.osm) : osmSel.delete(+cb.dataset.osm); secRivers(); });
+  if (id('osm-all')) id('osm-all').onclick = () => { osmFound.forEach((w, i) => { if (!have.has(w.name.toLowerCase())) osmSel.add(i); }); secRivers(); };
+  if (id('osm-close')) id('osm-close').onclick = () => { osmFound = null; osmSel.clear(); secRivers(); };
+  if (id('osm-add')) id('osm-add').onclick = async () => {
+    const list = [...osmSel].map(i => osmFound[i]); let ok = 0;
+    for (const w of list) { try { await api('/api/admin/rivers', { method: 'POST', body: { name: w.name, coords: w.coords, status: 'normal', note: '', active: true, source: 'osm', kind: w.kind } }); ok++; } catch {} }
+    toast(`${ok} cauce${ok === 1 ? '' : 's'} agregado${ok === 1 ? '' : 's'} al mapa`, 'ok'); osmFound = null; osmSel.clear(); await refresh();
+  };
+  q('[data-rstatus]').forEach(sel => { sel.onclick = ev => ev.stopPropagation(); sel.onchange = async () => { await api(`/api/admin/rivers/${sel.dataset.rstatus}`, { method: 'PUT', body: { status: sel.value } }); toast(`${db.rivers.find(r => r.id === sel.dataset.rstatus)?.name}: ${RIVER[sel.value]}`, 'ok'); refresh(); }; });
+  bindList('rivers');
+}
+function drawOsm() {
+  if (!map || section !== 'rivers' || !osmFound) return;
+  osmFound.forEach((w, i) => map.addPolyline({ coords: w.coords, status: osmSel.has(i) ? 'osm_sel' : 'osm', dashed: !osmSel.has(i), weight: osmSel.has(i) ? 6 : 4, popup: `<b>${esc(w.name)}</b><br>${KIND[w.kind] || ''} · ${w.km} km` }));
+}
+
+/* ================= ZONAS DE DESBORDE ================= */
+function secZones() {
+  const e = editing || {}; db.zones ||= []; db.rivers ||= [];
+  col(`
+    <div class="card"><div class="section-head"><h3>${e.id ? 'Editar zona de desborde' : 'Nueva zona de desborde'}</h3>${e.id ? `<button class="btn ghost sm" id="cancel">Cancelar</button>` : ''}</div>
+      <p class="small muted" style="margin:6px 0 14px">Pulsa <b>Dibujar</b> y marca el contorno del área a donde se sale el agua (mínimo 3 puntos). El área se cierra sola. Quien navegue con GPS recibe un aviso al acercarse o entrar.</p>
+      <form id="f" novalidate>
+        <div class="field"><label for="name">Nombre</label><input id="name" value="${esc(e.name || '')}" placeholder="Ej. Desborde margen derecha, barrio Las Palmeras"></div>
+        <div class="row"><div class="field"><label for="sev">Gravedad</label><select id="sev">${opts(ZSEV, e.severity || 'alta')}</select></div>
+        <div class="field"><label for="depth">Agua aprox. (cm)</label><input id="depth" type="number" min="0" max="400" value="${e.depthCm ?? ''}"></div></div>
+        <div class="field"><label for="river">Río que se desborda</label><select id="river"><option value="">— no especificado —</option>${db.rivers.map(r => `<option value="${r.id}" ${e.riverId === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></div>
+        <div class="field"><label for="note">Indicación</label><input id="note" value="${esc(e.note || '')}" placeholder="Ej. Agua sobre la calzada. No ingresar."></div>
+        <p class="small muted" id="pos" style="margin-bottom:12px">${(e.coords || []).length} puntos dibujados</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn">${e.id ? 'Guardar cambios' : 'Publicar zona'}</button><label class="switch"><input type="checkbox" id="active" ${e.active !== false ? 'checked' : ''}> Activa</label></div>
+      </form></div>
+    <h3>Zonas de desborde (${db.zones.length})</h3>
+    ${db.zones.length ? bulkBar('zones') : ''}
+    <div class="list">${db.zones.length ? db.zones.map(x => itemRow(x, `${ZSEV[x.severity]}${x.depthCm ? ` · ~${x.depthCm} cm` : ''}${x.riverId ? ` · ${esc(db.rivers.find(r => r.id === x.riverId)?.name || '')}` : ''}`, 'zones', x.severity)).join('') : emptyBox('Aún no hay zonas de desborde. Dibuja la primera sobre el mapa.')}</div>`);
+  drawCoords = [...(e.coords || [])]; drawMode = null;
+  setTools([['draw', 'Dibujar', ICON.edit], ['undo', 'Deshacer', ICON.x], ['clear', 'Limpiar', ICON.trash]]);
+  drawAll();
+  id('f').onsubmit = async ev => { ev.preventDefault(); await save('zones', { name: id('name').value, severity: id('sev').value, depthCm: +id('depth').value || 0, riverId: id('river').value, note: id('note').value, coords: drawCoords, active: id('active').checked }); };
+  bindBulk('zones');
+  bindList('zones');
+}
+
+/* ================= RECOMENDACIONES ================= */
+function secRecs() {
+  const e = editing || {};
+  col(`
+    <div class="card"><div class="section-head"><h3>${e.id ? 'Editar recomendación' : 'Nueva recomendación'}</h3>${e.id ? `<button class="btn ghost sm" id="cancel">Cancelar</button>` : ''}</div>
+      <form id="f" novalidate style="margin-top:12px">
+        <div class="field"><label for="text">Texto</label><textarea id="text" maxlength="300" placeholder="Ej. No intente cruzar calles con agua en movimiento.">${esc(e.text || '')}</textarea></div>
+        <div class="field"><label for="level">Nivel asociado</label><select id="level">${opts(LEVELS, e.level || 'naranja')}</select><span class="hint">Se muestra con la etiqueta del nivel en el mapa público.</span></div>
+        <div style="display:flex;gap:10px;align-items:center"><button class="btn">${e.id ? 'Guardar cambios' : 'Publicar recomendación'}</button><label class="switch"><input type="checkbox" id="active" ${e.active !== false ? 'checked' : ''}> Activa</label></div>
+      </form></div>
+    <h3>Recomendaciones (${db.recommendations.length})</h3>
+    <div class="list">${db.recommendations.map(r => itemRow({ ...r, name: r.text }, LEVELS[r.level], 'recommendations', r.level)).join('') || emptyBox('Sin recomendaciones todavía.')}</div>`);
+  id('f').onsubmit = async ev => { ev.preventDefault(); await save('recommendations', { text: id('text').value, level: id('level').value, active: id('active').checked }); };
+  bindList('recommendations');
+}
+
+/* ================= REPORTES ================= */
+function secReports() {
+  const reps = [...(db.reports || [])].sort((a, b) => (a.status === 'pendiente' ? -1 : 1) - (b.status === 'pendiente' ? -1 : 1) || b.createdAt.localeCompare(a.createdAt));
+  const chip = s => ({ pendiente: 'amarilla', verificado: 'normal', descartado: 'neutral', retirado: 'neutral' })[s];
+  const act = reps.filter(r => r.type === 'desborde' && r.status === 'verificado');
+  col(`<p class="small muted">Reportes enviados por la ciudadanía desde el mapa público. Los <b>verificados</b> aparecen en el mapa; los pendientes y descartados no. Un <b>desborde verificado</b> queda animado en el mapa público hasta que pulses <b>Retirar</b>.</p>
+    ${act.length ? `<div class="card" style="border-color:#1E88E5;background:#EEF6FE"><b>${act.length} desborde${act.length > 1 ? 's' : ''} activo${act.length > 1 ? 's' : ''} en el mapa público.</b> <span class="small muted">Retíralo cuando el agua haya bajado.</span></div>` : ''}
+    <div class="list">${reps.length ? reps.map(r => `<div class="item" data-focus="${r.id}" style="cursor:pointer"><span class="dot ${r.level}" style="margin-top:6px"></span>
+      <div style="flex:1"><div class="title">${r.type === 'desborde' ? `<span class="chip roja">Desborde de río</span> ` : ''}${esc(r.street || 'Sin calle indicada')} <span class="chip ${chip(r.status)}">${r.status}</span></div><div class="meta">${esc(r.description)}</div><div class="meta">${r.level} · ${ago(r.createdAt)} · ${fmtTime(r.createdAt)}</div>
+        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+          ${r.status !== 'verificado' ? `<button class="btn soft sm" data-rs="verificado" data-id="${r.id}">${ICON.check} Verificar y publicar</button>` : ''}
+          ${r.status === 'verificado' ? `<button class="btn soft sm" data-rs="retirado" data-id="${r.id}">${ICON.check} Retirar (el agua bajó)</button>` : ''}
+          ${r.status !== 'descartado' && r.status !== 'retirado' ? `<button class="btn ghost sm" data-rs="descartado" data-id="${r.id}">Descartar</button>` : ''}
+          <button class="btn ghost sm" data-topoint="${r.id}">${ICON.pin} Crear punto crítico</button>
+          <button class="btn danger sm" data-rdel="${r.id}">${ICON.trash}</button></div></div></div>`).join('') : emptyBox('No hay reportes ciudadanos todavía.')}</div>`);
+  setTools([]); drawMode = null; drawAll(true);
+  q('[data-rs]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); await api(`/api/admin/reports/${b.dataset.id}`, { method: 'PUT', body: { status: b.dataset.rs } }); toast(`Reporte ${b.dataset.rs}`, 'ok'); refresh(); });
+  q('[data-rdel]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); if (!confirm('¿Eliminar este reporte definitivamente?')) return; await api(`/api/admin/reports/${b.dataset.rdel}`, { method: 'DELETE' }); refresh(); });
+  q('[data-topoint]').forEach(b => b.onclick = ev => { ev.stopPropagation(); const r = db.reports.find(x => x.id === b.dataset.topoint); editing = { name: r.street, lat: r.lat, lng: r.lng, type: 'inundacion', severity: r.level === 'grave' ? 'alta' : r.level === 'moderado' ? 'media' : 'baja', description: r.description }; section = 'points'; renderShell(); });
+  q('[data-focus]').forEach(b => b.onclick = () => { const r = db.reports.find(x => x.id === b.dataset.focus); map?.panTo(r, 16); });
+}
+
+/* ================= CAPAS ================= */
+let preview = null; // { fc, file }
+function secLayers() {
+  const layers = db.layers || [];
+  col(`
+    <div class="card"><h3 style="margin-bottom:6px">Subir capa</h3>
+      <p class="small muted" style="margin-bottom:14px">Sube la capa que te entreguen (catastro, zonas de riesgo, cauces, alcantarillado…). Formatos: <b>GeoJSON</b>, <b>KML</b>, <b>KMZ</b> (Google Earth) o <b>Shapefile</b> comprimido en .zip.</p>
+      <form id="fl" novalidate>
+        <label class="drop" id="drop"><input type="file" id="file" accept=".geojson,.json,.kml,.kmz,.zip" hidden>${ICON.upload}<span id="drop-t"><b>Elige un archivo</b> o arrástralo aquí</span></label>
+        <p class="small" id="lsum" style="margin:10px 0 0"></p><span class="err small" id="lerr" style="color:var(--roja)"></span>
+        <div class="row" style="margin-top:14px"><div class="field"><label for="lname">Nombre de la capa</label><input id="lname" placeholder="Ej. Zonas de riesgo GAD Santa Rosa"></div>
+        <div class="field"><label for="lkind">Tipo</label><select id="lkind"><option value="riesgo">Zonas de riesgo</option><option value="cauce">Ríos y canales</option><option value="drenaje">Alcantarillado / drenaje</option><option value="referencia">Referencia general</option></select></div></div>
+        <div class="field"><label for="lcolor">Color</label><input id="lcolor" type="color" value="#6B4DD6" style="height:48px;padding:6px"></div>
+        <label class="switch"><input type="checkbox" id="lpub" checked> Visible en el mapa público</label>
+        <label class="switch"><input type="checkbox" id="limp"> Crear puntos críticos y calles con sus puntos y líneas (quedan inactivos para que los revises)</label>
+        <div style="margin-top:12px"><button class="btn" id="lsave" disabled>Guardar capa</button></div>
+      </form></div>
+    <h3>Capas cargadas (${layers.length})</h3>
+    <div class="list">${layers.length ? layers.map(l => `<div class="item ${l.active === false ? 'inactive' : ''}" data-lfocus="${l.id}"><span class="dot" style="background:${esc(l.color)};margin-top:6px"></span>
+      <div style="min-width:0"><div class="title">${esc(l.name)}</div><div class="meta">${esc(summarize(l.geojson))}${l.source ? ` · ${esc(l.source)}` : ''}${l.active === false ? ' · <b>oculta al público</b>' : ''}</div></div>
+      ${importable(l.geojson).points.length ? `<button class="btn soft sm" data-lconv="${l.id}" title="Crear un punto crítico por cada punto de la capa">${ICON.pin} Convertir en puntos críticos</button>` : ''}<div class="acts"><button class="btn ghost" aria-label="${l.active === false ? 'Mostrar' : 'Ocultar'}" title="${l.active === false ? 'Mostrar al público' : 'Ocultar al público'}" data-ltoggle="${l.id}">${l.active === false ? ICON.eye : ICON.x}</button><button class="btn danger" aria-label="Eliminar" title="Eliminar" data-ldel="${l.id}">${ICON.trash}</button></div></div>`).join('')
+      : emptyBox('Aún no hay capas. Sube la primera con el formulario de arriba.')}</div>`);
+  setTools([]); drawMode = null; drawAll(); preview = null;
+  const drop = id('drop'), file = id('file');
+  const handle = async f => {
+    id('lerr').textContent = ''; id('lsum').textContent = 'Leyendo archivo…'; id('lsave').disabled = true;
+    try {
+      const fc = await parseLayerFile(f); preview = { fc, file: f.name };
+      id('lsum').innerHTML = `${ICON.check} <b>${esc(f.name)}</b>: ${summarize(fc)}`; id('drop-t').innerHTML = `<b>${esc(f.name)}</b> · cambiar archivo`;
+      if (!id('lname').value) id('lname').value = f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
+      id('lsave').disabled = false; drawAll();
+      const tmp = map.addGeoJSON({ data: fc, color: id('lcolor').value, name: 'Vista previa' }); tmp.bounds && map.raw.fitBounds?.(tmp.bounds(), { padding: [30, 30] });
+    } catch (e) { preview = null; id('lsum').textContent = ''; id('lerr').textContent = e.message; }
+  };
+  file.onchange = () => file.files[0] && handle(file.files[0]);
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); }; drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); e.dataTransfer.files[0] && handle(e.dataTransfer.files[0]); };
+  id('fl').onsubmit = async e => {
+    e.preventDefault(); if (!preview) return;
+    id('lsave').disabled = true; id('lsave').textContent = 'Guardando…';
+    try {
+      await api('/api/admin/layers', { method: 'POST', body: { name: id('lname').value, color: id('lcolor').value, kind: id('lkind').value, source: preview.file, geojson: preview.fc, active: id('lpub').checked } });
+      if (id('limp').checked) {
+        const { points, lines } = importable(preview.fc);
+        for (const p of points.slice(0, 300)) await api('/api/admin/points', { method: 'POST', body: { ...p, type: 'riesgo', severity: 'media', active: false } });
+        for (const l of lines.slice(0, 300)) await api('/api/admin/streets', { method: 'POST', body: { ...l, status: 'inundada', depthCm: 0, note: 'Importada desde capa', active: false } });
+        toast(`Capa guardada. Se crearon ${Math.min(points.length, 300)} puntos y ${Math.min(lines.length, 300)} calles inactivas para revisar.`, 'ok');
+      } else toast('Capa guardada', 'ok');
+      preview = null; refresh();
+    } catch { id('lsave').disabled = false; id('lsave').textContent = 'Guardar capa'; }
+  };
+  q('[data-ltoggle]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); const l = db.layers.find(x => x.id === b.dataset.ltoggle); await api(`/api/admin/layers/${l.id}`, { method: 'PUT', body: { active: l.active === false } }); toast(l.active === false ? 'Capa visible al público' : 'Capa oculta al público', 'ok'); refresh(); });
+  q('[data-lconv]').forEach(b => b.onclick = async ev => {
+    ev.stopPropagation(); const l = db.layers.find(x => x.id === b.dataset.lconv);
+    const near = (a, p) => Math.abs(a.lat - p.lat) < 0.00005 && Math.abs(a.lng - p.lng) < 0.00005;
+    const pts = importable(l.geojson).points.filter(p => !db.points.some(x => near(x, p)));
+    if (!pts.length) { toast('Esos puntos ya existen como puntos críticos.', 'ok'); return; }
+    b.disabled = true; b.textContent = 'Creando…'; let n = 0;
+    for (const p of pts.slice(0, 300)) { try { await api('/api/admin/points', { method: 'POST', body: { name: p.name, lat: p.lat, lng: p.lng, description: p.description ? String(p.description).replace(/<[^>]+>/g, ' ').trim().slice(0, 300) : '', type: 'interseccion', severity: 'alta', active: false, auto: true, source: l.name } }); n++; } catch {} }
+    toast(`${n} zonas inundables creadas. Se activan solas con alerta naranja o roja, o enciéndelas a mano.`, 'ok');
+    if (l.active !== false) await api(`/api/admin/layers/${l.id}`, { method: 'PUT', body: { active: false } });
+    section = 'points'; editing = null; await refresh(); renderShell();
+  });
+  q('[data-ldel]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); if (!confirm('¿Eliminar esta capa definitivamente?')) return; await api(`/api/admin/layers/${b.dataset.ldel}`, { method: 'DELETE' }); toast('Capa eliminada', 'ok'); refresh(); });
+  q('[data-lfocus]').forEach(b => b.onclick = () => { const l = db.layers.find(x => x.id === b.dataset.lfocus); const pts = []; for (const f of l.geojson.features) walkC(f.geometry, c => pts.push([c[1], c[0]])); map.fitBounds(pts); });
+}
+const walkC = (g, fn) => { if (!g) return; if (g.type === 'GeometryCollection') return g.geometries.forEach(x => walkC(x, fn)); const w = a => (typeof a[0] === 'number' ? fn(a) : a.forEach(w)); w(g.coordinates); };
+
+/* ================= CONFIG ================= */
+const FEATURES = {
+  streets: ['Calles inundadas', 'Líneas rojas, naranjas y verdes y la pestaña Calles'],
+  routes: ['Vías alternas', 'Líneas azules animadas y la pestaña Vías alternas'],
+  rivers: ['Ríos y desbordes', 'Ríos, zonas de desborde, aviso de desborde y la pestaña Ríos'],
+  points: ['Puntos críticos', 'Marcadores de alcantarillas, pasos bajos y zonas de riesgo'],
+  recommendations: ['Consejos', 'La pestaña Consejos'],
+  reports: ['Reportes ciudadanos', 'Botón Reportar inundación y reportes verificados en el mapa'],
+  gps: ['Navegación con GPS', 'Botón GPS y avisos al acercarse a un peligro'],
+  radar: ['Radar de lluvia', 'Botón de radar RainViewer'],
+  risk: ['Índice de riesgo', 'El medidor de 0 a 100'],
+  weather: ['Datos de clima', 'Lluvia ahora, últimas y próximas 3 horas'],
+  layers: ['Capas subidas', 'Archivos KML, GeoJSON o Shapefile cargados en Capas'],
+};
+function secConfig() {
+  const c = db.config; const F = c.features || {};
+  col(`
+    <div class="card"><h3 style="margin-bottom:6px">Qué ve la ciudadanía</h3><p class="small muted" style="margin-bottom:12px">Apaga lo que no quieras mostrar en el mapa público, para no confundir. Los datos no se borran: al volver a encender, reaparecen.</p>
+      <form id="ff" novalidate><div class="feat-grid">${Object.entries(FEATURES).map(([k, [t, d]]) => `<label class="feat ${F[k] === false ? '' : 'on'}"><input type="checkbox" data-feat="${k}" ${F[k] === false ? '' : 'checked'}><span class="tg" aria-hidden="true"></span><span><b>${t}</b><small>${d}</small></span></label>`).join('')}</div>
+      <button class="btn" style="margin-top:14px">Guardar lo que se muestra</button></form></div>
+    <div class="card"><h3 style="margin-bottom:12px">Ciudad y mapa</h3><form id="fc" novalidate>
+      <div class="field"><label for="city">Ciudad</label><input id="city" value="${esc(c.city)}"></div>
+      <div class="row"><div class="field"><label for="clat">Centro · latitud</label><input id="clat" type="number" step="any" value="${c.center.lat}"></div><div class="field"><label for="clng">Centro · longitud</label><input id="clng" type="number" step="any" value="${c.center.lng}"></div></div>
+      <div class="field"><label for="zoom">Zoom inicial</label><input id="zoom" type="number" min="8" max="18" value="${c.zoom}"><span class="hint">Tip: mueve el mapa de la derecha y pulsa "Usar vista actual".</span></div>
+      <button type="button" class="btn ghost sm" id="usemap" style="margin-bottom:16px">Usar vista actual del mapa</button>
+      <div class="field"><label for="prov">Proveedor de mapa</label><select id="prov"><option value="leaflet" ${c.mapProvider === 'leaflet' ? 'selected' : ''}>OpenStreetMap / Leaflet (gratis, sin key)</option><option value="google" ${c.mapProvider === 'google' ? 'selected' : ''}>Google Maps (requiere API key)</option></select></div>
+      <div class="field"><label for="gkey">Google Maps API key</label><input id="gkey" value="${esc(c.googleMapsKey || '')}" placeholder="AIza..."><span class="hint">Si falla la carga de Google, el sistema vuelve automáticamente a OpenStreetMap.</span></div>
+      <label class="switch" style="margin:4px 0 10px"><input type="checkbox" id="fon" ${c.floodEnabled === true ? 'checked' : ''}> Usar Google Flood Forecasting</label>
+      <div class="field" id="fkey-f" ${c.floodEnabled === true ? '' : 'hidden'}><label for="fkey">Google Flood Forecasting API key</label><input id="fkey" value="${esc(c.googleFloodKey || '')}" placeholder="AIza..."><span class="hint">Google la entrega solo con acceso aprobado. Si no la tienes, deja esto apagado: el índice de riesgo usa el estado de los ríos que marcas en el mapa.</span></div>
+      <button class="btn">Guardar configuración</button></form></div>
+    <div class="card"><h3 style="margin-bottom:12px">Clima automático (Open-Meteo)</h3><form id="fw" novalidate>
+      <div class="row"><div class="field"><label for="wlat">Estación · latitud</label><input id="wlat" type="number" step="any" value="${c.weather.lat}"></div><div class="field"><label for="wlng">Estación · longitud</label><input id="wlng" type="number" step="any" value="${c.weather.lng}"></div></div>
+      <div class="row"><div class="field"><label for="t1">Umbral lluvia (mm/h)</label><input id="t1" type="number" step="0.5" min="0" value="${c.weather.rainThresholdMm}"><span class="hint">Al superarlo: alerta naranja. El triple: roja.</span></div>
+      <div class="field"><label for="t3">Umbral acumulado 3 h (mm)</label><input id="t3" type="number" step="1" min="0" value="${c.weather.rainThresholdMm3h}"></div></div>
+      <button class="btn">Guardar umbrales</button></form></div>
+    <div class="card"><h3 style="margin-bottom:6px">Avisos por GPS</h3><p class="small muted" style="margin-bottom:14px">Cuando alguien usa "Navegar con GPS" en el mapa público, recibe un aviso al acercarse a una calle inundada o a un punto crítico.</p><form id="fg" novalidate>
+      <div class="row"><div class="field"><label for="gw">Primer aviso a (metros)</label><input id="gw" type="number" min="50" step="10" value="${c.gps?.warnM ?? 400}"></div>
+      <div class="field"><label for="gd">Aviso de peligro a (metros)</label><input id="gd" type="number" min="20" step="10" value="${c.gps?.dangerM ?? 150}"></div></div>
+      <label class="switch" style="margin-bottom:12px"><input type="checkbox" id="gv" ${c.gps?.voice !== false ? 'checked' : ''}> Aviso por voz</label><br>
+      <button class="btn">Guardar avisos GPS</button></form></div>`);
+  setTools([]); drawMode = null; drawAll();
+  q('[data-feat]').forEach(cb => cb.onchange = () => cb.closest('.feat').classList.toggle('on', cb.checked));
+  id('ff').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { features: Object.fromEntries(q('[data-feat]').map(cb => [cb.dataset.feat, cb.checked])) } }); toast('Mapa público actualizado', 'ok'); db = await api('/api/admin/state'); };
+  id('fon').onchange = () => { id('fkey-f').hidden = !id('fon').checked; };
+  id('usemap').onclick = () => { if (!map) return; const r = map.raw; const cc = map.provider === 'google' ? { lat: r.getCenter().lat(), lng: r.getCenter().lng() } : r.getCenter(); id('clat').value = (+cc.lat).toFixed(5); id('clng').value = (+cc.lng).toFixed(5); id('zoom').value = r.getZoom(); };
+  id('fc').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { city: id('city').value, center: { lat: id('clat').value, lng: id('clng').value }, zoom: id('zoom').value, mapProvider: id('prov').value, googleMapsKey: id('gkey').value, googleFloodKey: id('fkey').value, floodEnabled: id('fon').checked } }); toast('Configuración guardada', 'ok'); db = await api('/api/admin/state'); renderShell(); };
+  id('fg').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { gps: { warnM: id('gw').value, dangerM: id('gd').value, voice: id('gv').checked } } }); toast('Avisos GPS guardados', 'ok'); refresh(); };
+  id('fw').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { weather: { lat: id('wlat').value, lng: id('wlng').value, rainThresholdMm: id('t1').value, rainThresholdMm3h: id('t3').value } } }); toast('Umbrales guardados', 'ok'); refresh(); };
+}
+
+/* ================= helpers ================= */
+const id = s => document.getElementById(s); const q = s => [...document.querySelectorAll(s)];
+const col = html => { id('col').innerHTML = html; const c = id('cancel'); if (c) c.onclick = () => { editing = null; cancelDraw(); renderSection(); }; };
+const opts = (o, v) => Object.entries(o).map(([k, l]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${l}</option>`).join('');
+const emptyBox = t => `<div class="empty">${ICON.inbox}<div>${t}</div></div>`;
+function itemRow(x, meta, kind, dot) {
+  return `<div class="item ${x.active === false ? 'inactive' : ''}" data-focus-kind="${kind}" data-focus="${x.id}"><span class="dot ${dot}" style="margin-top:6px"></span>
+    <div style="min-width:0"><div class="title">${esc(x.name)}</div><div class="meta">${meta}${x.active === false ? ' · <b>inactivo</b>' : ''}</div></div>
+    <div class="acts"><button class="btn ghost" title="${x.active === false ? 'Activar' : 'Desactivar'}" aria-label="${x.active === false ? 'Activar' : 'Desactivar'}" data-toggle="${x.id}">${x.active === false ? ICON.eye : ICON.x}</button>
+    <button class="btn ghost" title="Editar" aria-label="Editar" data-edit="${x.id}">${ICON.edit}</button><button class="btn danger" title="Eliminar" aria-label="Eliminar" data-del="${x.id}">${ICON.trash}</button></div></div>`;
+}
+function bindList(kind) {
+  q('[data-toggle]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); const x = db[kind].find(i => i.id === b.dataset.toggle); await api(`/api/admin/${kind}/${x.id}`, { method: 'PUT', body: { active: x.active === false } }); toast(x.active === false ? 'Activado y visible al público' : 'Desactivado: oculto al público', 'ok'); refresh(); });
+  q('[data-edit]').forEach(b => b.onclick = ev => { ev.stopPropagation(); editing = { ...db[kind].find(i => i.id === b.dataset.edit) }; renderSection(); });
+  q('[data-del]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); if (!confirm('¿Eliminar definitivamente? Esta acción no se puede deshacer.')) return; await api(`/api/admin/${kind}/${b.dataset.del}`, { method: 'DELETE' }); toast('Eliminado', 'ok'); editing = null; refresh(); });
+  q('[data-focus-kind]').forEach(b => b.onclick = () => { const x = db[kind].find(i => i.id === b.dataset.focus); if (!map || !x) return; x.coords ? map.fitBounds(x.coords) : map.panTo(x, 16); });
+}
+async function save(kind, body) {
+  try {
+  const r = editing?.id ? await api(`/api/admin/${kind}/${editing.id}`, { method: 'PUT', body }) : await api(`/api/admin/${kind}`, { method: 'POST', body });
+  toast(editing?.id ? 'Cambios guardados' : 'Publicado en el mapa', 'ok'); editing = null; drawCoords = []; pending = {}; await refresh();
+  } catch (e) { /* el error ya se mostró en un toast */ }
+}
+
+/* ---- Mapa / dibujo ---- */
+function setTools(list) {
+  const t = id('tools'); if (!t) return;
+  t.innerHTML = list.map(([k, l, i]) => `<button class="btn sm" data-tool="${k}">${i} ${l}</button>`).join('');
+  q('[data-tool]').forEach(b => b.onclick = () => {
+    if (b.dataset.tool === 'draw') { drawMode = drawMode === 'line' ? null : 'line'; b.classList.toggle('on', drawMode === 'line'); hint(drawMode === 'line' ? 'Haz clic sobre el mapa para agregar puntos. Vuelve a pulsar "Dibujar" para terminar.' : ''); }
+    if (b.dataset.tool === 'undo') { const n = segStack.pop() ?? 1; drawCoords.splice(Math.max(0, drawCoords.length - n)); drawAll(); }
+    if (b.dataset.tool === 'clear') { drawCoords = []; segStack = []; drawAll(); }
+  });
+}
+function hint(t) { const h = id('hint'); if (!h) return; h.textContent = t; h.classList.toggle('on', !!t); }
+function cancelDraw() { drawMode = null; drawCoords = []; pending = {}; hint(''); }
+function onMapClick(pos) {
+  if (drawMode === 'point') { pending = pos; setPick(pos); const p = id('pos'); if (p) p.textContent = `Ubicación: ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`; }
+  if (drawMode === 'line') addLinePoint(pos);
+}
+// Seguir calles: pide a OSRM (OpenStreetMap, sin cuenta) el recorrido por calles entre el último punto y el toque.
+let snapOn = true, segStack = [], snapBusy = false;
+async function addLinePoint(pos) {
+  const useSnap = snapOn && ['routes', 'streets'].includes(section) && drawCoords.length > 0;
+  if (!useSnap) { drawCoords.push([pos.lat, pos.lng]); segStack.push(1); drawAll(); return; }
+  if (snapBusy) return; snapBusy = true; hint('Buscando el recorrido por las calles…');
+  const [la, ln] = drawCoords.at(-1);
+  try {
+    const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${ln},${la};${pos.lng},${pos.lat}?overview=full&geometries=geojson`, { signal: AbortSignal.timeout(8000) });
+    const j = await r.json(); const g = j.routes?.[0]?.geometry?.coordinates;
+    if (!g?.length) throw new Error('sin ruta');
+    const seg = g.slice(1).map(([x, y]) => [+y.toFixed(6), +x.toFixed(6)]);
+    drawCoords.push(...seg); segStack.push(seg.length);
+    hint('Toca la siguiente esquina o el final. Vuelve a pulsar "Dibujar" para terminar.');
+  } catch {
+    drawCoords.push([pos.lat, pos.lng]); segStack.push(1);
+    hint('No se pudo seguir la calle (sin conexión con OpenStreetMap). Se agregó una línea recta.');
+  }
+  snapBusy = false; drawAll();
+}
+function setPick(pos) { if (!map) return; pickShape?.remove(); pickShape = map.addMarker({ lat: pos.lat, lng: pos.lng, cls: 'baja pulse', icon: 'inundacion' }); }
+function drawAll(withReports) {
+  if (!map) return; map.clear(); pickShape = null;
+  for (const l of (db.layers || []).filter(l => l.active !== false)) map.addGeoJSON({ data: l.geojson, color: l.color, name: l.name });
+  for (const s of db.streets) map.addPolyline({ coords: s.coords, status: s.status, weight: 6, popup: `<b>${esc(s.name)}</b><br>${STATUS[s.status]}${s.active === false ? ' · inactiva' : ''}` });
+  for (const z of db.zones || []) map.addPolygon({ coords: z.coords, severity: z.severity, popup: `<b>${esc(z.name)}</b><br>Desborde · ${ZSEV[z.severity]}${z.active === false ? ' · inactiva' : ''}` });
+  for (const r of db.rivers || []) map.addPolyline({ coords: r.coords, status: 'rio_' + r.status, flow: 'river', weight: 8, popup: `<b>${esc(r.name)}</b><br>${RIVER[r.status]}` });
+  for (const r of db.routes) map.addPolyline({ coords: r.coords, status: 'ruta', flow: 'route', weight: 6, popup: `<b>${esc(r.name)}</b>` });
+  for (const p of db.points) map.addMarker({ lat: p.lat, lng: p.lng, cls: p.severity + (p.active ? '' : ' muted'), icon: p.type, popup: `<b>${esc(p.name)}</b><br>${PTYPE[p.type]}${p.active === false ? ' · inactivo' : ''}` });
+  if (withReports) for (const r of db.reports || []) map.addMarker({ lat: r.lat, lng: r.lng, cls: 'report', icon: 'report', popup: `<b>Reporte · ${esc(r.status)}</b><br>${esc(r.street)}<br>${esc(r.description)}` });
+  if (drawCoords.length) {
+    if (section === 'zones' && drawCoords.length > 2) map.addPolygon({ coords: drawCoords, severity: id('sev')?.value || 'alta', draft: true });
+    else if (drawCoords.length > 1) map.addPolyline({ coords: drawCoords, status: section === 'routes' ? 'ruta' : section === 'rivers' ? 'rio_' + (id('status')?.value || 'normal') : 'inundada', flow: section === 'routes' ? 'route' : section === 'rivers' ? 'river' : null, weight: 6 });
+    drawCoords.forEach(([lat, lng]) => map.addVertex({ lat, lng }));
+  }
+  const p = id('pos'); if (p && section !== 'points') p.textContent = `${drawCoords.length} puntos dibujados`;
+  if (pending.lat != null) setPick(pending);
+  drawOsm();
+}
+
+token ? boot() : renderLogin();

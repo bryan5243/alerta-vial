@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Alerta Vial · EMOVTT Santa Rosa EP</title>
+<meta name="description" content="Mapa en tiempo real de calles inundadas, vías alternas y recomendaciones para la ciudad.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="/img/emovtt-logo.png">
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .shell{display:grid;grid-template-rows:auto auto 1fr;height:100dvh}
+  header.top{display:flex;align-items:center;gap:16px;padding:10px 20px;background:linear-gradient(100deg,var(--brand-dark),var(--brand) 60%,#1E3AA8);color:#fff;border-bottom:3px solid var(--brand-yellow)}
+  .brand{display:flex;align-items:center;gap:14px;min-width:0}
+  .brand img{height:44px;width:auto;flex:none}
+  .brand .sep{width:1px;height:36px;background:rgb(255 255 255/.3);flex:none}
+  .brand h1{color:#fff;font-size:clamp(1.25rem,1rem + 1vw,1.6rem);text-transform:uppercase;letter-spacing:.6px;font-weight:800}
+  .brand h1 span{color:var(--brand-yellow)}
+  .brand small{display:block;color:rgb(255 255 255/.75);font-size:.82rem;line-height:1.2}
+  header.top .upd{color:rgb(255 255 255/.75)!important}
+  .disclaimer{padding:14px 20px 20px;font-size:.75rem;color:var(--muted);border-top:1px solid var(--line);margin-top:auto;display:flex;gap:10px;align-items:center}
+  .disclaimer img{height:22px;width:auto;opacity:.9}
+  .top .spacer{flex:1}
+  .top .upd{font-size:.8rem;color:var(--muted)}
+  .main{display:grid;grid-template-columns:400px 1fr;min-height:0}
+  .panel{background:var(--surface);border-right:1px solid var(--line);overflow:auto;display:flex;flex-direction:column}
+  .mapwrap{position:relative;min-height:0}
+  #map{position:absolute;inset:0}
+  .legend{position:absolute;left:14px;bottom:14px;background:rgb(255 255 255/.92);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:12px;padding:8px 12px;display:flex;gap:12px;font-size:.78rem;font-weight:500;z-index:500;flex-wrap:wrap}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .legend i{width:16px;height:4px;border-radius:2px;display:inline-block}
+  .map-actions{position:absolute;top:14px;right:14px;z-index:500;display:flex;flex-direction:column;gap:8px}
+  .map-actions .btn{background:var(--surface);color:var(--ink);border-color:var(--line);box-shadow:var(--shadow-1)} .map-actions .btn:hover{background:var(--surface-2)}
+  .map-actions .btn.on{background:var(--accent-soft);color:var(--accent-ink);border-color:var(--accent)}
+  .fab{position:absolute;right:70px;bottom:14px;z-index:500;box-shadow:var(--shadow-2);border-radius:14px;padding:12px 18px}
+  .weather{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:16px 20px 0}
+  .weather .stat{background:var(--surface-2);border-radius:12px;padding:10px 12px}
+  .weather .stat b{font-family:var(--font-display);font-size:1.25rem;display:block;letter-spacing:-.5px}
+  .weather .stat span{font-size:.75rem;color:var(--muted)}
+  .srcline{padding:8px 20px 0;font-size:.76rem;color:var(--muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .tabs{flex:none;display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:16px 20px 0;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:2}
+  .tab{flex:1 0 auto;white-space:nowrap;min-height:44px;background:none;border:0;border-bottom:2.5px solid transparent;font-weight:600;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 4px;font-size:.9rem}
+  .tab .n{background:var(--surface-2);border-radius:999px;padding:0 7px;font-size:.75rem}
+  .tab[aria-selected="true"]{color:var(--ink);border-color:var(--accent)} .tab[aria-selected="true"] .n{background:var(--accent-soft);color:var(--accent-ink)}
+  .pane{padding:16px 20px 24px} .pane[hidden]{display:none}
+  .sheet-bg{position:fixed;inset:0;background:rgb(15 34 56/.4);z-index:2000;display:none;align-items:flex-end;justify-content:center}
+  .sheet-bg.open{display:flex}
+  .sheet{background:var(--surface);width:100%;max-width:520px;border-radius:22px 22px 0 0;padding:20px 20px calc(20px + env(safe-area-inset-bottom));animation:up .3s var(--ease);max-height:90dvh;overflow:auto}
+  @keyframes up{from{transform:translateY(30px);opacity:0}to{transform:none;opacity:1}}
+  .sheet .grab{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 14px}
+  .picking{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:600;background:var(--ink);color:#fff;padding:10px 16px;border-radius:12px;font-size:.9rem;box-shadow:var(--shadow-2);display:none;gap:10px;align-items:center}
+  .picking.on{display:flex}
+  .flood-card{margin:12px 20px 0;padding:12px 14px;border-radius:12px;background:var(--surface-2);font-size:.82rem;display:flex;gap:10px;align-items:flex-start}
+  .flood-card svg.i{color:var(--accent);margin-top:2px}
+  .gps-btn{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important;gap:8px;padding:0 14px}
+  .gps-btn.on{background:var(--roja)!important;border-color:var(--roja)!important}
+  .layers-pop{position:absolute;right:calc(100% + 8px);top:0;width:260px;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-2);padding:12px;z-index:700;animation:rise .2s var(--ease)}
+  .layers-pop h3{font-size:.85rem;margin-bottom:6px} .layers-pop label{display:flex;gap:10px;align-items:center;min-height:40px;font-size:.88rem;cursor:pointer}
+  .layers-pop input{width:18px;height:18px;accent-color:var(--accent)} .layers-pop .sw{width:14px;height:14px;border-radius:4px;flex:none}
+  .gps-bar{position:absolute;top:14px;left:14px;right:72px;max-width:560px;z-index:650;display:flex;align-items:center;gap:8px;background:rgb(15 34 56/.92);backdrop-filter:blur(8px);color:#fff;padding:8px 8px 8px 14px;border-radius:14px;box-shadow:var(--shadow-2)}
+  .gps-bar[hidden]{display:none}
+  .gps-bar .gps-txt{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25} .gps-bar small{opacity:.7;font-size:.75rem}
+  .sim-ic svg.i{display:block} .gps-bar .btn{background:rgb(255 255 255/.1);color:#fff;border-color:transparent;min-height:40px} .gps-bar .btn.icon{width:40px}
+  .gps-bar .btn.on{background:rgb(255 255 255/.25)} .gps-bar .btn:hover{background:rgb(255 255 255/.2)}
+  .gps-live{width:10px;height:10px;border-radius:50%;background:#3FD18A;flex:none;box-shadow:0 0 0 0 #3FD18A;animation:live 1.5s infinite}
+  .gps-bar[data-level="warn"] .gps-live{background:var(--naranja)} .gps-bar[data-level="danger"] .gps-live{background:#ff5a5a}
+  @keyframes live{70%{box-shadow:0 0 0 8px transparent}}
+  .gps-on .picking{top:74px} .gps-on .fab{display:none}
+  @media (max-width:900px){
+    .gps-on .mapwrap{position:fixed;inset:0;height:100dvh;z-index:1300;top:0}
+    .gps-on .fab,.gps-on .legend{display:none}
+    .gps-bar{right:64px;left:10px;top:10px}
+    .gps-bar .gps-txt small{display:none} .gps-bar .gps-txt b{font-size:.85rem}
+    .gps-bar{gap:6px;padding:6px 6px 6px 12px} .gps-bar .btn.icon{width:38px} #gps-follow{display:none}
+    .sim-t{display:none} #gps-sim{width:38px;padding:0}
+    .gps-on .gps-btn{width:44px;padding:0!important} .gps-on .gps-lbl{display:none}
+    .tab{font-size:.84rem;white-space:nowrap}
+    .layers-pop{width:min(260px,calc(100vw - 90px))}
+    .shell{height:auto;min-height:100dvh}
+    .main{grid-template-columns:1fr;grid-template-rows:52dvh auto}
+    .mapwrap{order:-1;position:sticky;top:0;z-index:5}
+    .panel{border-right:0;border-top:1px solid var(--line);border-radius:18px 18px 0 0;margin-top:-16px;position:relative;z-index:6}
+    .top .upd{display:none} .legend{display:none}
+    .fab{right:auto;left:14px;bottom:14px}
+    header.top{padding:8px 14px;gap:10px} .brand{gap:10px} .brand img{height:30px} .brand .sep{height:28px} .brand small{font-size:.72rem}
+    @media (max-width:520px){ .brand small{display:none} } .weather,.tabs,.pane,.srcline{padding-left:16px;padding-right:16px}
+    .weather .stat b{font-size:1.1rem}
+    /* --- Móvil: más mapa, menos texto encima --- */
+    .main{grid-template-rows:calc(100dvh - 150px) auto}
+    .level-band{padding:8px 44px 8px 14px;min-height:0;gap:10px;cursor:pointer}
+    .level-band .lvl-icon{width:32px;height:32px;border-radius:10px} .level-band .lvl-icon svg{width:18px;height:18px}
+    .level-band .lvl-label{font-size:.95rem}
+    .level-band .lvl-msg{font-size:.8rem;line-height:1.3;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+    .level-band .lvl-extra{display:none}
+    .level-band.open .lvl-msg{-webkit-line-clamp:unset;display:block} .level-band.open .lvl-extra{display:block}
+    .level-band .wave{height:12px}
+    .band-more{position:absolute;right:12px;top:50%;transform:translateY(-50%);width:26px;height:26px;border-radius:8px;background:rgb(255 255 255/.18);display:grid;place-items:center;transition:transform .25s}
+    .band-more svg{width:16px;height:16px} .level-band.open .band-more{transform:translateY(-50%) rotate(180deg)}
+    .map-actions{top:10px;right:10px;gap:6px} .map-actions .btn.icon{width:40px;height:40px;min-height:40px}
+    .gps-btn{min-height:40px;padding:0 12px} .gps-btn .gps-lbl{font-size:.85rem}
+    .leaflet-control-zoom{display:none}
+    .fab{left:10px;bottom:12px;padding:10px 14px;border-radius:999px;font-size:.9rem;gap:6px}
+    .fab .fab-ic svg{width:18px;height:18px;display:block}
+    @media (max-width:420px){ .fab .fab-t{font-size:.85rem} }
+    #btn-full{display:inline-flex}
+    .map-full .mapwrap{position:fixed;inset:0;height:100dvh;z-index:1300;top:0}
+    .map-full .legend{display:flex;left:10px;right:10px;bottom:62px;gap:8px 12px;font-size:.72rem;padding:6px 10px}
+    .map-full #btn-full{background:var(--brand,#1B2B8B);color:#fff;border-color:transparent}
+    .map-full .ovf-banner{bottom:128px}
+  }
+  @media (min-width:901px){ #btn-full,.band-more{display:none} }
+  .fab{display:inline-flex;align-items:center;gap:8px} .fab .fab-ic svg{width:18px;height:18px;display:block}
+  @media (min-width:901px){ .sheet{border-radius:22px;margin-bottom:24px} .sheet-bg{align-items:center} }
+  #risk[hidden],#weather[hidden],#srcline[hidden],.tabs[hidden],.tab[hidden],.legend[hidden],.legend span[hidden],.map-actions .btn[hidden],.fab[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <div class="brand">
+      <img src="/img/emovtt-logo-blanco.png" alt="EMOVTT Santa Rosa EP">
+      <span class="sep" aria-hidden="true"></span>
+      <div><h1>Alerta <span>Vial</span></h1><small id="city">Calles inundadas y vías alternas</small></div>
+    </div>
+    <div class="spacer"></div>
+    <span class="upd" id="updated"></span>
+  </header>
+
+  <div class="level-band normal" id="band" role="status" aria-live="polite">
+    <div class="lvl-icon" id="band-icon"></div>
+    <div><div class="lvl-label" id="band-label">Cargando estado…</div><div class="lvl-msg" id="band-msg"></div></div>
+    <span class="band-more" id="band-more" aria-hidden="true"></span>
+    <div class="wave" id="band-wave" aria-hidden="true"></div>
+  </div>
+
+  <div class="main">
+    <aside class="panel" aria-label="Información de alertas">
+      <div class="risk" id="risk" aria-label="Índice de riesgo de inundación"></div>
+      <div class="weather" id="weather"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+      <div class="srcline" id="srcline"></div>
+      <div class="flood-card" id="flood" hidden></div>
+      <div class="tabs" id="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="true" data-tab="streets">Calles <span class="n" id="n-streets">–</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="routes">Vías alternas <span class="n" id="n-routes">–</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="rivers">Ríos <span class="n" id="n-rivers">–</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="recs">Consejos <span class="n" id="n-recs">–</span></button>
+      </div>
+      <section class="pane" id="pane-streets" role="tabpanel"><div class="list" id="list-streets"><div class="skel"></div><div class="skel"></div></div></section>
+      <section class="pane" id="pane-routes" role="tabpanel" hidden><div class="list" id="list-routes"></div></section>
+      <section class="pane" id="pane-rivers" role="tabpanel" hidden><div class="list" id="list-rivers"></div></section>
+      <section class="pane" id="pane-recs" role="tabpanel" hidden><div class="list" id="list-recs"></div></section>
+      <div class="disclaimer"><img src="/img/emovtt-logo.png" alt=""><span>Servicio de la EMOVTT Santa Rosa EP. Información referencial; para alertas oficiales consulte al INAMHI y a la Secretaría de Gestión de Riesgos.</span></div>
+    </aside>
+
+    <div class="mapwrap">
+      <div id="map" role="application" aria-label="Mapa de calles inundadas"></div>
+      <div class="nav-search" role="search">
+        <span class="nav-ic" id="nav-ic" aria-hidden="true"></span>
+        <input id="nav-q" type="search" placeholder="¿A dónde vas? Ruta sin zonas inundadas" autocomplete="off" aria-label="Buscar destino">
+        <button type="button" class="nav-clear" id="nav-clear" hidden aria-label="Borrar búsqueda">×</button>
+        <div class="nav-results" id="nav-results" hidden></div>
+      </div>
+      <div class="nav-card" id="nav-card" hidden aria-live="polite"></div>
+      <button class="ovf-banner" id="ovf" type="button" hidden aria-live="assertive"></button>
+      <div class="picking" id="picking"><span>Toca el mapa en el lugar del problema</span><button class="btn sm ghost" id="pick-cancel" style="color:#fff;border-color:rgb(255 255 255/.4)">Cancelar</button></div>
+      <div class="map-actions">
+        <button class="btn gps-btn" id="btn-gps" aria-label="Navegar con GPS" title="Navegar con GPS: te avisa antes de llegar a una calle inundada"></button>
+        <button class="btn icon" id="btn-radar" aria-label="Mostrar radar de lluvia" title="Radar de lluvia (RainViewer)"></button>
+        <button class="btn icon" id="btn-layers" aria-label="Capas del mapa" title="Capas del mapa" aria-expanded="false"></button>
+        <button class="btn icon" id="btn-fit" aria-label="Ver toda la ciudad" title="Ver toda la ciudad"></button>
+        <button class="btn icon" id="btn-full" aria-label="Ampliar mapa" title="Ampliar mapa" aria-pressed="false"></button>
+        <div class="layers-pop" id="layers-pop" hidden></div>
+      </div>
+      <div class="gps-bar" id="gps-bar" hidden data-level="ok">
+        <span class="gps-live"></span>
+        <div class="gps-txt"><b id="gps-state">Buscando tu ubicación…</b><small id="gps-acc"></small></div>
+        <button class="btn icon sm on" id="gps-follow" aria-label="Seguir mi ubicación" title="Seguir mi ubicación"></button>
+        <button class="btn icon sm on" id="gps-voice" aria-label="Avisos por voz" title="Avisos por voz"></button>
+        <button class="btn sm" id="gps-sim" title="Simula que te acercas a una calle inundada" aria-label="Simular recorrido"><span class="sim-ic"></span><span class="sim-t">Simular</span></button>
+        <button class="btn icon sm" id="gps-stop" aria-label="Detener GPS" title="Detener GPS"></button>
+      </div>
+      <div class="legend" aria-hidden="true">
+        <span data-f="streets"><i style="background:var(--roja)"></i>Inundada</span><span data-f="streets"><i style="background:var(--naranja)"></i>Parcial</span>
+        <span data-f="streets"><i style="background:var(--normal)"></i>Despejada</span><span data-f="routes"><i style="background:var(--accent);background-image:repeating-linear-gradient(90deg,transparent 0 5px,#fff 5px 8px)"></i>Vía alterna</span>
+        <span data-f="rivers"><i style="background:#2BA3E0;box-shadow:0 0 0 2px #BFE6FA"></i>Río</span><span data-f="rivers"><i style="background:rgb(198 46 46/.3);border:1.5px dashed var(--roja);height:9px"></i>Desborde</span>
+      </div>
+      <button class="btn fab" id="btn-report"><span class="fab-ic" aria-hidden="true"></span><span class="fab-t">Reportar inundación</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="hz-vignette" id="hz-vignette" aria-hidden="true"></div>
+<section class="hz" id="hz" hidden role="alert" aria-live="assertive">
+  <div class="hz-in">
+    <div class="hz-tank" aria-hidden="true">
+      <div class="hz-water" id="hz-water">
+        <svg viewBox="0 0 1200 40" preserveAspectRatio="none"><path fill="rgb(255 255 255 / .32)" d="M0 20 Q75 0 150 20 T300 20 T450 20 T600 20 T750 20 T900 20 T1050 20 T1200 20 V40 H0z"/></svg>
+        <svg viewBox="0 0 1200 40" preserveAspectRatio="none"><path fill="rgb(255 255 255 / .2)" d="M0 20 Q75 40 150 20 T300 20 T450 20 T600 20 T750 20 T900 20 T1050 20 T1200 20 V40 H0z"/></svg>
+      </div>
+      <div class="hz-num"><div><b id="hz-dist">–</b><small id="hz-unit">m</small></div></div>
+    </div>
+    <div class="txt">
+      <span class="hz-badge" id="hz-badge">PRECAUCIÓN</span>
+      <h3 id="hz-title"></h3>
+      <div class="nm" id="hz-name"></div>
+      <div class="mt" id="hz-meta"></div>
+    </div>
+    <div class="hz-arrow" id="hz-arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2 19 21 12 17 5 21z"/></svg></div>
+  </div>
+  <div class="hz-acts"><button class="btn" id="hz-alt">Ver vía alterna</button><button class="btn ghost" id="hz-ok">Entendido</button></div>
+</section>
+
+<div class="sheet-bg" id="sheet-bg">
+  <form class="sheet" id="report-form" novalidate>
+    <div class="grab"></div>
+    <h2 style="margin-bottom:4px" id="r-title">Reportar inundación</h2>
+    <p class="muted small" style="margin-bottom:16px">Tu reporte lo revisa el equipo municipal antes de publicarse en el mapa.</p>
+    <div class="field"><span class="lbl">Qué quieres reportar</span>
+      <div class="seg r-type" role="radiogroup"><button type="button" class="on" data-rtype="inundacion" aria-pressed="true">Calle inundada</button><button type="button" data-rtype="desborde" aria-pressed="false">Desborde de río</button></div></div>
+    <div class="field"><label for="r-street">Calle o sector</label><input id="r-street" placeholder="Ej. Av. Quito y Colón" maxlength="120"></div>
+    <div class="field"><label for="r-level">Qué tan grave es</label>
+      <select id="r-level"><option value="leve">Leve · charcos, se puede pasar</option><option value="moderado" selected>Moderado · agua a media llanta</option><option value="grave">Grave · no se puede pasar</option></select></div>
+    <div class="field"><label for="r-desc">Qué está pasando</label><textarea id="r-desc" maxlength="400" placeholder="Ej. El agua cubre la vereda frente al parque y el bus no pasa."></textarea><span class="err" id="r-err"></span></div>
+    <p class="small muted" id="r-coords" style="margin-bottom:14px"></p>
+    <div style="display:flex;gap:10px;justify-content:flex-end"><button type="button" class="btn ghost" id="r-cancel">Cancelar</button><button type="submit" class="btn">Enviar reporte</button></div>
+  </form>
+</div>
+
+<script src="/vendor/leaflet/leaflet.js"></script>
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "alerta-vial",
+  "version": "1.0.0",
+  "description": "Sistema de alertas de calles inundadas con mapa público y panel administrativo",
+  "main": "server/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "seed": "node server/seed.js --force"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "jszip": "^3.10.1",
+    "leaflet": "^1.9.4",
+    "shpjs": "^4.0.4"
+  },
+  "license": "MIT"
+}
