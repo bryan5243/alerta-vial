@@ -91,14 +91,17 @@ export async function safeRoute(o, d, zones) {
   return { ...best, avoided: directHits.filter(z => !best.blocked.includes(z)).map(x => x.name) };
 }
 
+// Búsqueda solo dentro de Santa Rosa: caja de ~7 km alrededor del centro configurado, sin salir de ella.
+export const SEARCH_RADIUS_M = 7000;
 export async function geocode(q, center) {
-  const vb = [center.lng - 0.2, center.lat + 0.2, center.lng + 0.2, center.lat - 0.2].join(',');
-  const go = async extra => {
-    const r = await fetch(`${NOMINATIM}?format=jsonv2&limit=6&countrycodes=ec&accept-language=es&q=${encodeURIComponent(q)}&viewbox=${vb}${extra}`, { signal: AbortSignal.timeout(8000) });
-    return (await r.json()).map(x => ({ name: x.name || x.display_name.split(',')[0], label: x.display_name, lat: +x.lat, lng: +x.lon }));
+  const d = 0.065, vb = [center.lng - d, center.lat + d, center.lng + d, center.lat - d].join(',');
+  const go = async qq => {
+    const r = await fetch(`${NOMINATIM}?format=jsonv2&limit=8&countrycodes=ec&accept-language=es&bounded=1&viewbox=${vb}&q=${encodeURIComponent(qq)}`, { signal: AbortSignal.timeout(8000) });
+    return (await r.json()).map(x => ({ name: x.name || x.display_name.split(',')[0], label: x.display_name.split(',').slice(0, 4).join(','), lat: +x.lat, lng: +x.lon }))
+      .filter(x => haversine(center, x) <= SEARCH_RADIUS_M);
   };
-  const near = await go('&bounded=1');
-  return near.length ? near : go('');
+  const near = await go(q);
+  return (near.length ? near : await go(`${q}, Santa Rosa`)).slice(0, 6);
 }
 
 const fmtKm = m => (m >= 1000 ? `${(m / 1000).toFixed(1).replace('.', ',')} km` : `${Math.round(m / 10) * 10} m`);
@@ -111,13 +114,14 @@ const LS = {
 };
 const slim = r => ({ coords: r.coords.map(([a, b]) => [+a.toFixed(6), +b.toFixed(6)]), distance: r.distance, duration: r.duration, avoided: r.avoided || [], blocked: (r.blocked || []).map(z => ({ name: z.name })) });
 
-export function createNav({ getMap, getState, getUser, startGps, onChange = () => {} }) {
+export function createNav({ getMap, getState, getUser, startGps, onChange = () => {}, sim = false, getDirect = () => false }) {
   const $ = s => document.querySelector(s);
   let trip = null;      // { dest, origin, route, saved?, offline? }
   let shapes = [], detourR = null, picking = null, timer = null, seq = 0, replanning = false;
   let from = null;      // null = mi ubicación; { lat, lng, name } = punto elegido
   let planTo = null;    // destino elegido en el panel "Mi ruta"
-  let restore = LS.get('av_trip', null);
+  let pendingDest = null; // simulador: destino en espera mientras se marca la salida
+  let restore = sim ? null : LS.get('av_trip', null);
 
   const input = $('#nav-q'), list = $('#nav-results'), card = $('#nav-card');
   $('#nav-ic').innerHTML = ICON.search || ICON.nav;
@@ -158,15 +162,15 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     }
     if (my !== seq) return;
     res = [...local, ...res];
-    list.innerHTML = (res.length ? res.map((r, i) => `<button type="button" class="nav-res" data-i="${i}">${ICON.pin}<span><b>${esc(r.name)}</b><small>${esc(r.label || 'Lugar guardado')}</small></span></button>`).join('') : `<div class="nav-msg">Sin resultados para “${esc(q)}”.</div>`) + pickBtn();
+    list.innerHTML = (res.length ? res.map((r, i) => `<button type="button" class="nav-res" data-i="${i}">${ICON.pin}<span><b>${esc(r.name)}</b><small>${esc(r.label || 'Lugar guardado')}</small></span></button>`).join('') : `<div class="nav-msg">No encontramos “${esc(q)}” en Santa Rosa. Prueba con el nombre de una calle, un barrio o un lugar conocido, o elige el punto en el mapa.</div>`) + pickBtn();
     list.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { const r = res[+b.dataset.i]; input.value = r.name; list.hidden = true; go(r); });
     bindPick(list);
   }
-  const pickBtn = () => `<button type="button" class="nav-res pick" data-pick>${ICON.nav}<span><b>Elegir el destino en el mapa</b><small>Toca el lugar al que quieres ir</small></span></button>`;
+  const pickBtn = () => `<button type="button" class="nav-res pick" data-pick>${ICON.nav}<span><b>Elegir el destino en el mapa</b><small>Toca el lugar al que quieres ir</small></span></button><div class="nav-scope">Búsqueda solo dentro de Santa Rosa</div>`;
   function bindPick(el) { el.querySelector('[data-pick]')?.addEventListener('click', () => { list.hidden = true; startPick('go'); }); }
   function startPick(target) {
     picking = target; document.body.classList.add('nav-picking'); closePlan();
-    toast(target === 'from' ? 'Toca en el mapa el lugar desde donde sales' : 'Toca en el mapa el lugar al que quieres ir', 'ok');
+    toast(target === 'from-go' ? 'Simulación: toca en el mapa de dónde sale el vehículo' : target === 'from' ? 'Toca en el mapa el lugar desde donde sales' : 'Toca en el mapa el lugar al que quieres ir', 'ok');
   }
 
   async function origin() {
@@ -183,12 +187,17 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
   }
 
   async function go(dest) {
+    // Simulador: el vehículo virtual necesita un punto de salida en el mapa.
+    if (sim && !from) { pendingDest = dest; startPick('from-go'); return; }
     card.hidden = false; card.className = 'nav-card loading';
     card.innerHTML = `<div class="nav-spin"></div><div><b>Calculando ruta segura…</b><small>Revisando zonas inundadas activas</small></div>`;
     const o = await origin();
     try {
-      const route = await safeRoute(o, dest, hazardZones(getState()));
-      setTrip({ dest, origin: o, route }); draw(true); renderCard();
+      const zones = hazardZones(getState());
+      let route, direct = false;
+      if (getDirect()) { const r = await safeRoute(o, dest, []); route = { ...r, avoided: [], blocked: blockers(r.coords, zones) }; direct = true; }
+      else route = await safeRoute(o, dest, zones);
+      setTrip({ dest, origin: o, route, direct }); draw(true); renderCard();
     } catch (e) {
       // Sin red: si hay una ruta guardada hacia ese mismo lugar, la usamos.
       const sv = LS.get('av_routes', []).find(r => haversine(r.dest, dest) < 80);
@@ -203,7 +212,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
   }
   function setTrip(t) {
     trip = t;
-    LS.set('av_trip', trip ? { dest: trip.dest, origin: trip.origin, route: slim(trip.route), saved: trip.saved, at: Date.now() } : null);
+    if (!sim) LS.set('av_trip', trip ? { dest: trip.dest, origin: trip.origin, route: slim(trip.route), saved: trip.saved, at: Date.now() } : null);
     onChange();
   }
   function openSaved(sv, offline) {
@@ -220,10 +229,10 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
       <div class="nav-badge">${bad ? ICON.warn : ICON.check}</div>
       <div class="nav-info"><small>${fromTxt} hasta</small><b>${esc(trip.dest.name)}</b>
         <div class="nav-meta"><span>${fmtKm(r.distance)}</span><span>${fmtMin(r.duration)}</span></div>
-        <div class="nav-note">${bad ? `No hay una ruta totalmente libre: pasa por ${esc(r.blocked.map(z => z.name).join(', '))}. Extreme precaución.`
+        <div class="nav-note">${trip.direct && bad ? `Ruta directa de prueba: cruza ${esc(r.blocked.map(z => z.name).join(', '))}. El GPS avisará al acercarse y ofrecerá un desvío.` : bad ? `No hay una ruta totalmente libre: pasa por ${esc(r.blocked.map(z => z.name).join(', '))}. Extreme precaución.`
           : r.avoided?.length ? `Ruta segura: evita ${r.avoided.length === 1 ? esc(r.avoided[0]) : `${r.avoided.length} zonas inundadas`}.` : 'Ruta libre de zonas inundadas.'}</div>
         ${trip.offline ? `<div class="nav-off">${ICON.info} Sin conexión: usando tu ruta guardada.</div>` : ''}</div>
-      <div class="nav-acts">${getUser() ? '' : `<button class="btn sm" id="nav-start">${ICON.nav} Iniciar</button>`}
+      <div class="nav-acts">${getUser() ? '' : `<button class="btn sm" id="nav-start">${sim ? ICON.play || ICON.nav : ICON.nav} ${sim ? 'Simular' : 'Iniciar'}</button>`}
         <button class="btn sm ghost${saved ? ' on' : ''}" id="nav-save" aria-pressed="${saved}" title="Guardar para usarla sin conexión">${saved ? ICON.check + ' Guardada' : 'Guardar'}</button>
         <button class="btn sm ghost" id="nav-x" aria-label="Terminar ruta">${ICON.x}</button></div>`;
     $('#nav-start')?.addEventListener('click', () => { startGps(); renderCard(); });
@@ -286,7 +295,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
       let res = local;
       try { res = [...local, ...await geocode(q, getState().config.center)]; } catch { if (!local.length) { box.innerHTML = `<div class="nav-msg">Sin conexión para buscar. Usa "Elegir en el mapa".</div>`; return; } }
       if (my !== plSeq) return;
-      box.innerHTML = res.length ? res.slice(0, 6).map((r, i) => `<button type="button" class="nav-res" data-r="${i}">${ICON.pin}<span><b>${esc(r.name)}</b><small>${esc(r.label || 'Lugar guardado')}</small></span></button>`).join('') : `<div class="nav-msg">Sin resultados.</div>`;
+      box.innerHTML = res.length ? res.slice(0, 6).map((r, i) => `<button type="button" class="nav-res" data-r="${i}">${ICON.pin}<span><b>${esc(r.name)}</b><small>${esc(r.label || 'Lugar guardado')}</small></span></button>`).join('') : `<div class="nav-msg">No está en Santa Rosa. Prueba otro nombre o "En el mapa".</div>`;
       box.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { planTo = res[+b.dataset.r]; box.innerHTML = ''; renderPlan(); });
     }, 450);
   });
@@ -302,7 +311,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     return { id: 'auto', name: trip ? `Ruta segura a ${trip.dest.name}` : 'Desvío automático', description: r.avoided?.length ? `Evita ${r.avoided.join(', ')}.` : '', coords: r.coords, auto: true };
   }
   function showDetour(r) {
-    if (trip) { trip.route = { ...trip.route, coords: r.coords }; setTrip(trip); draw(); return; }
+    if (trip) { trip.route = { ...trip.route, coords: r.coords, blocked: [], avoided: r.description ? [r.description.replace(/^Evita |\.$/g, '')] : trip.route.avoided }; trip.direct = false; setTrip(trip); draw(); renderCard(); return; }
     detourR = r; draw(false);
   }
 
@@ -314,7 +323,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     }
     restore = null;
     draw(false);
-    if (!trip || replanning) return;
+    if (!trip || replanning || trip.direct) return;
     if (blockers(trip.route.coords, hazardZones(getState())).length && !trip.route.blocked?.length) {
       replanning = true;
       try { const u = getUser(); const o = u || trip.origin; setTrip({ ...trip, route: await safeRoute(o, trip.dest, hazardZones(getState())), offline: false }); draw(false); renderCard(); toast('Se activó una zona inundada en tu camino: recalculamos la ruta.', 'ok'); }
@@ -327,11 +336,15 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     refresh, detour, showDetour, go, openPlan,
     get active() { return !!trip; },
     get trip() { return trip; },
+    resetFrom() { from = null; },
     onMapClick(pos) {
       if (!picking) return false;
+      const c = getState()?.config?.center;
+      if (c && haversine(c, pos) > SEARCH_RADIUS_M) { toast('Ese punto está fuera de Santa Rosa. Elige un lugar dentro de la ciudad.', 'err'); return true; }
       const t = picking; picking = null; document.body.classList.remove('nav-picking');
       if (t === 'from') { from = { ...pos, name: 'Punto elegido en el mapa' }; openPlan(); return true; }
       if (t === 'to') { planTo = { ...pos, name: 'Punto elegido en el mapa' }; openPlan(); return true; }
+      if (t === 'from-go') { from = { ...pos, name: 'Salida de la simulación' }; const d = pendingDest; pendingDest = null; if (d) go(d); return true; }
       input.value = 'Punto elegido en el mapa'; $('#nav-clear').hidden = false; go({ ...pos, name: 'el punto elegido' }); return true;
     },
   };

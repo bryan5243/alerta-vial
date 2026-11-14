@@ -11,9 +11,32 @@ export const fmtTime = iso => iso ? new Date(iso).toLocaleString('es-EC', { hour
 export const ago = iso => { const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 1 ? 'ahora' : m < 60 ? `hace ${m} min` : m < 1440 ? `hace ${Math.round(m / 60)} h` : `hace ${Math.round(m / 1440)} d`; };
 
 export function toast(msg, kind = '') {
-  let w = document.querySelector('.toast-wrap'); if (!w) { w = document.createElement('div'); w.className = 'toast-wrap'; document.body.appendChild(w); }
-  const t = document.createElement('div'); t.className = `toast ${kind}`; t.textContent = msg; w.appendChild(t);
-  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 3200);
+  let w = document.querySelector('.toast-wrap'); if (!w) { w = document.createElement('div'); w.className = 'toast-wrap'; w.setAttribute('aria-live', 'polite'); document.body.appendChild(w); }
+  if ([...w.children].some(x => x.dataset.msg === msg && !x.classList.contains('out'))) return; // mismo aviso ya visible
+  while (w.children.length >= 3) w.firstChild.remove(); // no apilar demasiados avisos
+  const t = document.createElement('div'); t.className = `toast ${kind}`;
+  t.innerHTML = `<span class="toast-ic">${kind === 'err' ? ICON.warn : kind === 'ok' ? ICON.check : ICON.info}</span><span></span><i class="toast-bar"></i>`;
+  t.children[1].textContent = msg; t.dataset.msg = msg; w.appendChild(t);
+  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 280); }, 3400);
+}
+
+// Ventana de confirmación propia (en lugar del confirm() del navegador). Devuelve una promesa con true/false.
+export function confirmBox({ title = '¿Estás seguro?', text = '', ok = 'Aceptar', cancel = 'Cancelar', tone = 'danger', icon } = {}) {
+  return new Promise(resolve => {
+    const bg = document.createElement('div'); bg.className = 'cbox-bg';
+    bg.innerHTML = `<div class="cbox ${tone}" role="alertdialog" aria-modal="true" aria-labelledby="cbox-t" aria-describedby="cbox-d">
+      <div class="cbox-ic">${icon || (tone === 'danger' ? ICON.trash || ICON.warn : ICON.warn)}</div>
+      <h3 id="cbox-t"></h3><p id="cbox-d"></p>
+      <div class="cbox-acts"><button type="button" class="btn ghost" data-c="0"></button><button type="button" class="btn ${tone === 'danger' ? 'danger' : ''}" data-c="1"></button></div></div>`;
+    bg.querySelector('h3').textContent = title; bg.querySelector('p').textContent = text;
+    bg.querySelector('[data-c="0"]').textContent = cancel; bg.querySelector('[data-c="1"]').textContent = ok;
+    const prev = document.activeElement;
+    const done = v => { bg.classList.add('out'); document.removeEventListener('keydown', key, true); setTimeout(() => { bg.remove(); prev?.focus?.(); }, 200); resolve(v); };
+    const key = e => { if (e.key === 'Escape') { e.preventDefault(); done(false); } if (e.key === 'Tab') { const bs = [...bg.querySelectorAll('button')]; const i = bs.indexOf(document.activeElement); e.preventDefault(); bs[(i + (e.shiftKey ? -1 : 1) + bs.length) % bs.length].focus(); } };
+    bg.addEventListener('click', e => { if (e.target === bg) done(false); const b = e.target.closest('[data-c]'); if (b) done(b.dataset.c === '1'); });
+    document.addEventListener('keydown', key, true);
+    document.body.appendChild(bg); bg.querySelector('[data-c="1"]').focus();
+  });
 }
 export const ICON = {
   drop: '<svg class="i" viewBox="0 0 24 24"><path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z"/></svg>',

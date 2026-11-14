@@ -262,6 +262,12 @@ lateral + mapa. El panel admin usa barra inferior en celular.
 - **Admin → Alerta → Simulador de lluvia (pruebas):** botones Sin lluvia, Llovizna, Lluvia leve, moderada, fuerte y Tormenta, o valores a mano (mm ahora, últimas 3 h, próximas 3 h, probabilidad y tipo de cielo), con duración de 15 a 120 min. Mientras dura, el nivel publicado sigue al clima simulado aunque la alerta esté en manual, los puntos "auto" se encienden con naranja/roja y el mapa público muestra la etiqueta "Simulación de prueba". Vive solo en memoria: no se guarda en `data/db.json` y se apaga al terminar el tiempo, con "Detener" o al reiniciar el servidor.
 - **Radar RainViewer:** desde el 1 de enero de 2026 la API gratuita solo entrega cuadros hasta zoom 7 (y solo el esquema de color Universal Blue, sin pronóstico a futuro). El mapa ahora pide zoom 7 y lo amplía, por eso se ve más borroso que antes. Se activa con el botón de radar del mapa público.
 
+### Simulador de navegación, búsqueda en Santa Rosa y ventanas propias
+- **Admin → Simular navegación:** el mapa público dentro del panel (vista teléfono o computadora, o en otra pestaña con `/?sim=1`). Se busca el destino, se toca la salida en el mapa y "Simular" hace que un vehículo virtual recorra la ruta a 1×, 2× o 4×, con pausa. Se ven los avisos del GPS, las vías alternas apareciendo al acercarse y, con "Ruta directa, sin esquivar", el aviso de la intersección inundada y el botón **Tomar desvío**, que recalcula el camino al destino y el vehículo lo sigue. En modo simulación no se usa el GPS real ni se guarda la ruta en el teléfono.
+- El botón "Simular" de la barra GPS del mapa público también recorre la ruta marcada, si la hay.
+- **Búsqueda solo en Santa Rosa:** Nominatim se consulta con una caja de unos 7 km alrededor del centro configurado (`bounded=1`) y se descartan resultados más lejanos; elegir un punto fuera de la ciudad en el mapa también se rechaza.
+- **Ventanas propias:** las confirmaciones (eliminar, desactivar todos) usan una ventana animada de la app en lugar del `confirm()` del navegador; los avisos (toasts) tienen icono, barra de tiempo, animación y no se repiten.
+
 ## 12. Siguientes pasos sugeridos
 
 - Pasar la base de datos a SQLite/Postgres y los usuarios a una tabla con contraseñas cifradas.

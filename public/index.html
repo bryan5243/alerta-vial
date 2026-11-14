@@ -164,6 +164,12 @@
         <div class="nav-results" id="nav-results" hidden></div>
         <button type="button" class="alt-chip" id="alt-chip" hidden></button>
         <div class="offline-pill" id="offline" hidden role="status"></div>
+        <div class="sim-bar" id="sim-bar" hidden>
+          <div class="sim-head"><span class="sim-dot"></span><b>Simulador de navegación</b><small>No usa tu GPS real</small></div>
+          <label class="sim-opt"><input type="checkbox" id="sim-direct"> Ruta directa, sin esquivar (para probar avisos y desvíos)</label>
+          <div class="sim-ctl"><span>Velocidad</span><div class="sim-speed"><button type="button" data-speed="1">1×</button><button type="button" data-speed="2" class="on">2×</button><button type="button" data-speed="4">4×</button></div>
+            <button type="button" class="btn sm ghost" id="sim-pause">Pausa</button><button type="button" class="btn sm ghost" id="sim-reset">Nueva prueba</button></div>
+        </div>
       </div>
       <div class="nav-card" id="nav-card" hidden aria-live="polite"></div>
       <button class="ovf-banner" id="ovf" type="button" hidden aria-live="assertive"></button>

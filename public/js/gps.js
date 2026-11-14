@@ -120,7 +120,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
       pulse = map.addPulse({ ...b.point, tone });
       link = map.addLink(user, b.point, tone);
       const alt = altRoute(b.hz);
-      $('#hz-alt').textContent = alt?.id === 'auto' ? 'Ver desvío' : 'Ver vía alterna';
+      $('#hz-alt').textContent = alt?.id === 'auto' ? (getNav()?.trip ? 'Tomar desvío' : 'Ver desvío') : 'Ver vía alterna';
       $('#hz-alt').hidden = !alt; $('#hz-alt').onclick = () => alt && showAlt(alt);
       if (!alt) autoDetour(b.hz);
       map.fitBounds([[user.lat, user.lng], [b.point.lat, b.point.lng]]);
@@ -176,11 +176,13 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
     nav.detour(user, hz).then(r => {
       if (!r) { detours.delete(hz.id); return; }
       detours.set(hz.id, r);
-      if (active?.hz.id === hz.id) { $('#hz-alt').textContent = 'Ver desvío'; $('#hz-alt').hidden = false; $('#hz-alt').onclick = () => showAlt(r); }
+      if (active?.hz.id === hz.id) { $('#hz-alt').textContent = getNav()?.trip ? 'Tomar desvío' : 'Ver desvío'; $('#hz-alt').hidden = false; $('#hz-alt').onclick = () => showAlt(r); }
     }).catch(() => detours.delete(hz.id));
   }
   function altRoute(hz) {
     const st = getState(); if (!st) return null;
+    // Con una ruta marcada, el desvío es recalcular el camino al destino sin pasar por el peligro.
+    if (getNav()?.trip) return detours.get(hz.id) || null;
     return st.routes.find(r => r.avoids === hz.id) || detours.get(hz.id) || (hz.kind === 'street' || hz.src?.type === 'interseccion' ? null : st.routes.slice().sort((a, b) => nearestOnLine(user, a.coords).d - nearestOnLine(user, b.coords).d)[0]) || null;
   }
   function showAlt(r) {
@@ -209,21 +211,53 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
     try { speechSynthesis.cancel(); } catch {}
     onMove(null);
   }
-  // Simula que el usuario se acerca a la primera calle inundada (para demostrar y probar sin salir).
+  // Simulación de navegación: si hay una ruta marcada, un vehículo virtual la recorre (y sigue el desvío si lo aceptas).
+  // Sin ruta: se acerca a la primera calle inundada para mostrar el aviso.
+  let simSpeed = 2, simPaused = false;
   function simulate() {
     if (simTimer) { clearInterval(simTimer); simTimer = null; $('#gps-sim').classList.remove('on'); return; }
-    const hz = hazards().find(h => h.kind === 'street' && h.tone === 'roja') || hazards()[0];
-    if (!hz) return toast('No hay calles inundadas para simular.', 'err');
+    const nav = getNav();
     if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
     $('#gps-bar').hidden = false; $('#btn-gps').classList.add('on'); document.body.classList.add('gps-on'); $('#gps-sim').classList.add('on');
+    hist.clear(); snoozed.clear(); detours.clear(); simPaused = false; follow = true; $('#gps-follow').classList.add('on');
+    if (nav?.trip) {
+      const c0 = nav.trip.route.coords[0]; let pos = { lat: c0[0], lng: c0[1] };
+      onPos({ ...pos, accuracy: 5, heading: null });
+      simTimer = setInterval(() => {
+        if (simPaused) return;
+        const t = nav.trip; if (!t) { stop(); return; }
+        const r = advance(t.route.coords, pos, 5 * simSpeed); // 5 m por paso de 0,5 s = 36 km/h a velocidad 1×
+        pos = r.pos; onPos({ ...pos, accuracy: 5, heading: r.heading, speed: 10 * simSpeed });
+        if (r.done) { clearInterval(simTimer); simTimer = null; $('#gps-sim').classList.remove('on'); toast(`Llegaste a ${t.dest.name}. Fin de la simulación.`, 'ok'); }
+      }, 500);
+      return;
+    }
+    const hz = hazards().find(h => h.kind === 'street' && h.tone === 'roja') || hazards()[0];
+    if (!hz) { toast('No hay peligros activos para simular. Marca un destino para recorrer una ruta.', 'err'); return; }
     const mid = hz.coords[Math.floor(hz.coords.length / 2)], target = { lat: mid[0], lng: mid[1] };
     const startP = { lat: target.lat - 0.0058, lng: target.lng - 0.0042 }; // ~ 790 m al suroeste
-    const steps = 60; let i = 0; hist.clear(); snoozed.clear();
+    const steps = 60; let i = 0;
     simTimer = setInterval(() => {
+      if (simPaused) return;
       const k = Math.min(1, i / steps);
       onPos({ lat: startP.lat + (target.lat - startP.lat) * k * 0.97, lng: startP.lng + (target.lng - startP.lng) * k * 0.97, accuracy: 8 });
       if (++i > steps) { clearInterval(simTimer); simTimer = null; $('#gps-sim').classList.remove('on'); }
     }, 450);
+  }
+  // Avanza m metros sobre la polilínea desde el punto más cercano a pos.
+  function advance(coords, pos, m) {
+    let bi = 0, bd = Infinity, bt = 0;
+    for (let i = 0; i < coords.length - 1; i++) {
+      const a = { lat: coords[i][0], lng: coords[i][1] }, b = { lat: coords[i + 1][0], lng: coords[i + 1][1] };
+      const np = nearestOnLine(pos, [coords[i], coords[i + 1]]); if (np.d < bd) { bd = np.d; bi = i; const L = haversine(a, b); bt = L ? haversine(a, np.point) / L : 0; }
+    }
+    let i = bi, cur = { lat: coords[i][0] + (coords[i + 1][0] - coords[i][0]) * bt, lng: coords[i][1] + (coords[i + 1][1] - coords[i][1]) * bt }, left = m;
+    while (i < coords.length - 1) {
+      const nx = { lat: coords[i + 1][0], lng: coords[i + 1][1] }, d = haversine(cur, nx);
+      if (d >= left && d > 0) { const k = left / d; const p = { lat: cur.lat + (nx.lat - cur.lat) * k, lng: cur.lng + (nx.lng - cur.lng) * k }; return { pos: p, heading: bearing(cur, nx), done: false }; }
+      left -= d; cur = nx; i++;
+    }
+    const n = coords.length; return { pos: cur, heading: n > 1 ? bearing({ lat: coords[n - 2][0], lng: coords[n - 2][1] }, cur) : null, done: true };
   }
   $('#btn-gps').addEventListener('click', () => (watchId != null || simTimer ? stop() : start()));
   $('#gps-stop').addEventListener('click', stop);
@@ -239,5 +273,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
     get user() { return user; },
     start: () => { if (watchId == null && !simTimer) start(); },
     simulate, onPos, stop: () => { if (watchId != null || simTimer) stop(); },
+    get simulating() { return !!simTimer; },
+    setSimSpeed(v) { simSpeed = v; }, toggleSimPause() { simPaused = !simPaused; return simPaused; },
   };
 }

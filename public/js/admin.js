@@ -2,7 +2,7 @@ import { createMap } from './map-provider.js';
 import { parseLayerFile, summarize, importable } from './layers.js';
 import { fetchWaterways, KIND } from './osm-rivers.js';
 import { autoDetoursFor } from './nav.js';
-import { RIVER, ZSEV, LEVELS, STATUS, PTYPE, SEV, esc, ago, fmtTime, toast, ICON, waveSvg } from './common.js';
+import { RIVER, ZSEV, LEVELS, STATUS, PTYPE, SEV, esc, ago, fmtTime, toast, confirmBox, ICON, waveSvg } from './common.js';
 
 const root = document.getElementById('root');
 let token = sessionStorage.getItem('av_token');
@@ -38,7 +38,7 @@ function renderLogin(err) {
 /* ================= SHELL ================= */
 const NAV = [
   ['alert', 'Alerta', ICON.warn, 'Alerta'], ['points', 'Puntos críticos', ICON.pin, 'Puntos'], ['streets', 'Calles', ICON.drop, 'Calles'],
-  ['routes', 'Vías alternas', ICON.route, 'Vías'], ['rivers', 'Ríos', ICON.wave, 'Ríos'], ['zones', 'Desbordes', ICON.drop, 'Desbordes'], ['recommendations', 'Recomendaciones', ICON.info, 'Consejos'], ['reports', 'Reportes', ICON.inbox, 'Reportes'], ['layers', 'Capas', ICON.layers, 'Capas'], ['config', 'Configuración', ICON.settings, 'Ajustes'],
+  ['routes', 'Vías alternas', ICON.route, 'Vías'], ['rivers', 'Ríos', ICON.wave, 'Ríos'], ['zones', 'Desbordes', ICON.drop, 'Desbordes'], ['recommendations', 'Recomendaciones', ICON.info, 'Consejos'], ['reports', 'Reportes', ICON.inbox, 'Reportes'], ['layers', 'Capas', ICON.layers, 'Capas'], ['navsim', 'Simular navegación', ICON.nav, 'Simular'], ['config', 'Configuración', ICON.settings, 'Ajustes'],
 ];
 const HAS_MAP = { points: 1, streets: 1, routes: 1, rivers: 1, zones: 1, reports: 1, config: 1, layers: 1 };
 
@@ -75,7 +75,7 @@ async function refresh() { db = await api('/api/admin/state'); document.getEleme
 
 function renderSection() {
   document.getElementById('title').textContent = NAV.find(n => n[0] === section)[1];
-  ({ alert: secAlert, points: secPoints, streets: secStreets, routes: secRoutes, rivers: secRivers, zones: secZones, recommendations: secRecs, reports: secReports, layers: secLayers, config: secConfig })[section]();
+  ({ alert: secAlert, points: secPoints, streets: secStreets, routes: secRoutes, rivers: secRivers, zones: secZones, recommendations: secRecs, reports: secReports, layers: secLayers, navsim: secNavSim, config: secConfig })[section]();
 }
 
 /* ================= ALERTA ================= */
@@ -110,6 +110,24 @@ function secAlert() {
   id('save-msg').onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { message: id('msg').value } }); toast('Aviso guardado', 'ok'); refresh(); };
   bindSim(w);
   id('save-lm').onclick = async () => { await api('/api/admin/config', { method: 'PUT', body: { levelMessages: Object.fromEntries(Object.keys(LEVELS).map(k => [k, id('lm-' + k).value])) } }); toast('Mensajes por color guardados', 'ok'); refresh(); };
+}
+
+/* ================= SIMULAR NAVEGACIÓN ================= */
+let simView = 'phone';
+function secNavSim() {
+  col(`
+    <div class="card navsim-help">
+      <div class="section-head"><h3>${ICON.nav} Simulador de navegación</h3><a class="btn ghost sm" href="/?sim=1" target="_blank" rel="noopener">${ICON.eye} Abrir en otra pestaña</a></div>
+      <ol class="navsim-steps">
+        <li><b>Destino:</b> búscalo arriba o elígelo en el mapa.</li>
+        <li><b>Salida:</b> toca en el mapa de dónde sale el vehículo.</li>
+        <li><b>Simular:</b> el vehículo recorre la ruta. Verás los avisos del GPS, las vías alternas apareciendo al acercarte y los desvíos.</li>
+      </ol>
+      <p class="small muted">Marca "Ruta directa, sin esquivar" para que el vehículo vaya hacia una zona inundada y probar el aviso y el botón "Tomar desvío": el vehículo cambia de camino y sigue la ruta segura. Usa el simulador de lluvia (Alerta) para encender los puntos con alerta naranja. Nada de esto cambia lo que ve la ciudadanía.</p>
+      <div class="seg navsim-view" role="radiogroup" aria-label="Tamaño de la vista"><button type="button" data-view="phone" class="${simView === 'phone' ? 'on' : ''}">Vista teléfono</button><button type="button" data-view="wide" class="${simView === 'wide' ? 'on' : ''}">Vista computadora</button></div>
+    </div>
+    <div class="navsim-frame ${simView}"><iframe src="/?sim=1" title="Simulador de navegación" allow="geolocation"></iframe></div>`);
+  q('[data-view]').forEach(b => b.onclick = () => { simView = b.dataset.view; id('col').querySelector('.navsim-frame').className = `navsim-frame ${simView}`; q('[data-view]').forEach(x => x.classList.toggle('on', x === b)); });
 }
 
 /* ---------- Simulador de lluvia (pruebas) ---------- */
@@ -210,7 +228,7 @@ function bulkBar(kind, withAuto) {
 function bindBulk(kind) {
   q(`[data-bulk="${kind}"]`).forEach(b => b.onclick = async () => {
     const on = b.dataset.v === '1';
-    if (!on && !confirm('¿Desactivar todos? Dejarán de verse en el mapa público y el GPS no avisará por ellos.')) return;
+    if (!on && !await confirmBox({ title: 'Desactivar todos', text: 'Dejarán de verse en el mapa público y el GPS no avisará por ellos. Puedes volver a activarlos cuando quieras.', ok: 'Desactivar todos', tone: 'warn', icon: ICON.eye })) return;
     const r = await api(`/api/admin/${kind}/bulk`, { method: 'PUT', body: { active: on } }); toast(`${r.updated} ${on ? 'activados' : 'desactivados'}`, 'ok'); refresh();
   });
   q('[data-bulkauto]').forEach(b => b.onclick = async () => {
@@ -390,7 +408,7 @@ function secReports() {
           <button class="btn danger sm" data-rdel="${r.id}">${ICON.trash}</button></div></div></div>`).join('') : emptyBox('No hay reportes ciudadanos todavía.')}</div>`);
   setTools([]); drawMode = null; drawAll(true);
   q('[data-rs]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); await api(`/api/admin/reports/${b.dataset.id}`, { method: 'PUT', body: { status: b.dataset.rs } }); toast(`Reporte ${b.dataset.rs}`, 'ok'); refresh(); });
-  q('[data-rdel]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); if (!confirm('¿Eliminar este reporte definitivamente?')) return; await api(`/api/admin/reports/${b.dataset.rdel}`, { method: 'DELETE' }); refresh(); });
+  q('[data-rdel]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); if (!await confirmBox({ title: 'Eliminar reporte', text: 'El reporte se borrará definitivamente. Si solo quieres ocultarlo del mapa, usa "Retirar" o "Descartar".', ok: 'Eliminar' })) return; await api(`/api/admin/reports/${b.dataset.rdel}`, { method: 'DELETE' }); refresh(); });
   q('[data-topoint]').forEach(b => b.onclick = ev => { ev.stopPropagation(); const r = db.reports.find(x => x.id === b.dataset.topoint); editing = { name: r.street, lat: r.lat, lng: r.lng, type: 'inundacion', severity: r.level === 'grave' ? 'alta' : r.level === 'moderado' ? 'media' : 'baja', description: r.description }; section = 'points'; renderShell(); });
   q('[data-focus]').forEach(b => b.onclick = () => { const r = db.reports.find(x => x.id === b.dataset.focus); map?.panTo(r, 16); });
 }
@@ -458,7 +476,7 @@ function secLayers() {
     if (l.active !== false) await api(`/api/admin/layers/${l.id}`, { method: 'PUT', body: { active: false } });
     section = 'points'; editing = null; await refresh(); renderShell();
   });
-  q('[data-ldel]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); if (!confirm('¿Eliminar esta capa definitivamente?')) return; await api(`/api/admin/layers/${b.dataset.ldel}`, { method: 'DELETE' }); toast('Capa eliminada', 'ok'); refresh(); });
+  q('[data-ldel]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); const ly = (db.layers || []).find(x => x.id === b.dataset.ldel); if (!await confirmBox({ title: 'Eliminar capa', text: `Se borrará "${ly?.name || 'la capa'}" del sistema. Los puntos que ya convertiste desde ella se mantienen.`, ok: 'Eliminar capa' })) return; await api(`/api/admin/layers/${b.dataset.ldel}`, { method: 'DELETE' }); toast('Capa eliminada', 'ok'); refresh(); });
   q('[data-lfocus]').forEach(b => b.onclick = () => { const l = db.layers.find(x => x.id === b.dataset.lfocus); const pts = []; for (const f of l.geojson.features) walkC(f.geometry, c => pts.push([c[1], c[0]])); map.fitBounds(pts); });
 }
 const walkC = (g, fn) => { if (!g) return; if (g.type === 'GeometryCollection') return g.geometries.forEach(x => walkC(x, fn)); const w = a => (typeof a[0] === 'number' ? fn(a) : a.forEach(w)); w(g.coordinates); };
@@ -527,7 +545,7 @@ function itemRow(x, meta, kind, dot) {
 function bindList(kind) {
   q('[data-toggle]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); const x = db[kind].find(i => i.id === b.dataset.toggle); await api(`/api/admin/${kind}/${x.id}`, { method: 'PUT', body: { active: x.active === false } }); toast(x.active === false ? 'Activado y visible al público' : 'Desactivado: oculto al público', 'ok'); refresh(); });
   q('[data-edit]').forEach(b => b.onclick = ev => { ev.stopPropagation(); editing = { ...db[kind].find(i => i.id === b.dataset.edit) }; renderSection(); });
-  q('[data-del]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); if (!confirm('¿Eliminar definitivamente? Esta acción no se puede deshacer.')) return; await api(`/api/admin/${kind}/${b.dataset.del}`, { method: 'DELETE' }); toast('Eliminado', 'ok'); editing = null; refresh(); });
+  q('[data-del]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); const it = (db[kind] || []).find(x => x.id === b.dataset.del); if (!await confirmBox({ title: `Eliminar ${({ points: 'punto crítico', streets: 'calle', routes: 'vía alterna', rivers: 'río', zones: 'zona de desborde', recommendations: 'recomendación' })[kind] || 'elemento'}`, text: `${it?.name || it?.text ? `"${(it.name || it.text).slice(0, 80)}" se` : 'Se'} borrará definitivamente. Si solo quieres ocultarlo, apágalo con su interruptor.`, ok: 'Eliminar' })) return; await api(`/api/admin/${kind}/${b.dataset.del}`, { method: 'DELETE' }); toast('Eliminado', 'ok'); editing = null; refresh(); });
   q('[data-focus-kind]').forEach(b => b.onclick = () => { const x = db[kind].find(i => i.id === b.dataset.focus); if (!map || !x) return; x.coords ? map.fitBounds(x.coords) : map.panTo(x, 16); });
 }
 async function save(kind, body) {

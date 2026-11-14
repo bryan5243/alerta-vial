@@ -19,8 +19,20 @@ $('#btn-radar').innerHTML = ICON.radar; $('#btn-fit').innerHTML = ICON.eye; $('#
 $('#btn-gps').innerHTML = `${ICON.nav}<span class="gps-lbl">GPS</span>`; $('#gps-follow').innerHTML = ICON.nav; $('#gps-voice').innerHTML = ICON.volume; $('#gps-stop').innerHTML = ICON.x; document.querySelector('.sim-ic').innerHTML = ICON.play;
 new MutationObserver(() => map?.invalidate()).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 const hiddenLayers = new Set(JSON.parse((() => { try { return localStorage.getItem('av_hidden_layers'); } catch { return null; } })() || '[]'));
+// Simulador de navegación (Admin → Simular navegación abre el mapa con ?sim=1)
+const SIM = new URLSearchParams(location.search).has('sim');
 const gps = createGps({ getMap: () => map, getState: () => state, getShapes: () => shapes, getNav: () => nav, onMove: () => syncRoutes() });
-const nav = createNav({ getMap: () => map, getState: () => state, getUser: () => gps.user, startGps: () => gps.start(), onChange: () => syncRoutes() });
+const nav = createNav({ getMap: () => map, getState: () => state, getUser: () => gps.user, startGps: () => (SIM ? (gps.simulating || gps.simulate()) : gps.start()), onChange: () => syncRoutes(), sim: SIM, getDirect: () => SIM && $('#sim-direct').checked });
+
+if (SIM) {
+  document.body.classList.add('sim-mode'); $('#sim-bar').hidden = false;
+  $('#nav-q').placeholder = 'Destino del recorrido de prueba';
+  // En el simulador el botón GPS arranca el vehículo virtual en vez del GPS real.
+  document.addEventListener('click', e => { if (!e.target.closest('#btn-gps')) return; e.stopPropagation(); if (gps.simulating) gps.stop(); else gps.simulate(); }, true);
+  document.querySelectorAll('[data-speed]').forEach(b => b.addEventListener('click', () => { gps.setSimSpeed(+b.dataset.speed); document.querySelectorAll('[data-speed]').forEach(x => x.classList.toggle('on', x === b)); }));
+  $('#sim-pause').addEventListener('click', e => { if (!gps.simulating) return; const p = gps.toggleSimPause(); e.currentTarget.textContent = p ? 'Seguir' : 'Pausa'; e.currentTarget.classList.toggle('on', p); });
+  $('#sim-reset').addEventListener('click', () => { gps.stop(); nav.resetFrom(); $('#nav-clear').click(); $('#sim-pause').textContent = 'Pausa'; toast('Busca un destino o elígelo en el mapa para una nueva prueba.', 'ok'); });
+}
 
 // Copia local del último estado: si se cae la señal, el mapa, las zonas y los avisos del GPS siguen funcionando.
 const CACHE_KEY = 'av_state_cache';
@@ -90,7 +102,7 @@ function syncRoutes() {
     if (filtering && !altDrawn.has(r.id)) { shp.addClass?.('route-in'); fresh++; }
   }
   altDrawn = filtering ? new Set([...altDrawn, ...want].filter(id => want.has(id))) : new Set();
-  if (fresh && user) toast(fresh === 1 ? 'Apareció una vía alterna cerca de ti.' : `Aparecieron ${fresh} vías alternas cerca de ti.`, 'ok');
+  if (fresh && user && Date.now() - (syncRoutes.lastToast || 0) > 8000 && (syncRoutes.lastToast = Date.now())) toast(fresh === 1 ? 'Apareció una vía alterna cerca de ti.' : `Aparecieron ${fresh} vías alternas cerca de ti.`, 'ok');
   // Aviso con el conteo y el botón para la vista general
   const chip = $('#alt-chip'), total = state.routes.length;
   chip.hidden = !(trip || user) || !total || state.config.features?.routes === false;
