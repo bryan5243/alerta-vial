@@ -40,7 +40,7 @@ export function inPolygon(p, ring) {
 }
 const angDiff = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
 
-export function createGps({ getMap, getState, getShapes, getNav = () => null }) {
+export function createGps({ getMap, getState, getShapes, getNav = () => null, onMove = () => {} }) {
   const $ = s => document.querySelector(s);
   let watchId = null, simTimer = null, user = null, userMk = null, last = null, follow = true, voice = true;
   let active = null;       // { hz, level, d, point }
@@ -101,6 +101,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null }) 
     if (!best && follow) map.panTo(user, 16);
     $('#gps-state').textContent = best ? (best.level === 'danger' ? 'Peligro cerca' : 'Precaución adelante') : `Sin peligros a ${warnM} m`;
     $('#gps-bar').dataset.level = best ? best.level : 'ok';
+    onMove(user);
   }
 
   /* ---------- animación de alerta ---------- */
@@ -206,6 +207,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null }) 
     if (active) hide(); userMk?.remove(); userMk = null; user = null; last = null; hist.clear(); snoozed.clear(); detours.clear();
     $('#gps-bar').hidden = true; $('#btn-gps').classList.remove('on'); document.body.classList.remove('gps-on');
     try { speechSynthesis.cancel(); } catch {}
+    onMove(null);
   }
   // Simula que el usuario se acerca a la primera calle inundada (para demostrar y probar sin salir).
   function simulate() {

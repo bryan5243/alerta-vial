@@ -1,5 +1,5 @@
 import { createMap } from './map-provider.js';
-import { createGps } from './gps.js';
+import { createGps, nearestOnLine, haversine } from './gps.js';
 import { createNav } from './nav.js';
 import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, toast, ICON, waveSvg } from './common.js';
 
@@ -19,12 +19,38 @@ $('#btn-radar').innerHTML = ICON.radar; $('#btn-fit').innerHTML = ICON.eye; $('#
 $('#btn-gps').innerHTML = `${ICON.nav}<span class="gps-lbl">GPS</span>`; $('#gps-follow').innerHTML = ICON.nav; $('#gps-voice').innerHTML = ICON.volume; $('#gps-stop').innerHTML = ICON.x; document.querySelector('.sim-ic').innerHTML = ICON.play;
 new MutationObserver(() => map?.invalidate()).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 const hiddenLayers = new Set(JSON.parse((() => { try { return localStorage.getItem('av_hidden_layers'); } catch { return null; } })() || '[]'));
-const gps = createGps({ getMap: () => map, getState: () => state, getShapes: () => shapes, getNav: () => nav });
-const nav = createNav({ getMap: () => map, getState: () => state, getUser: () => gps.user, startGps: () => gps.start() });
+const gps = createGps({ getMap: () => map, getState: () => state, getShapes: () => shapes, getNav: () => nav, onMove: () => syncRoutes() });
+const nav = createNav({ getMap: () => map, getState: () => state, getUser: () => gps.user, startGps: () => gps.start(), onChange: () => syncRoutes() });
+
+// Copia local del último estado: si se cae la señal, el mapa, las zonas y los avisos del GPS siguen funcionando.
+const CACHE_KEY = 'av_state_cache';
+async function fetchState() {
+  try {
+    const res = await fetch('/api/public/state', { signal: AbortSignal.timeout(12000) }); if (!res.ok) throw new Error(res.status);
+    const st = await res.json();
+    const reports = await (await fetch('/api/public/reports', { signal: AbortSignal.timeout(12000) })).json();
+    const pack = { state: st, reports, at: Date.now() };
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(pack)); } catch { try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ...pack, state: { ...st, layers: [] } })); } catch {} }
+    setOffline(null); return pack;
+  } catch (e) {
+    let pack = null; try { pack = JSON.parse(localStorage.getItem(CACHE_KEY)); } catch {}
+    if (!pack) throw e;
+    setOffline(pack.at); return pack;
+  }
+}
+function setOffline(at) {
+  const el = $('#offline'); document.body.classList.toggle('is-offline', !!at);
+  if (!at) { el.hidden = true; return; }
+  const t = new Date(at); const today = new Date().toDateString() === t.toDateString();
+  el.textContent = `Sin conexión · datos ${today ? 'de las' : 'del'} ${today ? t.toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' }) : t.toLocaleDateString('es-EC', { day: 'numeric', month: 'short' })}`;
+  el.hidden = false;
+}
+window.addEventListener('online', () => load().catch(() => {}));
+window.addEventListener('offline', () => { if (state) setOffline(JSON.parse(localStorage.getItem(CACHE_KEY) || 'null')?.at || Date.now()); });
 
 async function load() {
-  const res = await fetch('/api/public/state'); state = await res.json();
-  const reports = await (await fetch('/api/public/reports')).json();
+  const pack = await fetchState(); state = pack.state;
+  const reports = pack.reports;
   if (!map) {
     map = await createMap({ provider: state.config.mapProvider, el: document.getElementById('map'), center: state.config.center, zoom: state.config.zoom, googleKey: state.config.googleMapsKey });
     map.onClick(onMapClick);
@@ -32,6 +58,48 @@ async function load() {
   render(reports);
   gps.refresh(); nav.refresh();
 }
+
+// Vías alternas por cercanía: con una ruta marcada o el GPS encendido solo se muestran las que
+// están en tu camino, y van apareciendo a medida que te acercas. "Ver todas" vuelve a la vista general.
+const ALT_NEAR_M = 600, ALT_TRIP_M = 400;
+let altAll = false, altDrawn = new Set();
+function altAnchor(r) {
+  const p = state.points.find(x => x.id === r.avoids); if (p) return { lat: p.lat, lng: p.lng };
+  const s = state.streets.find(x => x.id === r.avoids); const c = s ? s.coords : r.coords;
+  const m = c[Math.floor(c.length / 2)]; return { lat: m[0], lng: m[1] };
+}
+function syncRoutes() {
+  if (!map || !state) return;
+  const trip = nav.trip, user = gps.user, filtering = !altAll && (trip || user);
+  const near = r => {
+    const a = altAnchor(r);
+    if (trip) {
+      const ends = [r.coords[0], r.coords.at(-1)].map(([lat, lng]) => ({ lat, lng }));
+      if (![a, ...ends].some(p => nearestOnLine(p, trip.route.coords).d <= ALT_TRIP_M)) return false;
+    }
+    if (user) return haversine(user, a) <= ALT_NEAR_M || nearestOnLine(user, r.coords).d <= ALT_NEAR_M / 2;
+    return true;
+  };
+  const want = new Set(state.routes.filter(r => !filtering || near(r)).map(r => r.id));
+  for (const [id, shp] of shapes.routes) if (!want.has(id)) { shp.remove(); shapes.routes.delete(id); }
+  let fresh = 0;
+  for (const r of state.routes) {
+    if (!want.has(r.id) || shapes.routes.has(r.id)) continue;
+    const shp = map.addPolyline({ coords: r.coords, status: 'ruta', flow: 'route', weight: 7, popup: `<b>Vía alterna: ${esc(r.name)}</b><br>${esc(r.description || '')}` });
+    shapes.routes.set(r.id, shp);
+    if (filtering && !altDrawn.has(r.id)) { shp.addClass?.('route-in'); fresh++; }
+  }
+  altDrawn = filtering ? new Set([...altDrawn, ...want].filter(id => want.has(id))) : new Set();
+  if (fresh && user) toast(fresh === 1 ? 'Apareció una vía alterna cerca de ti.' : `Aparecieron ${fresh} vías alternas cerca de ti.`, 'ok');
+  // Aviso con el conteo y el botón para la vista general
+  const chip = $('#alt-chip'), total = state.routes.length;
+  chip.hidden = !(trip || user) || !total || state.config.features?.routes === false;
+  if (!chip.hidden) chip.innerHTML = altAll ? `<i></i>Vista general: ${total} vías alternas <u>Solo mi camino</u>`
+    : `<i></i>${want.size ? `${want.size} ${want.size === 1 ? 'vía alterna' : 'vías alternas'} ${user ? 'cerca de ti' : 'en tu camino'}` : user ? 'Las vías alternas aparecen al acercarte' : 'Ninguna vía alterna en tu camino'} <u>Ver todas</u>`;
+}
+$('#alt-chip').addEventListener('click', () => { altAll = !altAll; altDrawn = new Set(); syncRoutes(); if (altAll && state.routes.length) map.fitBounds(state.routes.flatMap(r => r.coords)); });
+
+if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
 function render(reports) {
   const { alert, weather, config } = state;
@@ -104,7 +172,7 @@ function render(reports) {
   shapes.rivers.clear(); shapes.zones.clear();
   for (const z of state.zones || []) shapes.zones.set(z.id, map.addPolygon({ coords: z.coords, severity: z.severity, popup: `<b>${esc(z.name)}</b><br>Zona de desborde · ${ZSEV[z.severity]}${z.depthCm ? ` · ~${z.depthCm} cm` : ''}<br><span style="color:#5A6B7D">${esc(z.note || '')}</span>` }));
   for (const r of state.rivers || []) shapes.rivers.set(r.id, map.addPolyline({ coords: r.coords, status: 'rio_' + r.status, flow: 'river', weight: 9, popup: `<b>${esc(r.name)}</b><br>${RIVER[r.status]}<br><span style="color:#5A6B7D">${esc(r.note || '')}</span>` }));
-  for (const r of state.routes) shapes.routes.set(r.id, map.addPolyline({ coords: r.coords, status: 'ruta', flow: 'route', weight: 7, popup: `<b>Vía alterna: ${esc(r.name)}</b><br>${esc(r.description || '')}` }));
+  syncRoutes();
   for (const p of state.points) map.addMarker({ lat: p.lat, lng: p.lng, cls: p.severity, icon: p.type, pulse: p.severity === 'alta', popup: `<b>${esc(p.name)}</b><br><span class="chip ${p.severity === 'alta' ? 'roja' : p.severity === 'media' ? 'naranja' : 'accent'}">${PTYPE[p.type]} · ${SEV[p.severity]}</span><br>${esc(p.description || '')}` });
   shapes.overflows = new Map();
   for (const o of overflows) shapes.overflows.set(o.id, map.addOverflow({ lat: o.lat, lng: o.lng, iconSvg: ICON.wave,

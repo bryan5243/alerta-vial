@@ -12,6 +12,7 @@ const ICONS = {
   alcantarilla: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/>',
   report: '<path d="M4 4h16v12H7l-3 3z"/>',
   flag: '<path d="M6 21V4h11l-2 4 2 4H6"/>',
+  nav: '<path d="M4 11 20 4l-7 16-2-7z"/>',
   interseccion: '<path d="M12 2v20M2 12h20"/><path d="M5 18c1.5-1 3-1 4.5 0s3 1 4.5 0 3-1 4.5 0"/>',
 };
 export const pinHtml = (cls, icon) => `<div class="pin ${cls}"><svg viewBox="0 0 24 24">${ICONS[icon] || ICONS.inundacion}</svg></div>`;

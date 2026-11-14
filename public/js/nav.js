@@ -104,37 +104,73 @@ export async function geocode(q, center) {
 const fmtKm = m => (m >= 1000 ? `${(m / 1000).toFixed(1).replace('.', ',')} km` : `${Math.round(m / 10) * 10} m`);
 const fmtMin = s => `${Math.max(1, Math.round(s / 60))} min`;
 
-export function createNav({ getMap, getState, getUser, startGps }) {
+// Guardado local (funciona sin red): lugares favoritos, rutas guardadas y la ruta en curso.
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+const slim = r => ({ coords: r.coords.map(([a, b]) => [+a.toFixed(6), +b.toFixed(6)]), distance: r.distance, duration: r.duration, avoided: r.avoided || [], blocked: (r.blocked || []).map(z => ({ name: z.name })) });
+
+export function createNav({ getMap, getState, getUser, startGps, onChange = () => {} }) {
   const $ = s => document.querySelector(s);
-  let trip = null;      // { dest, origin, route }
-  let shapes = [], detourR = null, picking = false, timer = null, seq = 0, replanning = false;
+  let trip = null;      // { dest, origin, route, saved?, offline? }
+  let shapes = [], detourR = null, picking = null, timer = null, seq = 0, replanning = false;
+  let from = null;      // null = mi ubicación; { lat, lng, name } = punto elegido
+  let planTo = null;    // destino elegido en el panel "Mi ruta"
+  let restore = LS.get('av_trip', null);
 
   const input = $('#nav-q'), list = $('#nav-results'), card = $('#nav-card');
   $('#nav-ic').innerHTML = ICON.search || ICON.nav;
+  $('#nav-plan').innerHTML = ICON.route;
   input.addEventListener('input', () => {
     clearTimeout(timer); const q = input.value.trim(); $('#nav-clear').hidden = !q;
     if (q.length < 3) { list.hidden = true; return; }
     timer = setTimeout(() => search(q), 450);
   });
-  input.addEventListener('focus', () => { if (list.innerHTML) list.hidden = false; });
+  input.addEventListener('focus', () => { if (list.innerHTML) list.hidden = false; else if (!input.value.trim()) showQuick(); });
   input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); list.querySelector('[data-i]')?.click(); } if (e.key === 'Escape') list.hidden = true; });
-  $('#nav-clear').addEventListener('click', () => { input.value = ''; $('#nav-clear').hidden = true; list.hidden = true; end(); input.focus(); });
+  $('#nav-clear').addEventListener('click', () => { input.value = ''; $('#nav-clear').hidden = true; list.hidden = true; list.innerHTML = ''; end(); input.focus(); });
   document.addEventListener('click', e => { if (!e.target.closest('.nav-search')) list.hidden = true; });
+
+  // Sin escribir nada: accesos rápidos a lugares y rutas guardadas.
+  function showQuick() {
+    const pl = LS.get('av_places', []), sv = LS.get('av_routes', []);
+    if (!pl.length && !sv.length) return;
+    list.innerHTML = [...sv.slice(0, 3).map((r, i) => `<button type="button" class="nav-res" data-sv="${i}">${ICON.route}<span><b>${esc(r.name)}</b><small>Ruta guardada · funciona sin conexión</small></span></button>`),
+      ...pl.slice(0, 4).map((p, i) => `<button type="button" class="nav-res" data-pl="${i}">${ICON.pin}<span><b>${esc(p.name)}</b><small>Lugar guardado</small></span></button>`)].join('') + pickBtn();
+    list.hidden = false;
+    list.querySelectorAll('[data-sv]').forEach(b => b.onclick = () => { list.hidden = true; openSaved(sv[+b.dataset.sv]); });
+    list.querySelectorAll('[data-pl]').forEach(b => b.onclick = () => { const p = pl[+b.dataset.pl]; input.value = p.name; $('#nav-clear').hidden = false; list.hidden = true; go(p); });
+    bindPick(list);
+  }
 
   async function search(q) {
     const my = ++seq; const st = getState();
     list.hidden = false; list.innerHTML = `<div class="nav-msg">Buscando…</div>`;
+    const local = LS.get('av_places', []).filter(p => p.name.toLowerCase().includes(q.toLowerCase()));
     let res = [];
-    try { res = await geocode(q, st.config.center); } catch { if (my === seq) list.innerHTML = `<div class="nav-msg">No se pudo buscar ahora (sin conexión con OpenStreetMap).</div>${pickBtn()}`; bindPick(); return; }
+    try { res = await geocode(q, st.config.center); } catch {
+      if (my !== seq) return;
+      res = local;
+      list.innerHTML = (local.length ? '' : `<div class="nav-msg">Sin conexión para buscar direcciones. Elige el destino en el mapa o usa una ruta guardada.</div>`) + local.map((r, i) => `<button type="button" class="nav-res" data-i="${i}">${ICON.pin}<span><b>${esc(r.name)}</b><small>Lugar guardado</small></span></button>`).join('') + pickBtn();
+      list.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { const r = res[+b.dataset.i]; input.value = r.name; list.hidden = true; go(r); });
+      bindPick(list); return;
+    }
     if (my !== seq) return;
-    list.innerHTML = (res.length ? res.map((r, i) => `<button type="button" class="nav-res" data-i="${i}">${ICON.pin}<span><b>${esc(r.name)}</b><small>${esc(r.label)}</small></span></button>`).join('') : `<div class="nav-msg">Sin resultados para “${esc(q)}”.</div>`) + pickBtn();
+    res = [...local, ...res];
+    list.innerHTML = (res.length ? res.map((r, i) => `<button type="button" class="nav-res" data-i="${i}">${ICON.pin}<span><b>${esc(r.name)}</b><small>${esc(r.label || 'Lugar guardado')}</small></span></button>`).join('') : `<div class="nav-msg">Sin resultados para “${esc(q)}”.</div>`) + pickBtn();
     list.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { const r = res[+b.dataset.i]; input.value = r.name; list.hidden = true; go(r); });
-    bindPick();
+    bindPick(list);
   }
   const pickBtn = () => `<button type="button" class="nav-res pick" data-pick>${ICON.nav}<span><b>Elegir el destino en el mapa</b><small>Toca el lugar al que quieres ir</small></span></button>`;
-  function bindPick() { list.querySelector('[data-pick]')?.addEventListener('click', () => { list.hidden = true; picking = true; document.body.classList.add('nav-picking'); toast('Toca en el mapa el lugar al que quieres ir', 'ok'); }); }
+  function bindPick(el) { el.querySelector('[data-pick]')?.addEventListener('click', () => { list.hidden = true; startPick('go'); }); }
+  function startPick(target) {
+    picking = target; document.body.classList.add('nav-picking'); closePlan();
+    toast(target === 'from' ? 'Toca en el mapa el lugar desde donde sales' : 'Toca en el mapa el lugar al que quieres ir', 'ok');
+  }
 
   async function origin() {
+    if (from) return { ...from, mine: false };
     const u = getUser(); if (u) return { lat: u.lat, lng: u.lng, mine: true };
     if ('geolocation' in navigator && window.isSecureContext) {
       try {
@@ -142,45 +178,119 @@ export function createNav({ getMap, getState, getUser, startGps }) {
         return { lat: p.coords.latitude, lng: p.coords.longitude, mine: true };
       } catch {}
     }
-    const c = getState().config.center; toast('No tenemos tu ubicación: la ruta sale desde el centro de la ciudad.', 'err');
-    return { lat: c.lat, lng: c.lng, mine: false };
+    const c = getState().config.center; toast('No tenemos tu ubicación: la ruta sale desde el centro. Puedes marcar el punto de salida en "Mi ruta".', 'err');
+    return { lat: c.lat, lng: c.lng, mine: false, name: 'el centro' };
   }
 
   async function go(dest) {
     card.hidden = false; card.className = 'nav-card loading';
     card.innerHTML = `<div class="nav-spin"></div><div><b>Calculando ruta segura…</b><small>Revisando zonas inundadas activas</small></div>`;
+    const o = await origin();
     try {
-      const o = await origin();
       const route = await safeRoute(o, dest, hazardZones(getState()));
-      trip = { dest, origin: o, route }; draw(true); renderCard();
+      setTrip({ dest, origin: o, route }); draw(true); renderCard();
     } catch (e) {
+      // Sin red: si hay una ruta guardada hacia ese mismo lugar, la usamos.
+      const sv = LS.get('av_routes', []).find(r => haversine(r.dest, dest) < 80);
+      if (sv) { openSaved(sv, true); return; }
       card.className = 'nav-card err';
-      card.innerHTML = `<div><b>No se pudo calcular la ruta</b><small>Sin conexión con el servicio de rutas de OpenStreetMap. Intenta de nuevo en un momento.</small></div><button class="btn sm ghost" id="nav-x">Cerrar</button>`;
-      $('#nav-x').onclick = end;
+      card.innerHTML = `<div class="nav-info"><b>${navigator.onLine === false ? 'Estás sin conexión' : 'No se pudo calcular la ruta'}</b><small>${navigator.onLine === false
+        ? 'Para una ruta nueva hace falta internet. Mientras tanto puedes usar tus rutas guardadas: el mapa, las zonas inundadas y los avisos del GPS siguen funcionando.'
+        : 'Sin conexión con el servicio de rutas de OpenStreetMap. Intenta de nuevo en un momento.'}</small></div>
+        <div class="nav-acts"><button class="btn sm" id="nav-open-plan">${ICON.route} Mis rutas</button><button class="btn sm ghost" id="nav-x">Cerrar</button></div>`;
+      $('#nav-x').onclick = end; $('#nav-open-plan').onclick = openPlan;
     }
+  }
+  function setTrip(t) {
+    trip = t;
+    LS.set('av_trip', trip ? { dest: trip.dest, origin: trip.origin, route: slim(trip.route), saved: trip.saved, at: Date.now() } : null);
+    onChange();
+  }
+  function openSaved(sv, offline) {
+    input.value = sv.dest.name; $('#nav-clear').hidden = false;
+    setTrip({ dest: sv.dest, origin: sv.origin, route: sv.route, saved: sv.id, offline: !!offline });
+    draw(true); renderCard();
   }
   function renderCard() {
     const r = trip.route, bad = r.blocked?.length;
+    const saved = LS.get('av_routes', []).some(x => x.id === trip.saved);
     card.hidden = false; card.className = `nav-card ${bad ? 'warn' : 'ok'}`;
+    const fromTxt = trip.origin.mine ? 'Desde tu ubicación' : `Desde ${esc(trip.origin.name || 'el punto elegido')}`;
     card.innerHTML = `
       <div class="nav-badge">${bad ? ICON.warn : ICON.check}</div>
-      <div class="nav-info"><small>${trip.origin.mine ? 'Desde tu ubicación' : 'Desde el centro'} hasta</small><b>${esc(trip.dest.name)}</b>
+      <div class="nav-info"><small>${fromTxt} hasta</small><b>${esc(trip.dest.name)}</b>
         <div class="nav-meta"><span>${fmtKm(r.distance)}</span><span>${fmtMin(r.duration)}</span></div>
         <div class="nav-note">${bad ? `No hay una ruta totalmente libre: pasa por ${esc(r.blocked.map(z => z.name).join(', '))}. Extreme precaución.`
-          : r.avoided?.length ? `Ruta segura: evita ${r.avoided.length === 1 ? esc(r.avoided[0]) : `${r.avoided.length} zonas inundadas`}.` : 'Ruta libre de zonas inundadas.'}</div></div>
-      <div class="nav-acts">${getUser() ? '' : `<button class="btn sm" id="nav-start">${ICON.nav} Iniciar</button>`}<button class="btn sm ghost" id="nav-x" aria-label="Terminar ruta">${ICON.x}</button></div>`;
+          : r.avoided?.length ? `Ruta segura: evita ${r.avoided.length === 1 ? esc(r.avoided[0]) : `${r.avoided.length} zonas inundadas`}.` : 'Ruta libre de zonas inundadas.'}</div>
+        ${trip.offline ? `<div class="nav-off">${ICON.info} Sin conexión: usando tu ruta guardada.</div>` : ''}</div>
+      <div class="nav-acts">${getUser() ? '' : `<button class="btn sm" id="nav-start">${ICON.nav} Iniciar</button>`}
+        <button class="btn sm ghost${saved ? ' on' : ''}" id="nav-save" aria-pressed="${saved}" title="Guardar para usarla sin conexión">${saved ? ICON.check + ' Guardada' : 'Guardar'}</button>
+        <button class="btn sm ghost" id="nav-x" aria-label="Terminar ruta">${ICON.x}</button></div>`;
     $('#nav-start')?.addEventListener('click', () => { startGps(); renderCard(); });
+    $('#nav-save').onclick = saveTrip;
     $('#nav-x').onclick = () => { input.value = ''; $('#nav-clear').hidden = true; end(); };
+    onChange();
+  }
+  function saveTrip() {
+    const all = LS.get('av_routes', []);
+    if (trip.saved && all.some(x => x.id === trip.saved)) { LS.set('av_routes', all.filter(x => x.id !== trip.saved)); trip.saved = null; renderCard(); toast('Ruta quitada de tus rutas guardadas.', 'ok'); return; }
+    const id = 'r' + Date.now().toString(36);
+    const name = `${trip.origin.mine ? 'Mi ubicación' : trip.origin.name || 'Punto elegido'} → ${trip.dest.name}`;
+    all.unshift({ id, name, origin: trip.origin, dest: trip.dest, route: slim(trip.route), at: Date.now() });
+    LS.set('av_routes', all.slice(0, 10));
+    const pl = LS.get('av_places', []);
+    if (!pl.some(p => haversine(p, trip.dest) < 40)) { pl.unshift({ name: trip.dest.name, lat: trip.dest.lat, lng: trip.dest.lng }); LS.set('av_places', pl.slice(0, 12)); }
+    trip.saved = id; setTrip(trip); renderCard();
+    toast('Ruta guardada. Podrás abrirla aunque no tengas internet.', 'ok');
   }
   function draw(fit) {
     shapes.forEach(s => s.remove?.()); shapes = [];
-    const map = getMap();
+    const map = getMap(); if (!map) return;
     if (!trip) { if (detourR) shapes.push(map.addPolyline({ coords: detourR.coords, status: 'nav', flow: 'route', weight: 8, popup: `<b>${esc(detourR.name)}</b>` })); return; }
     shapes.push(map.addPolyline({ coords: trip.route.coords, status: 'nav', flow: 'route', weight: 8, popup: `<b>Tu ruta a ${esc(trip.dest.name)}</b><br>${fmtKm(trip.route.distance)} · ${fmtMin(trip.route.duration)}` }));
+    if (!trip.origin.mine) shapes.push(map.addMarker({ lat: trip.origin.lat, lng: trip.origin.lng, cls: 'nav-from', icon: 'nav', popup: `<b>Salida</b><br>${esc(trip.origin.name || 'Punto elegido')}` }));
     shapes.push(map.addMarker({ lat: trip.dest.lat, lng: trip.dest.lng, cls: 'nav-dest', icon: 'flag', popup: `<b>${esc(trip.dest.name)}</b>` }));
     if (fit) map.fitBounds([[trip.origin.lat, trip.origin.lng], ...trip.route.coords]);
   }
-  function end() { trip = null; detourR = null; draw(); card.hidden = true; card.innerHTML = ''; }
+  function end() { setTrip(null); detourR = null; draw(); card.hidden = true; card.innerHTML = ''; }
+
+  /* ---------- Panel "Mi ruta": de dónde sales y a dónde vas ---------- */
+  const plan = $('#plan-bg'); let plTimer = null, plSeq = 0;
+  function openPlan() { list.hidden = true; renderPlan(); plan.classList.add('open'); }
+  function closePlan() { plan.classList.remove('open'); }
+  function renderPlan() {
+    $('#pl-from').textContent = from ? from.name : 'Mi ubicación (GPS)';
+    document.querySelectorAll('[data-from]').forEach(b => b.classList.toggle('on', (b.dataset.from === 'me') === !from));
+    if (planTo) $('#pl-to').value = planTo.name;
+    $('#pl-go').disabled = !planTo;
+    const pl = LS.get('av_places', []), sv = LS.get('av_routes', []);
+    $('#pl-places').innerHTML = pl.length ? `<h3>Mis lugares</h3><div class="pl-chips">${pl.map((p, i) => `<span class="pl-chip${planTo && haversine(planTo, p) < 30 ? ' on' : ''}"><button type="button" data-place="${i}">${ICON.pin}${esc(p.name)}</button><button type="button" data-delplace="${i}" aria-label="Quitar ${esc(p.name)}">×</button></span>`).join('')}</div>`
+      : `<p class="small muted pl-hint">Cuando guardes una ruta, el destino queda aquí como lugar favorito.</p>`;
+    $('#pl-saved').innerHTML = sv.length ? `<h3>Rutas guardadas <small>funcionan sin conexión</small></h3>${sv.map((r, i) => `<div class="pl-route"><button type="button" data-sv="${i}">${ICON.route}<span><b>${esc(r.name)}</b><small>${fmtKm(r.route.distance)} · ${fmtMin(r.route.duration)} · guardada ${new Date(r.at).toLocaleDateString('es-EC', { day: 'numeric', month: 'short' })}</small></span></button><button type="button" class="pl-del" data-delsv="${i}" aria-label="Borrar ruta">×</button></div>`).join('')}` : '';
+    plan.querySelectorAll('[data-place]').forEach(b => b.onclick = () => { planTo = pl[+b.dataset.place]; renderPlan(); });
+    plan.querySelectorAll('[data-delplace]').forEach(b => b.onclick = () => { pl.splice(+b.dataset.delplace, 1); LS.set('av_places', pl); renderPlan(); });
+    plan.querySelectorAll('[data-sv]').forEach(b => b.onclick = () => { closePlan(); openSaved(sv[+b.dataset.sv], navigator.onLine === false); });
+    plan.querySelectorAll('[data-delsv]').forEach(b => b.onclick = () => { sv.splice(+b.dataset.delsv, 1); LS.set('av_routes', sv); renderPlan(); });
+  }
+  $('#nav-plan').addEventListener('click', openPlan);
+  $('#pl-close').addEventListener('click', closePlan);
+  plan.addEventListener('click', e => { if (e.target === plan) closePlan(); });
+  document.querySelectorAll('[data-from]').forEach(b => b.addEventListener('click', () => { if (b.dataset.from === 'me') { from = null; renderPlan(); } else startPick('from'); }));
+  $('[data-to="map"]').addEventListener('click', () => startPick('to'));
+  $('#pl-to').addEventListener('input', () => {
+    clearTimeout(plTimer); const q = $('#pl-to').value.trim(); planTo = null; $('#pl-go').disabled = true;
+    const box = $('#pl-res'); if (q.length < 3) { box.innerHTML = ''; return; }
+    plTimer = setTimeout(async () => {
+      const my = ++plSeq; box.innerHTML = `<div class="nav-msg">Buscando…</div>`;
+      const local = LS.get('av_places', []).filter(p => p.name.toLowerCase().includes(q.toLowerCase()));
+      let res = local;
+      try { res = [...local, ...await geocode(q, getState().config.center)]; } catch { if (!local.length) { box.innerHTML = `<div class="nav-msg">Sin conexión para buscar. Usa "Elegir en el mapa".</div>`; return; } }
+      if (my !== plSeq) return;
+      box.innerHTML = res.length ? res.slice(0, 6).map((r, i) => `<button type="button" class="nav-res" data-r="${i}">${ICON.pin}<span><b>${esc(r.name)}</b><small>${esc(r.label || 'Lugar guardado')}</small></span></button>`).join('') : `<div class="nav-msg">Sin resultados.</div>`;
+      box.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { planTo = res[+b.dataset.r]; box.innerHTML = ''; renderPlan(); });
+    }, 450);
+  });
+  $('#pl-go').addEventListener('click', () => { if (!planTo) return; closePlan(); input.value = planTo.name; $('#nav-clear').hidden = false; go(planTo); });
 
   // Desvío automático para el GPS: desde la posición actual hasta un punto pasando la zona, sin cruzarla.
   async function detour(user, hz) {
@@ -192,25 +302,38 @@ export function createNav({ getMap, getState, getUser, startGps }) {
     return { id: 'auto', name: trip ? `Ruta segura a ${trip.dest.name}` : 'Desvío automático', description: r.avoided?.length ? `Evita ${r.avoided.join(', ')}.` : '', coords: r.coords, auto: true };
   }
   function showDetour(r) {
-    if (trip) { trip.route = { ...trip.route, coords: r.coords }; draw(); return; }
+    if (trip) { trip.route = { ...trip.route, coords: r.coords }; setTrip(trip); draw(); return; }
     detourR = r; draw(false);
   }
 
   // Cada vez que el mapa se redibuja: volver a pintar la ruta y recalcular si ahora cruza una zona nueva.
   async function refresh() {
+    if (!trip && restore?.route?.coords?.length && Date.now() - (restore.at || 0) < 12 * 3600e3) {
+      trip = { ...restore, offline: navigator.onLine === false }; restore = null;
+      input.value = trip.dest.name; $('#nav-clear').hidden = false; draw(true); renderCard(); return;
+    }
+    restore = null;
     draw(false);
     if (!trip || replanning) return;
     if (blockers(trip.route.coords, hazardZones(getState())).length && !trip.route.blocked?.length) {
       replanning = true;
-      try { const u = getUser(); const o = u || trip.origin; trip.route = await safeRoute(o, trip.dest, hazardZones(getState())); draw(false); renderCard(); toast('Se activó una zona inundada en tu camino: recalculamos la ruta.', 'ok'); } catch {}
+      try { const u = getUser(); const o = u || trip.origin; setTrip({ ...trip, route: await safeRoute(o, trip.dest, hazardZones(getState())), offline: false }); draw(false); renderCard(); toast('Se activó una zona inundada en tu camino: recalculamos la ruta.', 'ok'); }
+      catch { toast('Se activó una zona inundada en tu camino y no hay conexión para recalcular. Sigue las vías alternas del mapa.', 'err'); trip.route.blocked = [{ name: 'una zona recién activada' }]; renderCard(); }
       replanning = false;
     }
   }
 
   return {
-    refresh, detour, showDetour, go,
+    refresh, detour, showDetour, go, openPlan,
     get active() { return !!trip; },
-    onMapClick(pos) { if (!picking) return false; picking = false; document.body.classList.remove('nav-picking'); input.value = 'Punto elegido en el mapa'; $('#nav-clear').hidden = false; go({ ...pos, name: 'el punto elegido' }); return true; },
+    get trip() { return trip; },
+    onMapClick(pos) {
+      if (!picking) return false;
+      const t = picking; picking = null; document.body.classList.remove('nav-picking');
+      if (t === 'from') { from = { ...pos, name: 'Punto elegido en el mapa' }; openPlan(); return true; }
+      if (t === 'to') { planTo = { ...pos, name: 'Punto elegido en el mapa' }; openPlan(); return true; }
+      input.value = 'Punto elegido en el mapa'; $('#nav-clear').hidden = false; go({ ...pos, name: 'el punto elegido' }); return true;
+    },
   };
 }
 

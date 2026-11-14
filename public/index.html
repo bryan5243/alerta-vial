@@ -160,7 +160,10 @@
         <span class="nav-ic" id="nav-ic" aria-hidden="true"></span>
         <input id="nav-q" type="search" placeholder="¿A dónde vas? Ruta sin zonas inundadas" autocomplete="off" aria-label="Buscar destino">
         <button type="button" class="nav-clear" id="nav-clear" hidden aria-label="Borrar búsqueda">×</button>
+        <button type="button" class="nav-plan" id="nav-plan" aria-label="Mi ruta: marcar de dónde sales y a dónde vas" title="Mi ruta: de dónde sales y a dónde vas"></button>
         <div class="nav-results" id="nav-results" hidden></div>
+        <button type="button" class="alt-chip" id="alt-chip" hidden></button>
+        <div class="offline-pill" id="offline" hidden role="status"></div>
       </div>
       <div class="nav-card" id="nav-card" hidden aria-live="polite"></div>
       <button class="ovf-banner" id="ovf" type="button" hidden aria-live="assertive"></button>
@@ -226,6 +229,28 @@
     <p class="small muted" id="r-coords" style="margin-bottom:14px"></p>
     <div style="display:flex;gap:10px;justify-content:flex-end"><button type="button" class="btn ghost" id="r-cancel">Cancelar</button><button type="submit" class="btn">Enviar reporte</button></div>
   </form>
+</div>
+
+<div class="sheet-bg" id="plan-bg">
+  <div class="sheet plan" role="dialog" aria-modal="true" aria-labelledby="pl-title">
+    <div class="grab"></div>
+    <h2 id="pl-title" style="margin-bottom:4px">Mi ruta</h2>
+    <p class="muted small" style="margin-bottom:14px">Marca de dónde sales y a dónde vas. Te damos un camino que no pasa por zonas inundadas y puedes guardarlo para usarlo sin internet.</p>
+    <div class="pl-row">
+      <span class="pl-dot from" aria-hidden="true"></span>
+      <div class="pl-f"><span class="lbl">Desde</span><b id="pl-from">Mi ubicación (GPS)</b>
+        <div class="seg pl-seg"><button type="button" data-from="me">Mi ubicación</button><button type="button" data-from="map">Elegir en el mapa</button></div></div>
+    </div>
+    <div class="pl-row">
+      <span class="pl-dot to" aria-hidden="true"></span>
+      <div class="pl-f"><label class="lbl" for="pl-to">Hasta</label>
+        <div class="pl-to-row"><input id="pl-to" type="search" placeholder="Dirección o lugar" autocomplete="off"><button type="button" class="btn sm ghost" data-to="map">En el mapa</button></div>
+        <div id="pl-res" class="pl-res"></div></div>
+    </div>
+    <div id="pl-places"></div>
+    <div id="pl-saved"></div>
+    <div class="pl-foot"><button type="button" class="btn ghost" id="pl-close">Cerrar</button><button type="button" class="btn" id="pl-go" disabled>Ver ruta segura</button></div>
+  </div>
 </div>
 
 <script src="/vendor/leaflet/leaflet.js"></script>

@@ -252,6 +252,12 @@ lateral + mapa. El panel admin usa barra inferior en celular.
 - Cualquier lluvia o llovizna detectada sube el nivel sugerido a **amarilla**; lluvia fuerte a **naranja**; tormenta con lluvia sobre el umbral a **roja**. Una probabilidad de lluvia de 70 % o más en las próximas 3 h también da amarilla.
 - El modo manual sigue disponible si el modelo no refleja lo que se ve en la calle.
 
+### Ruta por partes, "Mi ruta" y uso sin conexión
+- **Vías alternas por cercanía:** con una ruta marcada solo se dibujan las vías alternas que quedan a menos de 400 m de tu camino; con el GPS encendido aparecen poco a poco cuando estás a 600 m o menos (con una animación y un aviso). Un botón bajo el buscador ("Ver todas" / "Solo mi camino") cambia a la vista general. Sin ruta ni GPS el mapa muestra todo, como antes.
+- **Mi ruta** (botón azul junto al buscador): eliges de dónde sales (tu ubicación o un punto del mapa) y a dónde vas (dirección, punto del mapa o un lugar guardado). Cada ruta se puede **guardar**: el destino queda como lugar favorito y la ruta completa queda en el teléfono.
+- **Sin conexión:** la página guarda en el teléfono el último estado (calles, zonas, puntos, vías alternas) y la ruta en curso. Si se cae la señal aparece "Sin conexión · datos de las …", el mapa sigue mostrando las zonas, el GPS sigue avisando (el GPS no usa datos) y las rutas guardadas se abren sin internet. Calcular una ruta nueva o buscar direcciones sí necesita red.
+- Un service worker (`public/sw.js`) guarda la página y los cuadros del mapa que ya se vieron (hasta 1500), para poder abrir la app sin señal. Solo funciona con **https** o en `localhost`; por la IP de la red local (http) el teléfono guarda los datos y rutas, pero no la página.
+
 ## 12. Siguientes pasos sugeridos
 
 - Pasar la base de datos a SQLite/Postgres y los usuarios a una tabla con contraseñas cifradas.
