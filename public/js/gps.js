@@ -29,6 +29,27 @@ export function nearestOnLine(p, coords) {
   if (coords.length === 1) best = { d: haversine(p, { lat: coords[0][0], lng: coords[0][1] }), point: { lat: coords[0][0], lng: coords[0][1] } };
   return best;
 }
+// Posición de un punto a lo largo de una ruta: s = metros recorridos desde el inicio hasta su proyección, d = distancia lateral.
+export function progressOn(coords, p) {
+  let best = { s: 0, d: Infinity }, acc = 0;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const a = { lat: coords[i][0], lng: coords[i][1] }, b = { lat: coords[i + 1][0], lng: coords[i + 1][1] }, L = haversine(a, b);
+    const np = nearestOnLine(p, [coords[i], coords[i + 1]]);
+    if (np.d < best.d) best = { s: acc + haversine(a, np.point), d: np.d };
+    acc += L;
+  }
+  return best;
+}
+// ¿El peligro está adelante? Con ruta: más adelante sobre la ruta y pegado a ella. Sin ruta: en la dirección en que avanzas.
+export function isAhead({ user, point, trip, heading, maxSide = 120 }) {
+  if (haversine(user, point) < 25) return true; // ya estás encima
+  if (trip?.route?.coords?.length > 1) {
+    const u = progressOn(trip.route.coords, user), h = progressOn(trip.route.coords, point);
+    return h.d <= maxSide && h.s > u.s + 5;
+  }
+  if (heading == null || isNaN(heading)) return null; // sin dirección todavía: no se sabe
+  return angDiff(heading, bearing(user, point)) <= 70;
+}
 // ¿El punto está dentro del polígono? (ray casting)
 export function inPolygon(p, ring) {
   let inside = false;
@@ -80,6 +101,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
     last = { lat: pos.lat, lng: pos.lng };
 
     const { warnM, dangerM } = cfg();
+    const trip = getNav()?.trip;
     let best = null;
     for (const hz of hazards()) {
       let { d, point } = nearestOnLine(user, hz.coords);
@@ -87,9 +109,12 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
       const h = (hist.get(hz.id) || []).filter(x => now - x.t < 20000); h.push({ d, t: now }); hist.set(hz.id, h.slice(-6));
       if (d > warnM * 1.25) continue;
       const trend = h.length > 1 ? h[0].d - d : 0;
-      const towards = heading != null && !isNaN(heading) ? angDiff(heading, bearing(user, point)) < 70 : false;
-      const approaching = trend > 5 || towards;
-      let level = d <= dangerM ? 'danger' : d <= warnM && approaching ? 'warn' : null;
+      // Solo avisa de lo que está adelante: nunca de algo que quedó atrás o que no está en tu camino.
+      const ahead = d === 0 ? true : isAhead({ user, point, trip, heading });
+      if (ahead === false) { if (active?.hz.id === hz.id) snoozed.set(hz.id, { until: now + 60000, level: 'danger' }); continue; }
+      const approaching = ahead === true || trend > 5;
+      if (!approaching) continue;
+      let level = d <= dangerM ? 'danger' : d <= warnM ? 'warn' : null;
       if (active?.hz.id === hz.id && !level && d <= warnM * 1.25) level = active.level; // histéresis
       if (!level) continue;
       const sz = snoozed.get(hz.id);
@@ -161,7 +186,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
     tweenRaf = requestAnimationFrame(step);
   }
   function announce(b, first) {
-    try { navigator.vibrate?.(b.level === 'danger' ? [400, 150, 400, 150, 400] : [200, 100, 200]); } catch {}
+    try { if (navigator.userActivation?.hasBeenActive !== false) navigator.vibrate?.(b.level === 'danger' ? [400, 150, 400, 150, 400] : [200, 100, 200]); } catch {}
     if (!voice || !cfg().voice || !('speechSynthesis' in window)) return;
     const m = Math.round(b.d / 10) * 10;
     const txt = b.level === 'danger' ? `Peligro. ${b.hz.title} a ${m} metros. ${b.hz.name}. No avance.` : `Atención. ${b.hz.title} a ${m} metros adelante. ${b.hz.name}.`;

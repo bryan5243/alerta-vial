@@ -156,12 +156,14 @@
 
     <div class="mapwrap">
       <div id="map" role="application" aria-label="Mapa de calles inundadas"></div>
+      <canvas class="wx-fx" id="wx-fx" aria-hidden="true"></canvas><div class="wx-flash" id="wx-flash" aria-hidden="true"></div>
       <div class="nav-search" role="search">
         <span class="nav-ic" id="nav-ic" aria-hidden="true"></span>
         <input id="nav-q" type="search" placeholder="¿A dónde vas? Ruta sin zonas inundadas" autocomplete="off" aria-label="Buscar destino">
         <button type="button" class="nav-clear" id="nav-clear" hidden aria-label="Borrar búsqueda">×</button>
         <button type="button" class="nav-plan" id="nav-plan" aria-label="Mi ruta: marcar de dónde sales y a dónde vas" title="Mi ruta: de dónde sales y a dónde vas"></button>
         <div class="nav-results" id="nav-results" hidden></div>
+        <button type="button" class="wx-chip" id="wx-chip" hidden></button>
         <button type="button" class="alt-chip" id="alt-chip" hidden></button>
         <div class="offline-pill" id="offline" hidden role="status"></div>
         <div class="sim-bar" id="sim-bar" hidden>

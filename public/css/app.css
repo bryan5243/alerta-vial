@@ -362,3 +362,28 @@ path.route-in,path.route-in-halo{animation:route-in .9s var(--ease) both}
 .sim-mode .gps-bar{border-top:3px solid #7A3FC4}
 @media (max-width:900px){ .sim-bar{padding:8px 10px} .sim-opt{font-size:.75rem} .gps-on.sim-mode .sim-opt,.gps-on.sim-mode .sim-head small{display:none} }
 .nav-scope{padding:7px 14px;font-size:.72rem;color:var(--muted);background:var(--surface-2);text-align:center}
+/* ===== Clima sobre el mapa ===== */
+.wx-fx{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:450}
+.mapwrap::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:440;background:linear-gradient(180deg,rgb(40 60 85/.0),rgb(40 60 85/.0));transition:background .8s ease}
+.mapwrap.wx-rain::before{background:linear-gradient(180deg,rgb(38 58 84/.22),rgb(38 58 84/.08))}
+.mapwrap.wx-rain[data-wx="3"]::before{background:linear-gradient(180deg,rgb(30 46 70/.32),rgb(30 46 70/.14))}
+.mapwrap.wx-storm::before{background:linear-gradient(180deg,rgb(22 30 52/.42),rgb(22 30 52/.2))}
+.wx-flash{position:absolute;inset:0;pointer-events:none;z-index:455;background:radial-gradient(ellipse at 50% 0%,rgb(235 240 255/.85),rgb(220 230 255/.25) 60%,transparent);opacity:0}
+.wx-flash.on{animation:wx-flash .7s ease-out}
+@keyframes wx-flash{0%{opacity:0}8%{opacity:.9}18%{opacity:.15}28%{opacity:.7}100%{opacity:0}}
+.wx-chip{margin-top:6px;display:inline-flex;align-items:center;gap:7px;max-width:100%;min-height:34px;padding:5px 12px 5px 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow-1);font:inherit;font-size:.78rem;color:var(--ink);cursor:pointer;margin-right:6px}
+.wx-chip[hidden]{display:none}
+.wx-chip b{font-weight:700} .wx-chip span:not(.wx-ic){color:var(--muted);font-weight:600}
+.wx-chip em{font-style:normal;font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;background:#F1E8FB;color:#7A3FC4;padding:2px 6px;border-radius:6px}
+.wx-chip u{text-decoration:none;font-size:.7rem;color:var(--accent);white-space:nowrap}
+.wx-ic{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:#FFF4D6;color:#C98A00;flex:none}
+.wx-ic svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.wx-chip.i1 .wx-ic,.wx-chip.i2 .wx-ic{background:#E3F1FB;color:#1C77B8} .wx-chip.i3 .wx-ic{background:#1C77B8;color:#fff}
+.wx-chip.i4 .wx-ic{background:#2B2F55;color:#FFD84A;animation:wx-ic 2.4s infinite} .wx-chip.i4{border-color:#2B2F55}
+@keyframes wx-ic{0%,90%,100%{box-shadow:0 0 0 0 rgb(255 216 74/0)}93%{box-shadow:0 0 0 6px rgb(255 216 74/.45)}}
+@media (max-width:900px){ .wx-chip{font-size:.74rem;min-height:32px} .wx-chip u{display:none} }
+@media (prefers-reduced-motion:reduce){ .wx-flash.on,.wx-chip.i4 .wx-ic{animation:none} }
+.sim-opt input[type=checkbox]{width:18px!important;height:18px!important;min-height:0!important;padding:0!important;flex:none;appearance:auto;-webkit-appearance:checkbox;border:0;box-shadow:none}
+/* Mientras se navega, la tarjeta de la ruta se oculta (la barra GPS y el aviso ya informan) y el simulador queda compacto */
+.gps-on .nav-card{display:none!important}
+.gps-on .sim-opt,.gps-on .sim-head small{display:none}

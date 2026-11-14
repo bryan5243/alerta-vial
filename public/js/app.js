@@ -1,6 +1,7 @@
 import { createMap } from './map-provider.js';
-import { createGps, nearestOnLine, haversine } from './gps.js';
+import { createGps, nearestOnLine, haversine, progressOn, isAhead } from './gps.js';
 import { createNav } from './nav.js';
+import { createWeatherFx } from './weather-fx.js';
 import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, toast, ICON, waveSvg } from './common.js';
 
 const $ = s => document.querySelector(s);
@@ -19,6 +20,24 @@ $('#btn-radar').innerHTML = ICON.radar; $('#btn-fit').innerHTML = ICON.eye; $('#
 $('#btn-gps').innerHTML = `${ICON.nav}<span class="gps-lbl">GPS</span>`; $('#gps-follow').innerHTML = ICON.nav; $('#gps-voice').innerHTML = ICON.volume; $('#gps-stop').innerHTML = ICON.x; document.querySelector('.sim-ic').innerHTML = ICON.play;
 new MutationObserver(() => map?.invalidate()).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 const hiddenLayers = new Set(JSON.parse((() => { try { return localStorage.getItem('av_hidden_layers'); } catch { return null; } })() || '[]'));
+// Clima sobre el mapa: indicador + animación de lluvia / tormenta
+const wxFx = createWeatherFx({ canvas: $('#wx-fx'), flash: $('#wx-flash') });
+const WX_IC = {
+  rain: '<svg viewBox="0 0 24 24"><path d="M7 15a4 4 0 0 1-.5-8A6 6 0 0 1 18 8a3.5 3.5 0 0 1 0 7"/><path d="M9 18l-1 2m5-3-1 2m5-3-1 2"/></svg>',
+  storm: '<svg viewBox="0 0 24 24"><path d="M7 15a4 4 0 0 1-.5-8A6 6 0 0 1 18 8a3.5 3.5 0 0 1 0 7"/><path d="M13 12l-3 5h4l-3 5"/></svg>',
+  cloud: '<svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 11a3.5 3.5 0 0 1 0 7z"/></svg>',
+  sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+};
+function renderWx(w) {
+  const chip = $('#wx-chip'); wxFx.set(w);
+  if (!w?.ok || state.config.features?.weather === false) { chip.hidden = true; return; }
+  const i = w.intensity || 0, ic = i >= 4 ? 'storm' : i > 0 ? 'rain' : (w.cloudCover ?? 0) >= 60 ? 'cloud' : 'sun';
+  chip.hidden = false; chip.className = `wx-chip i${i}`;
+  chip.innerHTML = `<span class="wx-ic">${WX_IC[ic]}</span><b>${esc(w.condition || 'Clima')}</b>${w.rainNow > 0 ? `<span>${String(w.rainNow).replace('.', ',')} mm/h</span>` : w.probNext3h >= 40 ? `<span>${w.probNext3h}% en 3 h</span>` : ''}${w.simulated ? '<em>prueba</em>' : ''}${i > 0 ? `<u aria-hidden="true">${wxFx.enabled ? 'animación' : 'sin animación'}</u>` : ''}`;
+  chip.title = i > 0 ? 'Toca para mostrar u ocultar la animación de lluvia' : `${w.temperature ?? ''}°C`;
+}
+$('#wx-chip').addEventListener('click', () => { if (!(state?.weather?.intensity > 0)) return; const on = wxFx.toggle(); toast(on ? 'Animación de lluvia activada' : 'Animación de lluvia oculta', 'ok'); renderWx(state.weather); });
+
 // Simulador de navegación (Admin → Simular navegación abre el mapa con ?sim=1)
 const SIM = new URLSearchParams(location.search).has('sim');
 const gps = createGps({ getMap: () => map, getState: () => state, getShapes: () => shapes, getNav: () => nav, onMove: () => syncRoutes() });
@@ -73,26 +92,39 @@ async function load() {
 
 // Vías alternas por cercanía: con una ruta marcada o el GPS encendido solo se muestran las que
 // están en tu camino, y van apareciendo a medida que te acercas. "Ver todas" vuelve a la vista general.
-const ALT_NEAR_M = 600, ALT_TRIP_M = 400;
+const ALT_AHEAD_M = 700, ALT_SIDE_M = 150;
 let altAll = false, altDrawn = new Set();
 function altAnchor(r) {
   const p = state.points.find(x => x.id === r.avoids); if (p) return { lat: p.lat, lng: p.lng };
   const s = state.streets.find(x => x.id === r.avoids); const c = s ? s.coords : r.coords;
   const m = c[Math.floor(c.length / 2)]; return { lat: m[0], lng: m[1] };
 }
+// Con ruta o GPS: solo la vía alterna del PRÓXIMO peligro que está adelante en tu camino (una por peligro,
+// máximo dos peligros), y desaparece cuando lo dejas atrás. Así el mapa no se llena de líneas.
+function wantedRoutes(trip, user) {
+  const groups = new Map(); // peligro -> { order, routes }
+  for (const r of state.routes) {
+    const a = altAnchor(r), key = r.avoids || r.id;
+    let order;
+    if (trip) {
+      const h = progressOn(trip.route.coords, a); if (h.d > ALT_SIDE_M) continue;
+      const u = user ? progressOn(trip.route.coords, user).s : 0;
+      if (h.s < u - 20 || (user && h.s - u > ALT_AHEAD_M)) continue; // ya pasó, o aún muy lejos
+      order = h.s - u;
+    } else {
+      const d = haversine(user, a); if (d > ALT_AHEAD_M) continue;
+      if (isAhead({ user, point: a, heading: user.heading }) === false) continue;
+      order = d;
+    }
+    const g = groups.get(key) || { order, routes: [] }; g.routes.push(r); groups.set(key, g);
+  }
+  return [...groups.values()].sort((x, y) => x.order - y.order).slice(0, trip && !user ? 3 : 2)
+    .map(g => g.routes.sort((x, y) => nearestOnLine(altAnchor(x), x.coords).d - nearestOnLine(altAnchor(y), y.coords).d)[0]);
+}
 function syncRoutes() {
   if (!map || !state) return;
   const trip = nav.trip, user = gps.user, filtering = !altAll && (trip || user);
-  const near = r => {
-    const a = altAnchor(r);
-    if (trip) {
-      const ends = [r.coords[0], r.coords.at(-1)].map(([lat, lng]) => ({ lat, lng }));
-      if (![a, ...ends].some(p => nearestOnLine(p, trip.route.coords).d <= ALT_TRIP_M)) return false;
-    }
-    if (user) return haversine(user, a) <= ALT_NEAR_M || nearestOnLine(user, r.coords).d <= ALT_NEAR_M / 2;
-    return true;
-  };
-  const want = new Set(state.routes.filter(r => !filtering || near(r)).map(r => r.id));
+  const want = new Set((filtering ? wantedRoutes(trip, user) : state.routes).map(r => r.id));
   for (const [id, shp] of shapes.routes) if (!want.has(id)) { shp.remove(); shapes.routes.delete(id); }
   let fresh = 0;
   for (const r of state.routes) {
@@ -102,12 +134,12 @@ function syncRoutes() {
     if (filtering && !altDrawn.has(r.id)) { shp.addClass?.('route-in'); fresh++; }
   }
   altDrawn = filtering ? new Set([...altDrawn, ...want].filter(id => want.has(id))) : new Set();
-  if (fresh && user && Date.now() - (syncRoutes.lastToast || 0) > 8000 && (syncRoutes.lastToast = Date.now())) toast(fresh === 1 ? 'Apareció una vía alterna cerca de ti.' : `Aparecieron ${fresh} vías alternas cerca de ti.`, 'ok');
+  if (fresh && user && Date.now() - (syncRoutes.lastToast || 0) > 8000 && (syncRoutes.lastToast = Date.now())) toast(fresh === 1 ? 'Vía alterna para el próximo punto inundado de tu camino.' : `${fresh} vías alternas para lo que viene en tu camino.`, 'ok');
   // Aviso con el conteo y el botón para la vista general
   const chip = $('#alt-chip'), total = state.routes.length;
   chip.hidden = !(trip || user) || !total || state.config.features?.routes === false;
   if (!chip.hidden) chip.innerHTML = altAll ? `<i></i>Vista general: ${total} vías alternas <u>Solo mi camino</u>`
-    : `<i></i>${want.size ? `${want.size} ${want.size === 1 ? 'vía alterna' : 'vías alternas'} ${user ? 'cerca de ti' : 'en tu camino'}` : user ? 'Las vías alternas aparecen al acercarte' : 'Ninguna vía alterna en tu camino'} <u>Ver todas</u>`;
+    : `<i></i>${want.size ? `${want.size} ${want.size === 1 ? 'vía alterna' : 'vías alternas'} ${user ? 'adelante en tu camino' : 'en tu camino'}` : user ? 'Las vías alternas aparecen cuando hay un peligro adelante' : 'Ninguna vía alterna en tu camino'} <u>Ver todas</u>`;
 }
 $('#alt-chip').addEventListener('click', () => { altAll = !altAll; altDrawn = new Set(); syncRoutes(); if (altAll && state.routes.length) map.fitBounds(state.routes.flatMap(r => r.coords)); });
 
@@ -129,7 +161,7 @@ function render(reports) {
   $('#band-msg').innerHTML = `${weather.simulated ? '<span class="sim-tag">Simulación de prueba</span>' : ''}${esc(lvlMsg)}${alert.message ? `<span class="lvl-extra">${esc(alert.message)}</span>` : ''}`;
 
   // Clima
-  const w = weather;
+  const w = weather; renderWx(w);
   $('#weather').innerHTML = w.ok ? `
     <div class="stat${w.raining ? ' rain' : ''}"><b>${w.rainNow} <small>mm</small></b><span>${esc(w.condition || 'Lluvia ahora')}</span></div>
     <div class="stat"><b>${w.rainPast3h} <small>mm</small></b><span>Últimas 3 h</span></div>

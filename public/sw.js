@@ -2,8 +2,8 @@
 // - La página, estilos y scripts se guardan al instalar y se actualizan cada vez que hay red.
 // - Los cuadros del mapa (OpenStreetMap) que ya viste quedan guardados para verlos sin conexión.
 // - Los datos (calles, zonas, vías alternas) los guarda la propia página en el teléfono.
-const VER = 'av-shell-v5', TILES = 'av-tiles-v1', MAX_TILES = 1500;
-const SHELL = ['/', '/css/app.css', '/js/app.js', '/js/common.js', '/js/gps.js', '/js/nav.js', '/js/map-provider.js',
+const VER = 'av-shell-v6', TILES = 'av-tiles-v1', MAX_TILES = 1500;
+const SHELL = ['/', '/css/app.css', '/js/app.js', '/js/common.js', '/js/gps.js', '/js/nav.js', '/js/map-provider.js', '/js/weather-fx.js',
   '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css', '/img/emovtt-logo.png', '/img/emovtt-logo-blanco.png'];
 
 self.addEventListener('install', e => {
