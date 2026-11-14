@@ -270,7 +270,7 @@ lateral + mapa. El panel admin usa barra inferior en celular.
 
 ### Clima animado y navegación sin distracciones
 - **Indicador del clima** sobre el mapa (bajo el buscador): condición actual, mm/h o probabilidad, y "prueba" si viene del simulador.
-- **Animación:** con lluvia, el mapa se oscurece un poco y caen gotas (más densas según la intensidad); con tormenta eléctrica, además, relámpagos y destellos cada pocos segundos. Las gotas quedan bajo los marcadores y no bloquean los toques. Tocar el indicador oculta o muestra la animación (se recuerda en el teléfono). Con "reducir movimiento" del sistema solo queda el tono oscuro.
+- **Animación:** con lluvia, el mapa se oscurece un poco y caen gotas (más densas según la intensidad); con tormenta eléctrica, además, relámpagos y destellos cada pocos segundos. Las gotas quedan bajo los marcadores y no bloquean los toques. Tocar el indicador oculta o muestra la animación (se recuerda en el teléfono). Con "reducir movimiento" del sistema la lluvia cae más lenta, con menos gotas y sin relámpagos. Cada nivel de intensidad oscurece más el mapa y agrega salpicaduras en el suelo.
 - **Avisos solo adelante:** con ruta marcada, el GPS solo avisa de peligros que están más adelante sobre la ruta y a menos de 120 m de ella; lo que queda atrás o a un costado no avisa. Sin ruta, avisa de lo que está en la dirección de avance (±70°).
 - **Vías alternas del camino:** al navegar se muestra solo la vía alterna del próximo peligro de la ruta (una por peligro, máximo dos), aparece a 700 m y desaparece cuando lo pasas. "Ver todas" sigue mostrando la vista general.
 
