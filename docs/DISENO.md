@@ -258,6 +258,10 @@ lateral + mapa. El panel admin usa barra inferior en celular.
 - **Sin conexión:** la página guarda en el teléfono el último estado (calles, zonas, puntos, vías alternas) y la ruta en curso. Si se cae la señal aparece "Sin conexión · datos de las …", el mapa sigue mostrando las zonas, el GPS sigue avisando (el GPS no usa datos) y las rutas guardadas se abren sin internet. Calcular una ruta nueva o buscar direcciones sí necesita red.
 - Un service worker (`public/sw.js`) guarda la página y los cuadros del mapa que ya se vieron (hasta 1500), para poder abrir la app sin señal. Solo funciona con **https** o en `localhost`; por la IP de la red local (http) el teléfono guarda los datos y rutas, pero no la página.
 
+### Simulador de lluvia y radar
+- **Admin → Alerta → Simulador de lluvia (pruebas):** botones Sin lluvia, Llovizna, Lluvia leve, moderada, fuerte y Tormenta, o valores a mano (mm ahora, últimas 3 h, próximas 3 h, probabilidad y tipo de cielo), con duración de 15 a 120 min. Mientras dura, el nivel publicado sigue al clima simulado aunque la alerta esté en manual, los puntos "auto" se encienden con naranja/roja y el mapa público muestra la etiqueta "Simulación de prueba". Vive solo en memoria: no se guarda en `data/db.json` y se apaga al terminar el tiempo, con "Detener" o al reiniciar el servidor.
+- **Radar RainViewer:** desde el 1 de enero de 2026 la API gratuita solo entrega cuadros hasta zoom 7 (y solo el esquema de color Universal Blue, sin pronóstico a futuro). El mapa ahora pide zoom 7 y lo amplía, por eso se ve más borroso que antes. Se activa con el botón de radar del mapa público.
+
 ## 12. Siguientes pasos sugeridos
 
 - Pasar la base de datos a SQLite/Postgres y los usuarios a una tabla con contraseñas cifradas.

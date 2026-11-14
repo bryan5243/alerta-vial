@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { load, save, nextId } from './db.js';
-import { getWeather, getTide, levelFromWeather, riskIndex } from './weather.js';
+import { getWeather, getTide, levelFromWeather, riskIndex, describe } from './weather.js';
 import { getFloodForecast } from './flood.js';
 import { seedIfEmpty } from './seed.js';
 
@@ -51,19 +51,32 @@ app.post('/api/logout', auth, (req, res) => {
 // ---------- Estado combinado (clima + alerta efectiva) ----------
 const LV = { normal: 0, amarilla: 1, naranja: 2, roja: 3 };
 const maxLevel = (a, b) => (LV[a] >= LV[b] ? a : b);
+// Simulador de lluvia para pruebas (Admin → Alerta). Vive solo en memoria: no toca la base de datos
+// y se apaga solo al terminar el tiempo o al reiniciar el servidor.
+let simulation = null;
+const simOn = () => simulation && simulation.until > Date.now() ? simulation : (simulation = null);
+function simulatedWeather(real) {
+  const s = simOn();
+  const w = { ok: true, source: 'Simulación de prueba', simulated: true, simUntil: new Date(s.until).toISOString(), observedAt: new Date().toISOString(),
+    temperature: real?.temperature ?? 26, rainNow: s.rainNow, rainPast3h: s.rainPast3h, rainNext3h: s.rainNext3h, rainNext24h: s.rainNext3h * 2,
+    probNext3h: s.probNext3h, maxProbability24h: s.probNext3h, cloudCover: s.rainNow > 0 || s.weatherCode ? 95 : 40, weatherCode: s.weatherCode, hourly: [] };
+  return Object.assign(w, describe(w));
+}
 async function computeStatus() {
   const db = load();
-  const [weather, tide, flood] = await Promise.all([
+  let [weather, tide, flood] = await Promise.all([
     getWeather(db.config.weather),
     getTide(db.config.weather),
     db.config.floodEnabled === true
       ? getFloodForecast({ ...db.config.center, apiKey: process.env.GOOGLE_FLOOD_KEY || db.config.googleFloodKey || '' })
       : Promise.resolve({ ok: false, disabled: true, gauges: [] }),
   ]);
+  if (simOn()) weather = simulatedWeather(weather);
   const risk = riskIndex({ weather, cfg: db.config.weather, flood, reports: db.reports || [], tide, rivers: (db.rivers || []).filter(r => r.active !== false) });
   // Nivel sugerido: el mayor entre la regla de lluvia y el índice de riesgo combinado.
   const suggested = maxLevel(levelFromWeather(weather, db.config.weather), risk.level);
-  const effective = db.alert.mode === 'manual' ? db.alert.level : suggested;
+  // Durante una simulación el nivel publicado sigue al clima simulado, aunque la alerta esté en manual.
+  const effective = db.alert.mode === 'manual' && !simOn() ? db.alert.level : suggested;
   return { weather, suggested, effective, risk, tide, flood };
 }
 
@@ -168,6 +181,16 @@ app.put('/api/admin/config', auth, (req, res) => {
     rainThresholdMm3h: +(c.weather.rainThresholdMm3h ?? db.config.weather.rainThresholdMm3h) };
   save();
   res.json(db.config);
+});
+
+app.get('/api/admin/simulation', auth, (req, res) => res.json(simOn() || { active: false }));
+app.put('/api/admin/simulation', auth, (req, res) => {
+  const b = req.body || {};
+  if (!b.active) { simulation = null; return res.json({ active: false }); }
+  const n = (v, max) => Math.max(0, Math.min(max, +v || 0));
+  simulation = { active: true, preset: String(b.preset || 'manual').slice(0, 30), rainNow: n(b.rainNow, 200), rainPast3h: n(b.rainPast3h, 500), rainNext3h: n(b.rainNext3h, 500),
+    probNext3h: n(b.probNext3h, 100), weatherCode: Math.round(n(b.weatherCode, 99)), until: Date.now() + Math.max(1, Math.min(240, +b.minutes || 30)) * 60000 };
+  res.json(simulation);
 });
 
 app.put('/api/admin/alert', auth, (req, res) => {

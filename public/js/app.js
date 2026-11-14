@@ -114,7 +114,7 @@ function render(reports) {
   $('#band-icon').innerHTML = lvl === 'normal' ? ICON.check : ICON.warn;
   $('#band-label').textContent = LEVELS[lvl];
   const lvlMsg = config.levelMessages?.[lvl] || LEVEL_DESC[lvl];
-  $('#band-msg').innerHTML = `${esc(lvlMsg)}${alert.message ? `<span class="lvl-extra">${esc(alert.message)}</span>` : ''}`;
+  $('#band-msg').innerHTML = `${weather.simulated ? '<span class="sim-tag">Simulación de prueba</span>' : ''}${esc(lvlMsg)}${alert.message ? `<span class="lvl-extra">${esc(alert.message)}</span>` : ''}`;
 
   // Clima
   const w = weather;

@@ -110,7 +110,8 @@ function leafletMap({ el, center, zoom }) {
     setCenter(c, z) { map.setView([c.lat, c.lng], z || map.getZoom()); },
     fitBounds(coords) { if (coords.length) map.fitBounds(L.latLngBounds(coords), { padding: [40, 40], maxZoom: 16 }); },
     panTo({ lat, lng }, z) { map.flyTo([lat, lng], z || Math.max(map.getZoom(), 15), { duration: .6 }); },
-    setRadar(url) { if (radar) { map.removeLayer(radar); radar = null; } if (url) radar = L.tileLayer(url, { opacity: .55, zIndex: 400 }).addTo(map); },
+    setRadar(url) { if (radar) { map.removeLayer(radar); radar = null; } // RainViewer gratis solo entrega hasta zoom 7 (desde 2026): Leaflet amplía esos cuadros al acercarse.
+      if (url) radar = L.tileLayer(url, { opacity: .6, zIndex: 400, maxNativeZoom: 7, maxZoom: 19, className: 'radar-tiles' }).addTo(map); },
     invalidate() { setTimeout(() => map.invalidateSize(), 50); },
   };
 }
@@ -202,7 +203,7 @@ async function googleMap({ el, center, zoom, googleKey }) {
     panTo({ lat, lng }, z) { map.panTo({ lat, lng }); if (z) map.setZoom(Math.max(map.getZoom(), z)); },
     setRadar(url) {
       if (radar) { const i = map.overlayMapTypes.getArray().indexOf(radar); if (i >= 0) map.overlayMapTypes.removeAt(i); radar = null; }
-      if (url) { radar = new g.ImageMapType({ getTileUrl: (c, z) => url.replace('{z}', z).replace('{x}', c.x).replace('{y}', c.y), tileSize: new g.Size(256, 256), opacity: .55 }); map.overlayMapTypes.push(radar); }
+      if (url) { radar = new g.ImageMapType({ getTileUrl: (c, z) => z <= 7 ? url.replace('{z}', z).replace('{x}', c.x).replace('{y}', c.y) : null, tileSize: new g.Size(256, 256), opacity: .6 }); map.overlayMapTypes.push(radar); }
     },
     invalidate() { g.event.trigger(map, 'resize'); },
   };

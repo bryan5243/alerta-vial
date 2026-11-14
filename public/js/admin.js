@@ -82,7 +82,8 @@ function renderSection() {
 function secAlert() {
   const a = db.alert, w = db.weather, cfg = db.config.weather, lm = db.config.levelMessages || {};
   col(`
-    <div class="level-band ${a.effective}" style="border-radius:16px"><div class="lvl-icon">${a.effective === 'normal' ? ICON.check : ICON.warn}</div><div><div class="lvl-label">Publicado ahora: ${LEVELS[a.effective]}</div><div class="lvl-msg">${esc(lm[a.effective] || '')}${a.message ? ` · ${esc(a.message)}` : ''} · ${a.mode === 'auto' ? 'Modo automático' : 'Manual'}</div></div><div class="wave">${waveSvg}</div></div>
+    <div class="level-band ${a.effective}" style="border-radius:16px"><div class="lvl-icon">${a.effective === 'normal' ? ICON.check : ICON.warn}</div><div><div class="lvl-label">Publicado ahora: ${LEVELS[a.effective]}</div><div class="lvl-msg">${esc(lm[a.effective] || '')}${a.message ? ` · ${esc(a.message)}` : ''} · ${w.simulated ? 'Simulación de prueba' : a.mode === 'auto' ? 'Modo automático' : 'Manual'}</div></div><div class="wave">${waveSvg}</div></div>
+    ${simCard(w)}
     <div class="card">
       <h3 style="margin-bottom:12px">Modo de activación</h3>
       <div class="seg" role="radiogroup"><button class="${a.mode === 'auto' ? 'on' : ''}" data-mode="auto">Automático por clima</button><button class="${a.mode === 'manual' ? 'on' : ''}" data-mode="manual">Manual</button></div>
@@ -107,7 +108,47 @@ function secAlert() {
   q('[data-mode]').forEach(b => b.onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { mode: b.dataset.mode } }); toast('Modo actualizado', 'ok'); refresh(); });
   q('[data-level]').forEach(b => b.onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { level: b.dataset.level } }); toast(`Nivel: ${LEVELS[b.dataset.level]}`, 'ok'); refresh(); });
   id('save-msg').onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { message: id('msg').value } }); toast('Aviso guardado', 'ok'); refresh(); };
+  bindSim(w);
   id('save-lm').onclick = async () => { await api('/api/admin/config', { method: 'PUT', body: { levelMessages: Object.fromEntries(Object.keys(LEVELS).map(k => [k, id('lm-' + k).value])) } }); toast('Mensajes por color guardados', 'ok'); refresh(); };
+}
+
+/* ---------- Simulador de lluvia (pruebas) ---------- */
+const SIM = {
+  seco: ['Sin lluvia', 0, 0, 0, 10, 0], llovizna: ['Llovizna', 0.2, 0.5, 0.5, 60, 51], leve: ['Lluvia leve', 1, 2, 2, 70, 61],
+  moderada: ['Lluvia moderada', 4, 9, 6, 85, 63], fuerte: ['Lluvia fuerte', 12, 30, 20, 95, 65], tormenta: ['Tormenta', 35, 80, 40, 100, 95],
+};
+const WCODES = { 0: 'Sin lluvia (despejado)', 51: 'Llovizna', 61: 'Lluvia leve', 63: 'Lluvia moderada', 65: 'Lluvia fuerte', 80: 'Chubascos leves', 82: 'Chubascos fuertes', 95: 'Tormenta eléctrica' };
+function simCard(w) {
+  const on = !!w.simulated, v = on ? w : { rainNow: 1, rainPast3h: 2, rainNext3h: 2, probNext3h: 70, weatherCode: 61 };
+  const until = on ? new Date(w.simUntil).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' }) : '';
+  return `<div class="card sim-card${on ? ' on' : ''}">
+    <div class="section-head"><h3>${ICON.cloud} Simulador de lluvia (pruebas)</h3>${on ? `<span class="chip naranja">Simulación activa · hasta ${until}</span>` : ''}</div>
+    <p class="small muted" style="margin:6px 0 12px">Prueba cómo reacciona el sistema sin esperar a que llueva: el nivel de alerta, los puntos que se encienden con naranja, sus vías alternas, el mapa público y el GPS. Mientras dura, el nivel publicado sigue a la simulación aunque estés en modo manual, y el mapa público muestra "Simulación de prueba". Se apaga sola al terminar el tiempo.</p>
+    <div class="sim-presets">${Object.entries(SIM).map(([k, p]) => `<button type="button" class="btn sm ghost${on && w.weatherCode === p[5] && w.rainNow === p[1] ? ' on' : ''}" data-sim="${k}">${p[0]}</button>`).join('')}</div>
+    <details class="sim-adv"${on ? ' open' : ''}><summary>Valores a mano</summary>
+      <div class="sim-grid">
+        <div class="field"><label for="sim-now">Lluvia ahora (mm/h)</label><input id="sim-now" type="number" min="0" step="0.1" value="${v.rainNow}"></div>
+        <div class="field"><label for="sim-p3">Últimas 3 h (mm)</label><input id="sim-p3" type="number" min="0" step="0.1" value="${v.rainPast3h}"></div>
+        <div class="field"><label for="sim-n3">Próximas 3 h (mm)</label><input id="sim-n3" type="number" min="0" step="0.1" value="${v.rainNext3h}"></div>
+        <div class="field"><label for="sim-prob">Probabilidad (%)</label><input id="sim-prob" type="number" min="0" max="100" value="${v.probNext3h ?? 0}"></div>
+        <div class="field"><label for="sim-code">Cómo se ve el cielo</label><select id="sim-code">${Object.entries(WCODES).map(([c, l]) => `<option value="${c}" ${+c === +v.weatherCode ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      </div></details>
+    <div class="sim-foot">
+      <label class="small" for="sim-min">Duración</label><select id="sim-min">${[15, 30, 60, 120].map(m => `<option value="${m}" ${m === 30 ? 'selected' : ''}>${m} min</option>`).join('')}</select>
+      <button type="button" class="btn" id="sim-go">${on ? 'Aplicar cambios' : 'Iniciar simulación'}</button>
+      ${on ? `<button type="button" class="btn ghost" id="sim-stop">Detener</button>` : ''}
+    </div>
+    ${on ? `<p class="sim-res">Resultado: <b>${esc(w.condition)}</b> · nivel publicado <span class="chip ${db.alert.effective}">${LEVELS[db.alert.effective]}</span> · riesgo ${db.risk?.value ?? '—'}/100</p>` : ''}
+  </div>`;
+}
+function bindSim() {
+  const start = async (vals, label) => {
+    await api('/api/admin/simulation', { method: 'PUT', body: { active: true, ...vals, minutes: +id('sim-min').value } });
+    toast(`Simulación: ${label}`, 'ok'); refresh();
+  };
+  q('[data-sim]').forEach(b => b.onclick = () => { const [l, rainNow, rainPast3h, rainNext3h, probNext3h, weatherCode] = SIM[b.dataset.sim]; start({ preset: b.dataset.sim, rainNow, rainPast3h, rainNext3h, probNext3h, weatherCode }, l); });
+  id('sim-go').onclick = () => start({ preset: 'manual', rainNow: +id('sim-now').value, rainPast3h: +id('sim-p3').value, rainNext3h: +id('sim-n3').value, probNext3h: +id('sim-prob').value, weatherCode: +id('sim-code').value }, 'valores a mano');
+  const st = id('sim-stop'); if (st) st.onclick = async () => { await api('/api/admin/simulation', { method: 'PUT', body: { active: false } }); toast('Simulación detenida: vuelve el clima real', 'ok'); refresh(); };
 }
 
 /* ================= PUNTOS ================= */
