@@ -53,7 +53,7 @@ function renderShell() {
       <div class="brand"><img src="/img/emovtt-logo-blanco.png" alt="EMOVTT Santa Rosa EP"><div>ALERTA VIAL<small>ADMINISTRACIÓN</small></div></div>
       ${NAV.map(([k, l, i, sh]) => `<button class="navbtn ${k === section ? 'on' : ''}" data-s="${k}">${i}<span class="t"><span class="long">${l}</span><span class="short">${sh}</span></span>${k === 'reports' && pend ? `<span class="n">${pend}</span>` : ''}</button>`).join('')}
       <div class="spacer"></div>
-      <a class="navbtn" href="/" target="_blank">${ICON.eye}<span class="t">Ver mapa público</span></a>
+      <a class="navbtn" href="/" target="_blank">${ICON.eye}<span class="t"><span class="long">Ver mapa público</span><span class="short">Mapa</span></span></a>
       <button class="navbtn" id="logout">${ICON.logout}<span class="t">Salir</span></button>
     </nav>
     <div class="content">

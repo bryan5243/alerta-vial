@@ -216,7 +216,9 @@ path.zone-draft{stroke-dasharray:4 6}
 .dot.rio_normal{background:#2BA3E0} .dot.rio_crecido{background:#1C7FD6;box-shadow:0 0 0 3px #F5A623} .dot.rio_desbordado{background:#1565C0;box-shadow:0 0 0 3px var(--roja)}
 .chip.rio_normal{background:#E0F2FB;color:#0D6B9A} .chip.rio_crecido{background:#FCEBD2;color:#8A5507} .chip.rio_desbordado{background:var(--roja-soft);color:var(--roja)}
 
-.gps-on .toast-wrap{bottom:auto;top:calc(76px + env(safe-area-inset-top))}
+.gps-on .toast-wrap{bottom:calc(16px + env(safe-area-inset-bottom))}
+/* si está la tarjeta de peligro abajo, los avisos suben para no taparla (arriba quedan la barra GPS y el giro) */
+body:has(#hz:not([hidden])) .toast-wrap{bottom:calc(230px + env(safe-area-inset-bottom))}
 
 /* ===== Selector de tipo de reporte ===== */
 .field .lbl{font-size:.85rem;font-weight:600;color:var(--ink)}
@@ -262,7 +264,7 @@ path.zone-draft{stroke-dasharray:4 6}
 #hz-alt[hidden]{display:none!important}
 
 /* ===== Buscador de destino y ruta segura ===== */
-.nav-search{position:absolute;top:14px;left:14px;width:min(420px,calc(100% - 100px));z-index:640}
+.nav-search{position:absolute;top:14px;left:14px;width:min(420px,calc(100% - 130px));z-index:640}
 .nav-search input{width:100%;height:48px;border-radius:14px;border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow-2);padding:0 42px 0 44px;font:inherit;font-size:.95rem;color:var(--ink);-webkit-appearance:none;appearance:none}
 .nav-search input::-webkit-search-cancel-button{display:none}
 .nav-search input:focus{outline:2px solid var(--accent);outline-offset:1px}
@@ -410,3 +412,5 @@ path.route-in,path.route-in-halo{animation:route-in .9s var(--ease) both}
 .ins-share{width:15px;height:15px;vertical-align:-2px;fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .ins-acts{display:flex;align-items:center;gap:4px;flex:none}
 .ins-x{border:0;background:none;width:34px;height:34px;border-radius:10px;font-size:1.3rem;color:var(--muted);cursor:pointer} .ins-x:hover{background:var(--surface-2)}
+
+@media (max-height:560px){ .sim-head small,.sim-ctl>span,.gps-on.sim-mode .sim-opt{display:none} .sim-bar{padding:6px 10px;gap:6px} .turn{padding:8px 12px} .turn-ic{width:40px;height:40px} .turn-tx b{font-size:1.25rem} }

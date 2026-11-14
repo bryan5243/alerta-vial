@@ -19,6 +19,12 @@ $('#btn-full').addEventListener('click', () => {
 $('#btn-radar').innerHTML = ICON.radar; $('#btn-fit').innerHTML = ICON.eye; $('#btn-layers').innerHTML = ICON.layers;
 $('#btn-gps').innerHTML = `${ICON.nav}<span class="gps-lbl">GPS</span>`; $('#gps-follow').innerHTML = ICON.nav; $('#gps-voice').innerHTML = ICON.volume; $('#gps-stop').innerHTML = ICON.x; document.querySelector('.sim-ic').innerHTML = ICON.play;
 new MutationObserver(() => map?.invalidate()).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+// En el celular el mapa ocupa la pantalla menos el encabezado y la banda de alerta, midiendo su alto real
+// (cambia al abrir la alerta, con mensajes largos o al girar el teléfono) para que nada quede fuera de la pantalla.
+const chromeH = () => document.documentElement.style.setProperty('--chrome', `${document.querySelector('header.top').offsetHeight + $('#band').offsetHeight}px`);
+const chromeObs = new ResizeObserver(() => { chromeH(); map?.invalidate(); });
+chromeObs.observe(document.querySelector('header.top')); chromeObs.observe($('#band')); chromeH();
+new ResizeObserver(() => map?.invalidate()).observe(document.getElementById('map'));
 const hiddenLayers = new Set(JSON.parse((() => { try { return localStorage.getItem('av_hidden_layers'); } catch { return null; } })() || '[]'));
 // Clima sobre el mapa: indicador + animación de lluvia / tormenta
 const wxFx = createWeatherFx({ canvas: $('#wx-fx'), flash: $('#wx-flash') });
