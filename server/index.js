@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { load, save, nextId } from './db.js';
+import { load, save, nextId, reset } from './db.js';
 import { getWeather, getTide, levelFromWeather, riskIndex, describe } from './weather.js';
 import { getFloodForecast } from './flood.js';
 import { seedIfEmpty } from './seed.js';
@@ -22,6 +22,7 @@ const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
 const app = express();
+app.set('trust proxy', 1); // detrás del proxy de Render/cPanel: IP real para el límite de reportes
 app.use(express.json({ limit: '25mb' })); // capas GeoJSON pueden ser grandes
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -181,6 +182,20 @@ app.put('/api/admin/config', auth, (req, res) => {
     rainThresholdMm3h: +(c.weather.rainThresholdMm3h ?? db.config.weather.rainThresholdMm3h) };
   save();
   res.json(db.config);
+});
+
+// Respaldo: descargar todos los datos o restaurarlos (para pasar del equipo local al hosting y viceversa).
+app.get('/api/admin/backup', auth, (req, res) => {
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  res.setHeader('Content-Disposition', `attachment; filename="alertavial-respaldo-${stamp}.json"`);
+  res.type('application/json').send(JSON.stringify(load(), null, 2));
+});
+app.post('/api/admin/restore', auth, (req, res) => {
+  const d = req.body;
+  const ok = d && typeof d === 'object' && d.config && d.alert && ['points', 'streets', 'routes', 'recommendations'].every(k => Array.isArray(d[k]));
+  if (!ok) return res.status(400).json({ error: 'El archivo no es un respaldo de AlertaVial.' });
+  reset(d); simulation = null;
+  res.json({ ok: true, counts: Object.fromEntries(['points', 'streets', 'routes', 'rivers', 'zones', 'layers', 'reports'].map(k => [k, (d[k] || []).length])) });
 });
 
 app.get('/api/admin/simulation', auth, (req, res) => res.json(simOn() || { active: false }));

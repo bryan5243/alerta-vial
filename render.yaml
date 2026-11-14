@@ -1,0 +1,17 @@
+# Despliegue en Render (plan gratuito). En Render: New → Blueprint → elige este repositorio.
+services:
+  - type: web
+    name: alertavial-demo
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/public/state
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: ADMIN_USER
+        value: admin
+      - key: ADMIN_PASSWORD
+        generateValue: true   # Render crea una contraseña segura; la ves en Environment

@@ -15,5 +15,8 @@
     "leaflet": "^1.9.4",
     "shpjs": "^4.0.4"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
 }

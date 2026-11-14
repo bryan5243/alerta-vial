@@ -501,6 +501,9 @@ function secConfig() {
     <div class="card"><h3 style="margin-bottom:6px">Qué ve la ciudadanía</h3><p class="small muted" style="margin-bottom:12px">Apaga lo que no quieras mostrar en el mapa público, para no confundir. Los datos no se borran: al volver a encender, reaparecen.</p>
       <form id="ff" novalidate><div class="feat-grid">${Object.entries(FEATURES).map(([k, [t, d]]) => `<label class="feat ${F[k] === false ? '' : 'on'}"><input type="checkbox" data-feat="${k}" ${F[k] === false ? '' : 'checked'}><span class="tg" aria-hidden="true"></span><span><b>${t}</b><small>${d}</small></span></label>`).join('')}</div>
       <button class="btn" style="margin-top:14px">Guardar lo que se muestra</button></form></div>
+    <div class="card backup-card"><h3 style="margin-bottom:6px">Respaldo de datos</h3>
+      <p class="small muted" style="margin-bottom:12px">Descarga todo (puntos, calles, vías alternas, ríos, zonas, capas, reportes y configuración) en un archivo. Sirve para pasar los datos de tu computadora al hosting, o para guardarlos antes de un cambio grande. En el hosting gratuito, guárdalo como <code>data/initial.json</code> para que se cargue solo cada vez que el servidor se reinicia.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap"><button type="button" class="btn" id="bk-down">${ICON.inbox} Descargar respaldo</button><label class="btn ghost" for="bk-file" style="cursor:pointer">${ICON.layers} Restaurar desde archivo</label><input type="file" id="bk-file" accept=".json,application/json" hidden></div></div>
     <div class="card"><h3 style="margin-bottom:12px">Ciudad y mapa</h3><form id="fc" novalidate>
       <div class="field"><label for="city">Ciudad</label><input id="city" value="${esc(c.city)}"></div>
       <div class="row"><div class="field"><label for="clat">Centro · latitud</label><input id="clat" type="number" step="any" value="${c.center.lat}"></div><div class="field"><label for="clng">Centro · longitud</label><input id="clng" type="number" step="any" value="${c.center.lng}"></div></div>
@@ -526,6 +529,22 @@ function secConfig() {
   id('ff').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { features: Object.fromEntries(q('[data-feat]').map(cb => [cb.dataset.feat, cb.checked])) } }); toast('Mapa público actualizado', 'ok'); db = await api('/api/admin/state'); };
   id('fon').onchange = () => { id('fkey-f').hidden = !id('fon').checked; };
   id('usemap').onclick = () => { if (!map) return; const r = map.raw; const cc = map.provider === 'google' ? { lat: r.getCenter().lat(), lng: r.getCenter().lng() } : r.getCenter(); id('clat').value = (+cc.lat).toFixed(5); id('clng').value = (+cc.lng).toFixed(5); id('zoom').value = r.getZoom(); };
+  id('bk-down').onclick = async () => {
+    const r = await fetch('/api/admin/backup', { headers: { authorization: `Bearer ${token}` } });
+    if (!r.ok) return toast('No se pudo descargar el respaldo.', 'err');
+    const blob = await r.blob(), a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = (r.headers.get('content-disposition') || '').match(/filename="(.+)"/)?.[1] || 'alertavial-respaldo.json';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    toast('Respaldo descargado', 'ok');
+  };
+  id('bk-file').onchange = async e => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    let data; try { data = JSON.parse(await f.text()); } catch { return toast('El archivo no es un JSON válido.', 'err'); }
+    const n = k => (data[k] || []).length;
+    if (!await confirmBox({ title: 'Restaurar respaldo', text: `Se reemplazarán TODOS los datos actuales por los del archivo "${f.name}" (${n('points')} puntos, ${n('routes')} vías alternas, ${n('streets')} calles, ${n('layers')} capas). Te recomendamos descargar un respaldo antes.`, ok: 'Reemplazar datos', tone: 'warn', icon: ICON.layers })) return;
+    const r = await api('/api/admin/restore', { method: 'POST', body: data });
+    toast(`Datos restaurados: ${r.counts.points} puntos y ${r.counts.routes} vías alternas`, 'ok'); db = await api('/api/admin/state'); renderShell();
+  };
   id('fc').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { city: id('city').value, center: { lat: id('clat').value, lng: id('clng').value }, zoom: id('zoom').value, mapProvider: id('prov').value, googleMapsKey: id('gkey').value, googleFloodKey: id('fkey').value, floodEnabled: id('fon').checked } }); toast('Configuración guardada', 'ok'); db = await api('/api/admin/state'); renderShell(); };
   id('fg').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { gps: { warnM: id('gw').value, dangerM: id('gd').value, voice: id('gv').checked } } }); toast('Avisos GPS guardados', 'ok'); refresh(); };
   id('fw').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { weather: { lat: id('wlat').value, lng: id('wlng').value, rainThresholdMm: id('t1').value, rainThresholdMm3h: id('t3').value } } }); toast('Umbrales guardados', 'ok'); refresh(); };

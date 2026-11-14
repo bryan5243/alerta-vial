@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 // Datos de ejemplo para Santa Rosa (El Oro). Ejecuta `npm run seed` para restaurarlos.
 import { load, reset, emptyDb } from './db.js';
 import * as dbmod from './db.js';
@@ -87,6 +90,13 @@ export function seedIfEmpty() {
   load();
   // Solo en una instalación nueva: si el equipo borró los ejemplos, no se vuelven a cargar.
   if (dbmod.createdNow) {
+    // Hosting gratuito (Render) borra los archivos al reiniciar: si existe data/initial.json (un respaldo
+    // descargado desde Admin → Configuración), se carga ese en lugar de los ejemplos.
+    const initial = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data', 'initial.json');
+    if (fs.existsSync(initial)) {
+      try { reset(JSON.parse(fs.readFileSync(initial, 'utf8'))); console.log('Base de datos nueva: se cargó data/initial.json.'); return; }
+      catch (e) { console.error('data/initial.json no es válido:', e.message); }
+    }
     reset(sampleData());
     console.log('Base de datos vacía: se cargaron datos de ejemplo de Santa Rosa (El Oro).');
   }
