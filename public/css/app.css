@@ -388,3 +388,25 @@ path.route-in,path.route-in-halo{animation:route-in .9s var(--ease) both}
 /* Mientras se navega, la tarjeta de la ruta se oculta (la barra GPS y el aviso ya informan) y el simulador queda compacto */
 .gps-on .nav-card{display:none!important}
 .gps-on .sim-opt,.gps-on .sim-head small{display:none}
+/* ===== Indicaciones giro a giro ===== */
+.turn{display:flex;align-items:center;gap:12px;background:#0F6E4E;color:#fff;border-radius:16px;padding:12px 14px;box-shadow:0 10px 28px rgb(15 34 56/.3);margin-bottom:6px;animation:turn-in .3s var(--ease)}
+.turn[hidden]{display:none}
+.turn.arrive{background:var(--brand,#1B2B8B)} .turn.rerouting{background:#3B4757}
+.turn-ic{flex:none;width:52px;height:52px;border-radius:14px;background:rgb(255 255 255/.14);display:grid;place-items:center}
+.turn-ic svg{width:34px;height:34px;fill:none;stroke:#fff;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.turn-tx{flex:1;min-width:0} .turn-tx b{display:block;font-family:var(--font-display);font-size:1.6rem;line-height:1.05} .turn-tx span{display:block;font-size:.95rem;font-weight:600;line-height:1.25;margin-top:2px}
+.turn-next{flex:none;align-self:flex-end;display:flex;align-items:center;gap:4px;font-size:.75rem;background:rgb(0 0 0/.2);padding:4px 8px;border-radius:8px}
+.turn-next svg{width:16px;height:16px;fill:none;stroke:#fff;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.turn-spin{width:26px;height:26px;border-radius:50%;border:3px solid rgb(255 255 255/.3);border-top-color:#fff;animation:spin .8s linear infinite}
+@keyframes turn-in{from{opacity:0;transform:translateY(-8px)}}
+/* navegando: la indicación reemplaza al buscador */
+.navigating .nav-search>input,.navigating #nav-clear,.navigating #nav-plan,.navigating #nav-ic,.navigating .nav-results{display:none!important}
+@media (max-width:900px){ .turn{padding:10px 12px} .turn-ic{width:46px;height:46px} .turn-tx b{font-size:1.4rem} .turn-tx span{font-size:.88rem} }
+/* ===== Instalar como app ===== */
+.install{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translate(-50%,24px);opacity:0;z-index:2500;width:min(440px,calc(100% - 24px));display:flex;gap:12px;align-items:center;background:var(--surface);border-radius:18px;box-shadow:0 18px 44px rgb(15 34 56/.32);padding:12px 12px 12px 14px;border:1px solid var(--line);transition:transform .35s cubic-bezier(.2,.9,.3,1.2),opacity .3s}
+.install[hidden]{display:none} .install.on{transform:translate(-50%,0);opacity:1}
+.install img{border-radius:12px;flex:none}
+.ins-tx{flex:1;min-width:0} .ins-tx>b{display:block;font-size:.92rem} .ins-tx>span{display:block;font-size:.78rem;color:var(--muted);line-height:1.35;margin-top:2px} .ins-tx>span b{color:var(--ink)}
+.ins-share{width:15px;height:15px;vertical-align:-2px;fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ins-acts{display:flex;align-items:center;gap:4px;flex:none}
+.ins-x{border:0;background:none;width:34px;height:34px;border-radius:10px;font-size:1.3rem;color:var(--muted);cursor:pointer} .ins-x:hover{background:var(--surface-2)}

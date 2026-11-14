@@ -1,0 +1,18 @@
+{
+  "name": "AlertaVial · EMOVTT Santa Rosa",
+  "short_name": "AlertaVial",
+  "description": "Calles inundadas, vías alternas y navegación segura en Santa Rosa, El Oro.",
+  "lang": "es-EC",
+  "start_url": "/?app=1",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#14206B",
+  "theme_color": "#1B2B8B",
+  "categories": ["navigation", "weather", "utilities"],
+  "icons": [
+    { "src": "/img/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/img/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/img/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -498,6 +498,12 @@ const FEATURES = {
 function secConfig() {
   const c = db.config; const F = c.features || {};
   col(`
+    <div class="card share-card"><h3 style="margin-bottom:6px">Compartir con la ciudadanía</h3>
+      <p class="small muted" style="margin-bottom:12px">Este es el enlace directo al mapa. Al abrirlo en el teléfono, la página ofrece <b>Instalar</b> para dejarla en la pantalla de inicio como una app (en iPhone: Compartir → Agregar a inicio). El QR sirve para afiches, redes y paradas de bus.</p>
+      <div class="share-row"><div class="share-qr" id="qr" aria-label="Código QR del mapa público"></div>
+        <div class="share-acts"><input id="pub-url" readonly value="${esc(location.origin)}/" aria-label="Enlace del mapa público">
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn sm" id="sh-copy">Copiar enlace</button><a class="btn sm soft" id="sh-wa" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(`AlertaVial · EMOVTT Santa Rosa: calles inundadas, vías alternas y navegación segura. ${location.origin}/`)}">WhatsApp</a><button type="button" class="btn sm ghost" id="sh-qr">Descargar QR</button></div>
+          ${/^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname) ? `<p class="small" style="color:var(--naranja);margin-top:8px">Estás en una dirección local: este enlace solo funciona en tu red. Usa el de Render o tu dominio para compartir con todos.</p>` : ''}</div></div></div>
     <div class="card"><h3 style="margin-bottom:6px">Qué ve la ciudadanía</h3><p class="small muted" style="margin-bottom:12px">Apaga lo que no quieras mostrar en el mapa público, para no confundir. Los datos no se borran: al volver a encender, reaparecen.</p>
       <form id="ff" novalidate><div class="feat-grid">${Object.entries(FEATURES).map(([k, [t, d]]) => `<label class="feat ${F[k] === false ? '' : 'on'}"><input type="checkbox" data-feat="${k}" ${F[k] === false ? '' : 'checked'}><span class="tg" aria-hidden="true"></span><span><b>${t}</b><small>${d}</small></span></label>`).join('')}</div>
       <button class="btn" style="margin-top:14px">Guardar lo que se muestra</button></form></div>
@@ -529,6 +535,11 @@ function secConfig() {
   id('ff').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { features: Object.fromEntries(q('[data-feat]').map(cb => [cb.dataset.feat, cb.checked])) } }); toast('Mapa público actualizado', 'ok'); db = await api('/api/admin/state'); };
   id('fon').onchange = () => { id('fkey-f').hidden = !id('fon').checked; };
   id('usemap').onclick = () => { if (!map) return; const r = map.raw; const cc = map.provider === 'google' ? { lat: r.getCenter().lat(), lng: r.getCenter().lng() } : r.getCenter(); id('clat').value = (+cc.lat).toFixed(5); id('clng').value = (+cc.lng).toFixed(5); id('zoom').value = r.getZoom(); };
+  const url = id('pub-url').value;
+  if (window.qrcode) { const qr = window.qrcode(0, 'M'); qr.addData(url); qr.make(); id('qr').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 2, scalable: true });
+    id('sh-qr').onclick = () => { const big = window.qrcode(0, 'M'); big.addData(url); big.make(); const a = document.createElement('a'); a.href = big.createDataURL(16, 4); a.download = 'alertavial-qr.gif'; a.click(); }; }
+  else id('sh-qr').hidden = true;
+  id('sh-copy').onclick = async () => { try { await navigator.clipboard.writeText(url); } catch { id('pub-url').select(); document.execCommand('copy'); } toast('Enlace copiado', 'ok'); };
   id('bk-down').onclick = async () => {
     const r = await fetch('/api/admin/backup', { headers: { authorization: `Bearer ${token}` } });
     if (!r.ok) return toast('No se pudo descargar el respaldo.', 'err');

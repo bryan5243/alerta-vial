@@ -40,8 +40,8 @@ $('#wx-chip').addEventListener('click', () => { if (!(state?.weather?.intensity 
 
 // Simulador de navegación (Admin → Simular navegación abre el mapa con ?sim=1)
 const SIM = new URLSearchParams(location.search).has('sim');
-const gps = createGps({ getMap: () => map, getState: () => state, getShapes: () => shapes, getNav: () => nav, onMove: () => syncRoutes() });
-const nav = createNav({ getMap: () => map, getState: () => state, getUser: () => gps.user, startGps: () => (SIM ? (gps.simulating || gps.simulate()) : gps.start()), onChange: () => syncRoutes(), sim: SIM, getDirect: () => SIM && $('#sim-direct').checked });
+const gps = createGps({ getMap: () => map, getState: () => state, getShapes: () => shapes, getNav: () => nav, onMove: u => { syncRoutes(); nav.track(u); document.body.classList.toggle('navigating', !!(u && nav.trip)); } });
+const nav = createNav({ getMap: () => map, getState: () => state, getUser: () => gps.user, startGps: () => (SIM ? (gps.simulating || gps.simulate()) : gps.start()), onChange: () => syncRoutes(), sim: SIM, getDirect: () => SIM && $('#sim-direct').checked, getVoice: () => gps.voiceOn });
 
 if (SIM) {
   document.body.classList.add('sim-mode'); $('#sim-bar').hidden = false;
@@ -50,6 +50,7 @@ if (SIM) {
   document.addEventListener('click', e => { if (!e.target.closest('#btn-gps')) return; e.stopPropagation(); if (gps.simulating) gps.stop(); else gps.simulate(); }, true);
   document.querySelectorAll('[data-speed]').forEach(b => b.addEventListener('click', () => { gps.setSimSpeed(+b.dataset.speed); document.querySelectorAll('[data-speed]').forEach(x => x.classList.toggle('on', x === b)); }));
   $('#sim-pause').addEventListener('click', e => { if (!gps.simulating) return; const p = gps.toggleSimPause(); e.currentTarget.textContent = p ? 'Seguir' : 'Pausa'; e.currentTarget.classList.toggle('on', p); });
+  $('#sim-off').addEventListener('click', () => { if (!gps.simDeviate()) return toast('Primero inicia la simulación con una ruta.', 'err'); toast('El vehículo tomó otra calle: mira cómo se recalcula la ruta.', 'ok'); });
   $('#sim-reset').addEventListener('click', () => { gps.stop(); nav.resetFrom(); $('#nav-clear').click(); $('#sim-pause').textContent = 'Pausa'; toast('Busca un destino o elígelo en el mapa para una nueva prueba.', 'ok'); });
 }
 
@@ -139,11 +140,32 @@ function syncRoutes() {
   const chip = $('#alt-chip'), total = state.routes.length;
   chip.hidden = !(trip || user) || !total || state.config.features?.routes === false;
   if (!chip.hidden) chip.innerHTML = altAll ? `<i></i>Vista general: ${total} vías alternas <u>Solo mi camino</u>`
-    : `<i></i>${want.size ? `${want.size} ${want.size === 1 ? 'vía alterna' : 'vías alternas'} ${user ? 'adelante en tu camino' : 'en tu camino'}` : user ? 'Las vías alternas aparecen cuando hay un peligro adelante' : 'Ninguna vía alterna en tu camino'} <u>Ver todas</u>`;
+    : `<i></i>${want.size ? `${want.size} ${want.size === 1 ? 'vía alterna' : 'vías alternas'} ${user ? 'adelante en tu camino' : 'en tu camino'}` : user ? 'Sin peligros adelante' : 'Ninguna vía alterna en tu camino'} <u>Ver todas</u>`;
 }
 $('#alt-chip').addEventListener('click', () => { altAll = !altAll; altDrawn = new Set(); syncRoutes(); if (altAll && state.routes.length) map.fitBounds(state.routes.flatMap(r => r.coords)); });
 
 if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+// Instalar como app (PWA): Android/Chrome/Edge muestran el botón Instalar; en iPhone se explica "Agregar a inicio".
+(() => {
+  const box = $('#install'); let deferred = null;
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  const later = () => { try { return Date.now() < +(localStorage.getItem('av_install_later') || 0); } catch { return false; } };
+  const show = () => { if (standalone || later() || SIM) return; box.hidden = false; requestAnimationFrame(() => box.classList.add('on')); };
+  const hide = days => { box.classList.remove('on'); setTimeout(() => (box.hidden = true), 300); if (days) try { localStorage.setItem('av_install_later', Date.now() + days * 864e5); } catch {} };
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e; setTimeout(show, 4000); });
+  window.addEventListener('appinstalled', () => { hide(); toast('AlertaVial quedó instalada en tu teléfono.', 'ok'); });
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !/crios|fxios/i.test(navigator.userAgent);
+  if (ios && !standalone) {
+    $('#ins-d').innerHTML = 'Toca <svg class="ins-share" viewBox="0 0 24 24"><path d="M12 3v12m-4-8 4-4 4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg> <b>Compartir</b> y luego <b>Agregar a inicio</b>.';
+    $('#ins-go').textContent = 'Entendido'; setTimeout(show, 4000);
+  }
+  $('#ins-go').addEventListener('click', async () => {
+    if (!deferred) return hide(30);
+    deferred.prompt(); const r = await deferred.userChoice.catch(() => null); deferred = null; hide(r?.outcome === 'accepted' ? 0 : 7);
+  });
+  $('#ins-x').addEventListener('click', () => hide(7));
+})();
 
 function render(reports) {
   const { alert, weather, config } = state;

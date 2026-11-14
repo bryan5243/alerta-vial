@@ -238,7 +238,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
   }
   // Simulación de navegación: si hay una ruta marcada, un vehículo virtual la recorre (y sigue el desvío si lo aceptas).
   // Sin ruta: se acerca a la primera calle inundada para mostrar el aviso.
-  let simSpeed = 2, simPaused = false;
+  let simSpeed = 2, simPaused = false, deviate = null;
   function simulate() {
     if (simTimer) { clearInterval(simTimer); simTimer = null; $('#gps-sim').classList.remove('on'); return; }
     const nav = getNav();
@@ -251,7 +251,13 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
       simTimer = setInterval(() => {
         if (simPaused) return;
         const t = nav.trip; if (!t) { stop(); return; }
-        const r = advance(t.route.coords, pos, 5 * simSpeed); // 5 m por paso de 0,5 s = 36 km/h a velocidad 1×
+        let r;
+        if (deviate && deviate.left > 0) { // "Tomar otra calle": el vehículo se sale de la ruta en línea recta
+          const m = 5 * simSpeed; deviate.left -= m;
+          const k = 111320, b = deviate.heading * Math.PI / 180;
+          r = { pos: { lat: pos.lat + (m * Math.cos(b)) / k, lng: pos.lng + (m * Math.sin(b)) / (k * Math.cos(pos.lat * Math.PI / 180)) }, heading: deviate.heading, done: false };
+          if (deviate.left <= 0) deviate = null;
+        } else r = advance(t.route.coords, pos, 5 * simSpeed); // 5 m por paso de 0,5 s = 36 km/h a velocidad 1×
         pos = r.pos; onPos({ ...pos, accuracy: 5, heading: r.heading, speed: 10 * simSpeed });
         if (r.done) { clearInterval(simTimer); simTimer = null; $('#gps-sim').classList.remove('on'); toast(`Llegaste a ${t.dest.name}. Fin de la simulación.`, 'ok'); }
       }, 500);
@@ -299,6 +305,8 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
     start: () => { if (watchId == null && !simTimer) start(); },
     simulate, onPos, stop: () => { if (watchId != null || simTimer) stop(); },
     get simulating() { return !!simTimer; },
-    setSimSpeed(v) { simSpeed = v; }, toggleSimPause() { simPaused = !simPaused; return simPaused; },
+    setSimSpeed(v) { simSpeed = v; },
+    simDeviate() { if (!simTimer || !user) return false; deviate = { left: 180, heading: ((user.heading ?? 0) + (Math.random() < .5 ? 90 : -90) + 360) % 360 }; return true; },
+    get voiceOn() { return voice && cfg().voice !== false; }, toggleSimPause() { simPaused = !simPaused; return simPaused; },
   };
 }

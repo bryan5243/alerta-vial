@@ -4,6 +4,7 @@
 // probamos desvíos pasando por puntos a los lados de esa zona hasta encontrar una ruta libre.
 import { haversine, bearing, nearestOnLine, inPolygon } from './gps.js';
 import { esc, toast, ICON } from './common.js';
+import { fromOsrmStep, createGuide } from './guide.js';
 
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
@@ -54,12 +55,13 @@ function densify(c, step) {
 }
 
 async function osrm(pts, alternatives) {
-  const url = `${OSRM}${pts.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(';')}?overview=full&geometries=geojson${alternatives ? '&alternatives=3' : ''}`;
+  const url = `${OSRM}${pts.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(';')}?overview=full&geometries=geojson&steps=true${alternatives ? '&alternatives=3' : ''}`;
   const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
   if (!r.ok) throw new Error('OSRM ' + r.status);
   const j = await r.json();
   if (j.code && j.code !== 'Ok') throw new Error(j.code);
-  return (j.routes || []).map(x => ({ coords: x.geometry.coordinates.map(([lng, lat]) => [lat, lng]), distance: x.distance, duration: x.duration }));
+  return (j.routes || []).map(x => ({ coords: x.geometry.coordinates.map(([lng, lat]) => [lat, lng]), distance: x.distance, duration: x.duration,
+    steps: (x.legs || []).flatMap((l, i, all) => (l.steps || []).filter(st => !(st.maneuver?.type === 'arrive' && i < all.length - 1) && !(st.maneuver?.type === 'depart' && i > 0)).map(fromOsrmStep)) }));
 }
 
 // Ruta de o a d que evite las zonas. Devuelve { coords, distance, duration, avoided:[nombres], blocked:[zonas aún cruzadas] }
@@ -112,9 +114,9 @@ const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
-const slim = r => ({ coords: r.coords.map(([a, b]) => [+a.toFixed(6), +b.toFixed(6)]), distance: r.distance, duration: r.duration, avoided: r.avoided || [], blocked: (r.blocked || []).map(z => ({ name: z.name })) });
+const slim = r => ({ coords: r.coords.map(([a, b]) => [+a.toFixed(6), +b.toFixed(6)]), distance: r.distance, duration: r.duration, steps: r.steps || [], avoided: r.avoided || [], blocked: (r.blocked || []).map(z => ({ name: z.name })) });
 
-export function createNav({ getMap, getState, getUser, startGps, onChange = () => {}, sim = false, getDirect = () => false }) {
+export function createNav({ getMap, getState, getUser, startGps, onChange = () => {}, sim = false, getDirect = () => false, getVoice = () => true }) {
   const $ = s => document.querySelector(s);
   let trip = null;      // { dest, origin, route, saved?, offline? }
   let shapes = [], detourR = null, picking = null, timer = null, seq = 0, replanning = false;
@@ -124,6 +126,13 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
   let restore = sim ? null : LS.get('av_trip', null);
 
   const input = $('#nav-q'), list = $('#nav-results'), card = $('#nav-card');
+  // Indicaciones giro a giro; si el vehículo toma otra calle, se recalcula el camino desde donde está.
+  const guide = createGuide({ el: $('#turn'), getVoice, onOffRoute: async user => {
+    if (!trip) return;
+    const route = await safeRoute(user, trip.dest, hazardZones(getState()));
+    setTrip({ ...trip, origin: { lat: user.lat, lng: user.lng, mine: true }, route, direct: false, offline: false }); draw(false); renderCard();
+    toast(route.avoided?.length ? `Nueva ruta: sigue evitando ${route.avoided.length === 1 ? route.avoided[0] : `${route.avoided.length} zonas inundadas`}.` : 'Nueva ruta calculada desde donde estás.', 'ok');
+  } });
   $('#nav-ic').innerHTML = ICON.search || ICON.nav;
   $('#nav-plan').innerHTML = ICON.route;
   input.addEventListener('input', () => {
@@ -211,7 +220,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     }
   }
   function setTrip(t) {
-    trip = t;
+    trip = t; guide.setRoute(trip ? trip.route : null); if (!trip) guide.hide();
     if (!sim) LS.set('av_trip', trip ? { dest: trip.dest, origin: trip.origin, route: slim(trip.route), saved: trip.saved, at: Date.now() } : null);
     onChange();
   }
@@ -308,17 +317,17 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     const dest = trip ? trip.dest : offset(c, bearing(user, c), 350);
     const r = await safeRoute(user, dest, hazardZones(getState()));
     if (r.blocked?.length) return null;
-    return { id: 'auto', name: trip ? `Ruta segura a ${trip.dest.name}` : 'Desvío automático', description: r.avoided?.length ? `Evita ${r.avoided.join(', ')}.` : '', coords: r.coords, auto: true };
+    return { id: 'auto', name: trip ? `Ruta segura a ${trip.dest.name}` : 'Desvío automático', description: r.avoided?.length ? `Evita ${r.avoided.join(', ')}.` : '', coords: r.coords, steps: r.steps, auto: true };
   }
   function showDetour(r) {
-    if (trip) { trip.route = { ...trip.route, coords: r.coords, blocked: [], avoided: r.description ? [r.description.replace(/^Evita |\.$/g, '')] : trip.route.avoided }; trip.direct = false; setTrip(trip); draw(); renderCard(); return; }
+    if (trip) { trip.route = { ...trip.route, coords: r.coords, steps: r.steps || [], blocked: [], avoided: r.description ? [r.description.replace(/^Evita |\.$/g, '')] : trip.route.avoided }; trip.direct = false; setTrip(trip); draw(); renderCard(); return; }
     detourR = r; draw(false);
   }
 
   // Cada vez que el mapa se redibuja: volver a pintar la ruta y recalcular si ahora cruza una zona nueva.
   async function refresh() {
     if (!trip && restore?.route?.coords?.length && Date.now() - (restore.at || 0) < 12 * 3600e3) {
-      trip = { ...restore, offline: navigator.onLine === false }; restore = null;
+      trip = { ...restore, offline: navigator.onLine === false }; restore = null; guide.setRoute(trip.route);
       input.value = trip.dest.name; $('#nav-clear').hidden = false; draw(true); renderCard(); return;
     }
     restore = null;
@@ -336,6 +345,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     refresh, detour, showDetour, go, openPlan,
     get active() { return !!trip; },
     get trip() { return trip; },
+    track(user) { if (trip && user) guide.update(user); else guide.hide(); },
     resetFrom() { from = null; },
     onMapClick(pos) {
       if (!picking) return false;

@@ -274,6 +274,13 @@ lateral + mapa. El panel admin usa barra inferior en celular.
 - **Avisos solo adelante:** con ruta marcada, el GPS solo avisa de peligros que están más adelante sobre la ruta y a menos de 120 m de ella; lo que queda atrás o a un costado no avisa. Sin ruta, avisa de lo que está en la dirección de avance (±70°).
 - **Vías alternas del camino:** al navegar se muestra solo la vía alterna del próximo peligro de la ruta (una por peligro, máximo dos), aparece a 700 m y desaparece cuando lo pasas. "Ver todas" sigue mostrando la vista general.
 
+### Navegación giro a giro, recálculo y app instalable
+- **Giro a giro:** las rutas se piden a OSRM con `steps=true`; cada maniobra se traduce al español ("Gira a la derecha en Av. X", "En la rotonda, toma la segunda salida", "Llegas a tu destino"). Si una ruta no trae pasos (guardada antes o desvío), los giros se calculan por la forma de la línea. Mientras se navega, una tarjeta verde reemplaza al buscador con flecha, distancia e indicación, y "Luego…" si el siguiente giro está cerca. Voz: a ~200 m ("En 200 metros, gira…") y al llegar al giro, en cola para no cortar los avisos de peligro (`public/js/guide.js`).
+- **Recálculo automático:** si el vehículo se aleja más de 45 m de la ruta (o 1,5 veces la precisión del GPS) en 3 lecturas seguidas, se recalcula desde donde está, evitando las zonas inundadas ("Recalculando"). Como máximo cada 12 s. Sin señal, avisa que vuelva a la línea azul.
+- **Simulador:** botón "Tomar otra calle" para salirse de la ruta y ver el recálculo.
+- **App instalable (PWA):** `manifest.webmanifest`, íconos en `public/img/icons/`. En Android/Chrome aparece una tarjeta "Instala AlertaVial" con botón Instalar; en iPhone explica Compartir → Agregar a inicio. Se puede posponer 7 días. Requiere https (Render o cPanel con AutoSSL).
+- **Compartir:** Admin → Configuración → "Compartir con la ciudadanía": enlace directo, copiar, WhatsApp y código QR descargable para afiches (librería `qrcode-generator`, MIT, en `public/vendor/qrcode/`).
+
 ## 12. Siguientes pasos sugeridos
 
 - Pasar la base de datos a SQLite/Postgres y los usuarios a una tabla con contraseñas cifradas.
