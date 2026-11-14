@@ -11,7 +11,7 @@ export async function getWeather({ lat, lng }) {
   const url = new URL('https://api.open-meteo.com/v1/forecast');
   url.search = new URLSearchParams({
     latitude: lat, longitude: lng,
-    current: 'precipitation,rain,temperature_2m,weather_code',
+    current: 'precipitation,rain,showers,temperature_2m,weather_code,cloud_cover',
     hourly: 'precipitation,precipitation_probability',
     past_hours: 3, forecast_hours: 24,
     timezone: 'America/Guayaquil',
@@ -33,7 +33,10 @@ export async function getWeather({ lat, lng }) {
       source: 'Open-Meteo',
       observedAt: j.current.time,
       temperature: j.current.temperature_2m,
-      rainNow: j.current.precipitation ?? j.current.rain ?? 0,
+      // El modelo a veces da 0 en "current" aunque llovizne: tomamos el mayor entre la lectura actual y la hora en curso.
+      rainNow: +Math.max(j.current.precipitation ?? 0, (j.current.rain ?? 0) + (j.current.showers ?? 0), hours[nowIdx]?.precipitation ?? 0).toFixed(1),
+      probNext3h: Math.max(0, ...hours.slice(nowIdx, nowIdx + 4).map(h => h.probability || 0)),
+      cloudCover: j.current.cloud_cover,
       rainPast3h: sum(hours.slice(Math.max(0, nowIdx - 3), nowIdx + 1)),
       rainNext3h: sum(hours.slice(nowIdx + 1, nowIdx + 4)),
       rainNext24h: sum(hours.slice(nowIdx + 1, nowIdx + 25)),
@@ -41,11 +44,25 @@ export async function getWeather({ lat, lng }) {
       weatherCode: j.current.weather_code,
       hourly: hours.slice(nowIdx, nowIdx + 12),
     };
+    Object.assign(data, describe(data));
     cache = { at: Date.now(), key, data };
     return data;
   } catch (err) {
     return { ok: false, source: 'Open-Meteo', error: err.message, rainNow: 0, rainPast3h: 0, rainNext3h: 0, rainNext24h: 0, hourly: [] };
   }
+}
+
+// Códigos WMO de Open-Meteo → intensidad de lluvia (0 nada, 1 llovizna/leve, 2 moderada, 3 fuerte, 4 tormenta)
+const CODE = { 51: [1, 'Llovizna'], 53: [1, 'Llovizna'], 55: [2, 'Llovizna intensa'], 56: [1, 'Llovizna'], 57: [2, 'Llovizna intensa'],
+  61: [1, 'Lluvia leve'], 63: [2, 'Lluvia moderada'], 65: [3, 'Lluvia fuerte'], 66: [1, 'Lluvia leve'], 67: [3, 'Lluvia fuerte'],
+  80: [1, 'Chubascos leves'], 81: [2, 'Chubascos moderados'], 82: [3, 'Chubascos fuertes'], 95: [4, 'Tormenta eléctrica'], 96: [4, 'Tormenta con granizo'], 99: [4, 'Tormenta con granizo'] };
+export function describe(w) {
+  const [codeInt, codeTxt] = CODE[w.weatherCode] || [0, ''];
+  const mmInt = w.rainNow >= 8 ? 3 : w.rainNow >= 2.5 ? 2 : w.rainNow > 0 ? 1 : 0;
+  const intensity = Math.max(codeInt, mmInt);
+  const condition = codeTxt || (mmInt === 3 ? 'Lluvia fuerte' : mmInt === 2 ? 'Lluvia moderada' : mmInt === 1 ? 'Lluvia leve'
+    : w.probNext3h >= 60 ? 'Lluvia probable' : (w.cloudCover ?? 0) >= 70 ? 'Nublado' : (w.cloudCover ?? 0) >= 30 ? 'Parcialmente nublado' : 'Despejado');
+  return { raining: intensity > 0, intensity, condition };
 }
 
 // Marea (nivel del mar) desde Open-Meteo Marine. Útil en ciudades costeras como Santa Rosa (El Oro).
@@ -78,7 +95,7 @@ export function riskIndex({ weather: w, cfg, flood, reports = [], tide, rivers =
   const t = cfg.rainThresholdMm || 5, t3 = cfg.rainThresholdMm3h || 15;
   const clamp = x => Math.max(0, Math.min(1, x));
   const parts = [];
-  const rainNow = w.ok ? clamp(Math.max(w.rainNow / (t * 3), w.rainPast3h / (t3 * 2))) : 0;
+  const rainNow = w.ok ? clamp(Math.max(w.rainNow / (t * 3), w.rainPast3h / (t3 * 2), [0, 0.25, 0.5, 0.8, 1][w.intensity || 0])) : 0;
   parts.push({ key: 'lluvia', label: 'Lluvia actual', max: 30, value: Math.round(rainNow * 30), ok: w.ok });
   const fc = w.ok ? clamp((w.rainNext24h || 0) / (t3 * 3)) * clamp((w.maxProbability24h ?? 100) / 100 + 0.3) : 0;
   parts.push({ key: 'pronostico', label: 'Pronóstico 24 h', max: 25, value: Math.round(fc * 25), ok: w.ok });
@@ -99,9 +116,10 @@ export function riskIndex({ weather: w, cfg, flood, reports = [], tide, rivers =
 // Nivel sugerido por el clima: normal | amarilla | naranja | roja
 export function levelFromWeather(w, cfg) {
   if (!w.ok) return 'normal';
-  const t = cfg.rainThresholdMm, t3 = cfg.rainThresholdMm3h;
-  if (w.rainNow >= t * 3 || w.rainPast3h >= t3 * 2) return 'roja';
-  if (w.rainNow >= t || w.rainPast3h >= t3) return 'naranja';
-  if (w.rainNext3h >= t || w.rainNow >= t / 2) return 'amarilla';
+  const t = cfg.rainThresholdMm, t3 = cfg.rainThresholdMm3h, i = w.intensity || 0;
+  if (w.rainNow >= t * 3 || w.rainPast3h >= t3 * 2 || (i >= 4 && w.rainNow >= t)) return 'roja';
+  if (w.rainNow >= t || w.rainPast3h >= t3 || i >= 3) return 'naranja';
+  // Cualquier lluvia en curso (aunque sea llovizna) o lluvia muy probable en las próximas horas: amarilla.
+  if (i >= 1 || w.rainNow > 0 || w.rainNext3h >= t / 2 || (w.probNext3h ?? 0) >= 70) return 'amarilla';
   return 'normal';
 }

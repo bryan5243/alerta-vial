@@ -51,11 +51,11 @@ function render(reports) {
   // Clima
   const w = weather;
   $('#weather').innerHTML = w.ok ? `
-    <div class="stat"><b>${w.rainNow} <small>mm</small></b><span>Lluvia ahora</span></div>
+    <div class="stat${w.raining ? ' rain' : ''}"><b>${w.rainNow} <small>mm</small></b><span>${esc(w.condition || 'Lluvia ahora')}</span></div>
     <div class="stat"><b>${w.rainPast3h} <small>mm</small></b><span>Últimas 3 h</span></div>
     <div class="stat"><b>${w.rainNext3h} <small>mm</small></b><span>Próximas 3 h</span></div>`
     : `<div class="stat" style="grid-column:1/-1;display:flex;gap:10px;align-items:center">${ICON.cloud}<span>Sin datos de clima por ahora. Las alertas manuales siguen activas.</span></div>`;
-  $('#srcline').innerHTML = `${ICON.cloud} Clima: ${esc(w.source)}${w.ok ? ` · ${w.temperature}°C · umbral ${config.rainThresholdMm} mm/h` : ''} · nivel sugerido por clima: <span class="chip ${alert.suggested}">${LEVELS[alert.suggested]}</span>`;
+  $('#srcline').innerHTML = `${ICON.cloud} Clima: ${esc(w.source)}${w.ok ? ` · ${esc(w.condition || '')} · ${w.temperature}°C${w.probNext3h != null ? ` · prob. lluvia 3 h ${w.probNext3h}%` : ''} · umbral ${config.rainThresholdMm} mm/h` : ''} · nivel sugerido por clima: <span class="chip ${alert.suggested}">${LEVELS[alert.suggested]}</span>`;
 
   // Google Flood Forecasting
   const f = state.flood; const fc = $('#flood'); fc.hidden = !!f.disabled;

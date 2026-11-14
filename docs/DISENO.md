@@ -246,6 +246,12 @@ lateral + mapa. El panel admin usa barra inferior en celular.
   300 m antes a 300 m después que no pase por ningún punto de riesgo. Cada vía queda ligada a su punto y solo aparece
   cuando el punto se activa (a mano o por alerta naranja/roja).
 
+### Clima más sensible a la lluvia leve
+- Open-Meteo es un modelo de malla gruesa y a veces marca 0 mm aunque esté lloviznando. Ahora "Lluvia ahora" toma el mayor valor entre la lectura actual, la suma de lluvia + chubascos y la hora en curso.
+- Se usa además el código del tiempo (WMO) para describir la condición: Llovizna, Lluvia leve, moderada, fuerte, chubascos o tormenta, y se muestra en el mapa público y en el panel.
+- Cualquier lluvia o llovizna detectada sube el nivel sugerido a **amarilla**; lluvia fuerte a **naranja**; tormenta con lluvia sobre el umbral a **roja**. Una probabilidad de lluvia de 70 % o más en las próximas 3 h también da amarilla.
+- El modo manual sigue disponible si el modelo no refleja lo que se ve en la calle.
+
 ## 12. Siguientes pasos sugeridos
 
 - Pasar la base de datos a SQLite/Postgres y los usuarios a una tabla con contraseñas cifradas.
