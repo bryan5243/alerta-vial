@@ -288,3 +288,14 @@ lateral + mapa. El panel admin usa barra inferior en celular.
 - Snap de las líneas dibujadas a las calles reales (OSRM o Google Roads API).
 - Histórico de eventos para saber qué calles se inundan con más frecuencia.
 - Desplegar en Render, Railway o un VPS con `npm start` (un solo proceso, puerto `PORT`).
+
+### Clima de varias fuentes (lluvia real, no solo pronóstico)
+- El 14-nov-2026 llovía fuerte en Santa Rosa y el semáforo seguía verde: Open-Meteo es un **pronóstico de modelo** y no ve los aguaceros locales de la costa. Las coordenadas (-3.4596, -79.9658) y la hora (America/Guayaquil) estaban bien.
+- Ahora el servidor (`server/weather.js`) combina varias fuentes y **gana la que vea la lluvia más fuerte**:
+  - Open-Meteo con 8 modelos (mejor modelo, ECMWF, GFS, ICON, JMA, Météo-France, UK Met Office, GEM), pedidos por separado; se exige que al menos 2 coincidan para no alarmar por un solo modelo.
+  - METAR del aeropuerto de Santa Rosa (SERO) vía aviationweather.gov (NOAA): observación real cuando el aeropuerto reporta (se usa si tiene menos de 90 min). `VC` (lluvia en los alrededores) cuenta como leve.
+  - OpenWeatherMap opcional (`OWM_KEY` o Admin → Configuración).
+  - **Equipo EMOVTT**: Admin → Alerta → "¿Está lloviendo ahora?" (leve, moderada, fuerte, tormenta; vence sola). Se guarda en `alert.observed`.
+  - Reportes ciudadanos de la última hora (2 reportes o 1 verificado cuentan como lluvia).
+- Admin → Alerta → "Fuentes del clima" muestra qué dice cada fuente, la hora del dato y cuál decide el nivel. El mapa público muestra la fuente y la hora en la línea de clima.
+- RainViewer no tiene radares en Ecuador (su página de cobertura no lo incluye), por eso el radar del mapa puede verse vacío.

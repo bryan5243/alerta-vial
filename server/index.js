@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { load, save, nextId, reset } from './db.js';
-import { getWeather, getTide, levelFromWeather, riskIndex, describe } from './weather.js';
+import { getWeather, getTide, levelFromWeather, riskIndex, describe, localSources } from './weather.js';
 import { getFloodForecast } from './flood.js';
 import { seedIfEmpty } from './seed.js';
 
@@ -66,7 +66,8 @@ function simulatedWeather(real) {
 async function computeStatus() {
   const db = load();
   let [weather, tide, flood] = await Promise.all([
-    getWeather(db.config.weather),
+    getWeather({ ...db.config.weather, metarStation: db.config.weather.metarStation ?? 'SERO', owmKey: process.env.OWM_KEY || db.config.weather.owmKey || '' },
+      localSources({ observed: db.alert.observed, reports: db.reports || [] })),
     getTide(db.config.weather),
     db.config.floodEnabled === true
       ? getFloodForecast({ ...db.config.center, apiKey: process.env.GOOGLE_FLOOD_KEY || db.config.googleFloodKey || '' })
@@ -179,7 +180,9 @@ app.put('/api/admin/config', auth, (req, res) => {
   if (c.weather) db.config.weather = { ...db.config.weather, ...c.weather,
     lat: +(c.weather.lat ?? db.config.weather.lat), lng: +(c.weather.lng ?? db.config.weather.lng),
     rainThresholdMm: +(c.weather.rainThresholdMm ?? db.config.weather.rainThresholdMm),
-    rainThresholdMm3h: +(c.weather.rainThresholdMm3h ?? db.config.weather.rainThresholdMm3h) };
+    rainThresholdMm3h: +(c.weather.rainThresholdMm3h ?? db.config.weather.rainThresholdMm3h),
+    metarStation: String(c.weather.metarStation ?? db.config.weather.metarStation ?? 'SERO').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4),
+    owmKey: String(c.weather.owmKey ?? db.config.weather.owmKey ?? '').trim().slice(0, 64) };
   save();
   res.json(db.config);
 });
@@ -196,6 +199,17 @@ app.post('/api/admin/restore', auth, (req, res) => {
   if (!ok) return res.status(400).json({ error: 'El archivo no es un respaldo de AlertaVial.' });
   reset(d); simulation = null;
   res.json({ ok: true, counts: Object.fromEntries(['points', 'streets', 'routes', 'rivers', 'zones', 'layers', 'reports'].map(k => [k, (d[k] || []).length])) });
+});
+
+// "Está lloviendo ahora": el equipo confirma la lluvia que ve en la calle cuando las fuentes en línea no la detectan.
+// Se guarda en la base (sobrevive a reinicios) y vence sola.
+app.put('/api/admin/observed', auth, (req, res) => {
+  const db = load(), b = req.body || {};
+  const i = Math.round(+b.intensity || 0);
+  if (!i) delete db.alert.observed;
+  else db.alert.observed = { intensity: Math.max(1, Math.min(4, i)), at: new Date().toISOString(), until: new Date(Date.now() + Math.max(15, Math.min(720, +b.minutes || 120)) * 60000).toISOString() };
+  save();
+  res.json(db.alert.observed || { intensity: 0 });
 });
 
 app.get('/api/admin/simulation', auth, (req, res) => res.json(simOn() || { active: false }));

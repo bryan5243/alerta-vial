@@ -8,6 +8,8 @@ export const ZSEV = { alta: 'Grave · sin paso', media: 'Moderada', baja: 'Leve'
 
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const fmtTime = iso => iso ? new Date(iso).toLocaleString('es-EC', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }) : '';
+// Hora de un dato del clima en hora de Ecuador (Open-Meteo ya viene en hora local, sin zona; el resto en UTC)
+export const wxTime = t => !t ? '' : /[zZ]|[+-]\d\d:?\d\d$/.test(t) ? new Date(t).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Guayaquil', hourCycle: 'h23' }) : String(t).slice(11, 16);
 export const ago = iso => { const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 1 ? 'ahora' : m < 60 ? `hace ${m} min` : m < 1440 ? `hace ${Math.round(m / 60)} h` : `hace ${Math.round(m / 1440)} d`; };
 
 export function toast(msg, kind = '') {

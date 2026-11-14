@@ -120,7 +120,17 @@
   .navsim-frame.wide{width:100%;height:calc(100dvh - 140px);min-height:560px;border:0;border-radius:16px}
   .navsim-frame iframe{width:100%;height:100%;border:0;display:block;background:#fff}
   .work.nomap .col:has(.navsim-frame.wide){max-width:none}
-.share-row{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.obs-opts{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+  .obs-opt{display:flex;flex-direction:column;gap:2px;align-items:flex-start;text-align:left;padding:10px 12px;border:1.5px solid var(--line);border-radius:12px;background:var(--surface);cursor:pointer;font:inherit;color:var(--ink);min-height:56px}
+  .obs-opt small{color:var(--muted);font-size:.74rem;line-height:1.25} .obs-opt:hover{border-color:var(--accent)} .obs-opt.on{border-color:var(--naranja);background:var(--naranja-soft)}
+  .obs-card.on{border-color:#F3C9A6}
+  @media (max-width:600px){ .obs-opts{grid-template-columns:repeat(2,1fr)} }
+  .src-list{display:flex;flex-direction:column;gap:8px}
+  .src-row{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:12px} .src-row>div{flex:1;min-width:0}
+  .src-row>i{width:10px;height:10px;border-radius:50%;flex:none;margin-top:6px;background:var(--normal)} .src-row.mid>i{background:var(--amarilla)} .src-row.hi>i{background:var(--roja)} .src-row.err>i{background:#B6BFCC} .src-row.off>i{background:transparent;border:2px solid #B6BFCC}
+  .src-row.top{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)} .src-row small{color:var(--muted)} .src-row code{display:block;margin-top:4px;font-size:.72rem;background:var(--surface-2);padding:4px 6px;border-radius:6px;overflow-wrap:anywhere}
+  .src-row details summary{cursor:pointer;color:var(--accent);margin-top:4px}
+  .share-row{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
   .share-qr{width:148px;height:148px;flex:none;background:#fff;border:1px solid var(--line);border-radius:14px;padding:6px} .share-qr svg{width:100%;height:100%;display:block}
   .share-acts{flex:1;min-width:220px;display:flex;flex-direction:column;gap:10px} .share-acts a.btn{text-decoration:none} .share-acts input{font-family:ui-monospace,monospace;font-size:.85rem}
 </style>

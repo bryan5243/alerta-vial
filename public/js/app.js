@@ -2,7 +2,7 @@ import { createMap } from './map-provider.js';
 import { createGps, nearestOnLine, haversine, progressOn, isAhead } from './gps.js';
 import { createNav } from './nav.js';
 import { createWeatherFx } from './weather-fx.js';
-import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, toast, ICON, waveSvg } from './common.js';
+import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, wxTime, toast, ICON, waveSvg } from './common.js';
 
 const $ = s => document.querySelector(s);
 let map, state, radarOn = false, radarFrames = [], radarTimer = null, picking = false, pickMarker = null, pickPos = null;
@@ -40,7 +40,7 @@ function renderWx(w) {
   const i = w.intensity || 0, ic = i >= 4 ? 'storm' : i > 0 ? 'rain' : (w.cloudCover ?? 0) >= 60 ? 'cloud' : 'sun';
   chip.hidden = false; chip.className = `wx-chip i${i}`;
   chip.innerHTML = `<span class="wx-ic">${WX_IC[ic]}</span><b>${esc(w.condition || 'Clima')}</b>${w.rainNow > 0 ? `<span>${String(w.rainNow).replace('.', ',')} mm/h</span>` : w.probNext3h >= 40 ? `<span>${w.probNext3h}% en 3 h</span>` : ''}${w.simulated ? '<em>prueba</em>' : ''}${i > 0 ? `<u aria-hidden="true">${wxFx.enabled ? 'animación' : 'sin animación'}</u>` : ''}`;
-  chip.title = i > 0 ? 'Toca para mostrar u ocultar la animación de lluvia' : `${w.temperature ?? ''}°C`;
+  chip.title = `${w.decidedBy ? `Lo detectó: ${w.decidedBy}` : `Fuente: ${w.source}`} · dato de las ${wxTime(w.observedAt)}${i > 0 ? ' · toca para mostrar u ocultar la animación' : ''}`;
 }
 $('#wx-chip').addEventListener('click', () => { if (!(state?.weather?.intensity > 0)) return; const on = wxFx.toggle(); toast(on ? 'Animación de lluvia activada' : 'Animación de lluvia oculta', 'ok'); renderWx(state.weather); });
 
@@ -195,7 +195,7 @@ function render(reports) {
     <div class="stat"><b>${w.rainPast3h} <small>mm</small></b><span>Últimas 3 h</span></div>
     <div class="stat"><b>${w.rainNext3h} <small>mm</small></b><span>Próximas 3 h</span></div>`
     : `<div class="stat" style="grid-column:1/-1;display:flex;gap:10px;align-items:center">${ICON.cloud}<span>Sin datos de clima por ahora. Las alertas manuales siguen activas.</span></div>`;
-  $('#srcline').innerHTML = `${ICON.cloud} Clima: ${esc(w.source)}${w.ok ? ` · ${esc(w.condition || '')} · ${w.temperature}°C${w.probNext3h != null ? ` · prob. lluvia 3 h ${w.probNext3h}%` : ''} · umbral ${config.rainThresholdMm} mm/h` : ''} · nivel sugerido por clima: <span class="chip ${alert.suggested}">${LEVELS[alert.suggested]}</span>`;
+  $('#srcline').innerHTML = `${ICON.cloud} Clima: ${esc(w.source)}${w.ok ? ` · dato de las ${wxTime(w.observedAt)}${w.decidedBy ? ` · lluvia detectada por ${esc(w.decidedBy)}` : ''} · ${esc(w.condition || '')}${w.temperature != null ? ` · ${w.temperature}°C` : ''}${w.probNext3h != null ? ` · prob. lluvia 3 h ${w.probNext3h}%` : ''} · umbral ${config.rainThresholdMm} mm/h` : ''} · nivel sugerido por clima: <span class="chip ${alert.suggested}">${LEVELS[alert.suggested]}</span>`;
 
   // Google Flood Forecasting
   const f = state.flood; const fc = $('#flood'); fc.hidden = !!f.disabled;

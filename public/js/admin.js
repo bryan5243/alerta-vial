@@ -2,7 +2,7 @@ import { createMap } from './map-provider.js';
 import { parseLayerFile, summarize, importable } from './layers.js';
 import { fetchWaterways, KIND } from './osm-rivers.js';
 import { autoDetoursFor } from './nav.js';
-import { RIVER, ZSEV, LEVELS, STATUS, PTYPE, SEV, esc, ago, fmtTime, toast, confirmBox, ICON, waveSvg } from './common.js';
+import { RIVER, ZSEV, LEVELS, STATUS, PTYPE, SEV, esc, ago, fmtTime, wxTime, toast, confirmBox, ICON, waveSvg } from './common.js';
 
 const root = document.getElementById('root');
 let token = sessionStorage.getItem('av_token');
@@ -62,7 +62,7 @@ function renderShell() {
     </div></div>`;
   root.querySelectorAll('.navbtn[data-s]').forEach(b => b.addEventListener('click', () => { section = b.dataset.s; editing = null; cancelDraw(); renderShell(); }));
   document.getElementById('logout').addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }).catch(() => {}); token = null; sessionStorage.removeItem('av_token'); renderLogin(); });
-  const w = db.weather; document.getElementById('top-weather').textContent = w.ok ? `${w.source}: ${w.rainNow} mm ahora · ${w.rainPast3h} mm/3h · sugiere ${LEVELS[db.alert.suggested]}` : 'Clima no disponible (sin conexión a Open-Meteo)';
+  topWeather();
   map = null;
   if (window.innerWidth <= 900) root.querySelector('.navbtn.on')?.scrollIntoView({ inline: 'center', block: 'nearest' });
   if (HAS_MAP[section]) initMap().then(renderSection); else renderSection();
@@ -71,7 +71,10 @@ async function initMap() {
   map = await createMap({ provider: db.config.mapProvider, el: document.getElementById('map'), center: db.config.center, zoom: db.config.zoom, googleKey: db.config.googleMapsKey });
   map.onClick(onMapClick);
 }
-async function refresh() { db = await api('/api/admin/state'); document.getElementById('top-level').className = `chip ${db.alert.effective}`; document.getElementById('top-level').textContent = LEVELS[db.alert.effective]; renderSection(); }
+async function refresh() { db = await api('/api/admin/state'); document.getElementById('top-level').className = `chip ${db.alert.effective}`; document.getElementById('top-level').textContent = LEVELS[db.alert.effective]; topWeather(); renderSection(); }
+function topWeather() {
+  const w = db.weather; document.getElementById('top-weather').textContent = w.ok ? `Clima: ${w.condition || '—'} · ${w.rainNow} mm/h${w.decidedBy ? ` (${w.decidedBy})` : ''} · sugiere ${LEVELS[db.alert.suggested]}` : 'Clima no disponible (sin conexión con las fuentes)';
+}
 
 function renderSection() {
   document.getElementById('title').textContent = NAV.find(n => n[0] === section)[1];
@@ -83,11 +86,12 @@ function secAlert() {
   const a = db.alert, w = db.weather, cfg = db.config.weather, lm = db.config.levelMessages || {};
   col(`
     <div class="level-band ${a.effective}" style="border-radius:16px"><div class="lvl-icon">${a.effective === 'normal' ? ICON.check : ICON.warn}</div><div><div class="lvl-label">Publicado ahora: ${LEVELS[a.effective]}</div><div class="lvl-msg">${esc(lm[a.effective] || '')}${a.message ? ` · ${esc(a.message)}` : ''} · ${w.simulated ? 'Simulación de prueba' : a.mode === 'auto' ? 'Modo automático' : 'Manual'}</div></div><div class="wave">${waveSvg}</div></div>
+    ${obsCard(a)}
     ${simCard(w)}
     <div class="card">
       <h3 style="margin-bottom:12px">Modo de activación</h3>
       <div class="seg" role="radiogroup"><button class="${a.mode === 'auto' ? 'on' : ''}" data-mode="auto">Automático por clima</button><button class="${a.mode === 'manual' ? 'on' : ''}" data-mode="manual">Manual</button></div>
-      <p class="small muted" style="margin-top:10px">${a.mode === 'auto' ? `El nivel se calcula con Open-Meteo: ≥ ${cfg.rainThresholdMm} mm/h o ≥ ${cfg.rainThresholdMm3h} mm en 3 h activa alerta naranja; el triple activa roja. Ahora sugiere <b>${LEVELS[a.suggested]}</b>.` : 'Tú decides el nivel. El clima solo se muestra como referencia.'}</p>
+      <p class="small muted" style="margin-top:10px">${a.mode === 'auto' ? `El nivel se calcula con todas las fuentes de clima (la que vea la lluvia más fuerte): ≥ ${cfg.rainThresholdMm} mm/h o ≥ ${cfg.rainThresholdMm3h} mm en 3 h activa alerta naranja; el triple activa roja. Ahora sugiere <b>${LEVELS[a.suggested]}</b>.` : 'Tú decides el nivel. El clima solo se muestra como referencia.'}</p>
     </div>
     <div class="card">
       <h3 style="margin-bottom:12px">Nivel manual</h3>
@@ -103,12 +107,12 @@ function secAlert() {
       <div class="field"><label for="msg">Aviso adicional (opcional)</label><textarea id="msg" maxlength="300" placeholder="Ej. Evite circular por Av. Orellana entre 14:00 y 18:00.">${esc(a.message)}</textarea><span class="hint">Se muestra debajo del mensaje del color. Déjalo vacío si no hace falta.</span></div>
       <button class="btn soft" id="save-msg">Guardar aviso</button>
     </div>
-    ${w.ok ? `<div class="card"><h3 style="margin-bottom:10px">Clima observado · ${esc(w.source)}</h3><div class="kv"><b>Condición</b><span>${esc(w.condition || '—')}${w.intensity ? ` (intensidad ${w.intensity}/4)` : ''}</span><b>Lluvia ahora</b><span>${w.rainNow} mm</span><b>Últimas 3 h</b><span>${w.rainPast3h} mm</span><b>Próximas 3 h</b><span>${w.rainNext3h} mm</span><b>Prob. lluvia 3 h</b><span>${w.probNext3h ?? '—'} %</span><b>Nubosidad</b><span>${w.cloudCover ?? '—'} %</span><b>Temperatura</b><span>${w.temperature} °C</span><b>Observado</b><span>${esc(w.observedAt)}</span></div></div>` : `<div class="card muted small">No hay conexión con Open-Meteo en este momento (${esc(w.error || '')}). El modo automático usará "Sin alerta" hasta recuperar datos; usa el modo manual si hay emergencia.</div>`}
+    ${sourcesCard(w)}
   `);
   q('[data-mode]').forEach(b => b.onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { mode: b.dataset.mode } }); toast('Modo actualizado', 'ok'); refresh(); });
   q('[data-level]').forEach(b => b.onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { level: b.dataset.level } }); toast(`Nivel: ${LEVELS[b.dataset.level]}`, 'ok'); refresh(); });
   id('save-msg').onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { message: id('msg').value } }); toast('Aviso guardado', 'ok'); refresh(); };
-  bindSim(w);
+  bindSim(w); bindObs();
   id('save-lm').onclick = async () => { await api('/api/admin/config', { method: 'PUT', body: { levelMessages: Object.fromEntries(Object.keys(LEVELS).map(k => [k, id('lm-' + k).value])) } }); toast('Mensajes por color guardados', 'ok'); refresh(); };
 }
 
@@ -136,6 +140,37 @@ const SIM = {
   moderada: ['Lluvia moderada', 4, 9, 6, 85, 63], fuerte: ['Lluvia fuerte', 12, 30, 20, 95, 65], tormenta: ['Tormenta', 35, 80, 40, 100, 95],
 };
 const WCODES = { 0: 'Sin lluvia (despejado)', 51: 'Llovizna', 61: 'Lluvia leve', 63: 'Lluvia moderada', 65: 'Lluvia fuerte', 80: 'Chubascos leves', 82: 'Chubascos fuertes', 95: 'Tormenta eléctrica' };
+// "Está lloviendo ahora": el equipo confirma la lluvia que ve en la calle
+const OBS = [[1, 'Leve', 'Llovizna o lluvia suave'], [2, 'Moderada', 'Lluvia constante'], [3, 'Fuerte', 'Aguacero, calles con agua'], [4, 'Tormenta', 'Con truenos y rayos']];
+function obsCard(a) {
+  const o = a.observed && new Date(a.observed.until) > Date.now() ? a.observed : null;
+  const until = o ? wxTime(o.until) : '';
+  return `<div class="card obs-card${o ? ' on' : ''}">
+    <div class="section-head"><h3>${ICON.cloud} ¿Está lloviendo ahora en Santa Rosa?</h3>${o ? `<span class="chip naranja">Marcado: ${OBS[o.intensity - 1][1]} · hasta ${until}</span>` : ''}</div>
+    <p class="small muted" style="margin:6px 0 12px">Si llueve y el sistema no lo detecta, márcalo aquí. Cuenta como una fuente más del clima (la del equipo EMOVTT) y el semáforo sube solo según la intensidad; se apaga sola al terminar el tiempo. No dice "simulación": es lluvia real.</p>
+    <div class="obs-opts">${OBS.map(([i, l, d]) => `<button type="button" class="obs-opt${o?.intensity === i ? ' on' : ''}" data-obs="${i}"><b>${l}</b><small>${d}</small></button>`).join('')}</div>
+    <div class="sim-foot"><label class="small" for="obs-min">Durante</label><select id="obs-min">${[[60, '1 hora'], [120, '2 horas'], [180, '3 horas'], [360, '6 horas']].map(([m, l]) => `<option value="${m}" ${m === 120 ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      ${o ? `<button type="button" class="btn ghost" id="obs-off">Ya no llueve</button>` : ''}</div>
+  </div>`;
+}
+function bindObs() {
+  q('[data-obs]').forEach(b => b.onclick = async () => { await api('/api/admin/observed', { method: 'PUT', body: { intensity: +b.dataset.obs, minutes: +id('obs-min').value } }); toast(`Lluvia ${OBS[b.dataset.obs - 1][1].toLowerCase()} marcada por el equipo`, 'ok'); refresh(); });
+  const off = id('obs-off'); if (off) off.onclick = async () => { await api('/api/admin/observed', { method: 'PUT', body: { intensity: 0 } }); toast('Listo: el clima vuelve a las fuentes en línea', 'ok'); refresh(); };
+}
+// Qué dice cada fuente, a qué hora, y cuál decidió el semáforo
+function sourcesCard(w) {
+  const src = w.sources || [];
+  const row = s => {
+    const st = s.disabled ? 'off' : !s.ok ? 'err' : s.intensity >= 3 ? 'hi' : s.intensity > 0 ? 'mid' : 'ok';
+    const val = s.disabled ? 'No configurada' : !s.ok ? `Sin dato: ${esc(s.error || 'no disponible')}` : `${['Sin lluvia', 'Lluvia leve', 'Lluvia moderada', 'Lluvia fuerte', 'Tormenta'][s.intensity || 0]}${s.rainNow ? ` · ${s.rainNow} mm/h` : ''}`;
+    return `<div class="src-row ${st}${w.decidedBy && w.decidedBy === s.name ? ' top' : ''}"><i></i><div><b>${esc(s.name)}</b> <small>${esc(s.kind || '')}${s.at && s.ok ? ` · dato de las ${wxTime(s.at)}` : ''}</small><div class="small">${val}</div>${s.detail && s.ok ? `<div class="small muted">${esc(s.detail)}</div>` : ''}${s.raw ? `<code>${esc(s.raw)}</code>` : ''}
+      ${s.models ? `<details><summary class="small">Ver cada modelo</summary><div class="kv" style="margin-top:6px">${s.models.map(m => `<b>${esc(m.name)}</b><span>${m.ok ? `${m.rainNow} mm/h` : `sin dato (${esc(m.error || '')})`}</span>`).join('')}</div></details>` : ''}</div>
+      ${w.decidedBy && w.decidedBy === s.name ? '<span class="chip accent">decide el nivel</span>' : ''}</div>`;
+  };
+  return `<div class="card"><div class="section-head"><h3>Fuentes del clima</h3><span class="small muted">revisado a las ${wxTime(w.checkedAt || new Date().toISOString())}</span></div>
+    <p class="small muted" style="margin:6px 0 12px">${w.ok ? `Resultado: <b>${esc(w.condition || '—')}</b>${w.intensity ? ` (intensidad ${w.intensity}/4)` : ''} · ${w.rainNow} mm/h ahora · ${w.rainPast3h} mm en 3 h · próximas 3 h ${w.rainNext3h} mm${w.probNext3h != null ? ` (${w.probNext3h}%)` : ''} · ${w.temperature ?? '—'} °C.` : 'Ninguna fuente responde ahora. Si está lloviendo, márcalo arriba o pon la alerta en manual.'} Gana la fuente que vea la lluvia más fuerte. Los modelos son pronósticos y a veces no ven los aguaceros locales; las observaciones (aeropuerto, equipo, reportes) mandan cuando existen.</p>
+    <div class="src-list">${src.map(row).join('') || '<p class="small muted">Sin datos.</p>'}</div></div>`;
+}
 function simCard(w) {
   const on = !!w.simulated, v = on ? w : { rainNow: 1, rainPast3h: 2, rainNext3h: 2, probNext3h: 70, weatherCode: 61 };
   const until = on ? new Date(w.simUntil).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' }) : '';
@@ -520,11 +555,13 @@ function secConfig() {
       <label class="switch" style="margin:4px 0 10px"><input type="checkbox" id="fon" ${c.floodEnabled === true ? 'checked' : ''}> Usar Google Flood Forecasting</label>
       <div class="field" id="fkey-f" ${c.floodEnabled === true ? '' : 'hidden'}><label for="fkey">Google Flood Forecasting API key</label><input id="fkey" value="${esc(c.googleFloodKey || '')}" placeholder="AIza..."><span class="hint">Google la entrega solo con acceso aprobado. Si no la tienes, deja esto apagado: el índice de riesgo usa el estado de los ríos que marcas en el mapa.</span></div>
       <button class="btn">Guardar configuración</button></form></div>
-    <div class="card"><h3 style="margin-bottom:12px">Clima automático (Open-Meteo)</h3><form id="fw" novalidate>
+    <div class="card"><h3 style="margin-bottom:12px">Clima automático (fuentes)</h3><form id="fw" novalidate>
       <div class="row"><div class="field"><label for="wlat">Estación · latitud</label><input id="wlat" type="number" step="any" value="${c.weather.lat}"></div><div class="field"><label for="wlng">Estación · longitud</label><input id="wlng" type="number" step="any" value="${c.weather.lng}"></div></div>
       <div class="row"><div class="field"><label for="t1">Umbral lluvia (mm/h)</label><input id="t1" type="number" step="0.5" min="0" value="${c.weather.rainThresholdMm}"><span class="hint">Al superarlo: alerta naranja. El triple: roja.</span></div>
       <div class="field"><label for="t3">Umbral acumulado 3 h (mm)</label><input id="t3" type="number" step="1" min="0" value="${c.weather.rainThresholdMm3h}"></div></div>
-      <button class="btn">Guardar umbrales</button></form></div>
+      <div class="row"><div class="field"><label for="metar">Estación del aeropuerto (código OACI)</label><input id="metar" maxlength="4" value="${esc(c.weather.metarStation ?? 'SERO')}" placeholder="SERO"><span class="hint">SERO = aeropuerto de Santa Rosa. Envía reportes reales (METAR) cuando está operando. Déjalo vacío para no usarlo.</span></div>
+      <div class="field"><label for="owm">OpenWeatherMap API key (opcional)</label><input id="owm" value="${esc(c.weather.owmKey || '')}" placeholder="Gratis en openweathermap.org"><span class="hint">Suma otra fuente. Crea una cuenta gratuita en openweathermap.org, copia tu API key y pégala aquí (tarda hasta 2 h en activarse).</span></div></div>
+      <button class="btn">Guardar clima</button></form></div>
     <div class="card"><h3 style="margin-bottom:6px">Avisos por GPS</h3><p class="small muted" style="margin-bottom:14px">Cuando alguien usa "Navegar con GPS" en el mapa público, recibe un aviso al acercarse a una calle inundada o a un punto crítico.</p><form id="fg" novalidate>
       <div class="row"><div class="field"><label for="gw">Primer aviso a (metros)</label><input id="gw" type="number" min="50" step="10" value="${c.gps?.warnM ?? 400}"></div>
       <div class="field"><label for="gd">Aviso de peligro a (metros)</label><input id="gd" type="number" min="20" step="10" value="${c.gps?.dangerM ?? 150}"></div></div>
@@ -558,7 +595,7 @@ function secConfig() {
   };
   id('fc').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { city: id('city').value, center: { lat: id('clat').value, lng: id('clng').value }, zoom: id('zoom').value, mapProvider: id('prov').value, googleMapsKey: id('gkey').value, googleFloodKey: id('fkey').value, floodEnabled: id('fon').checked } }); toast('Configuración guardada', 'ok'); db = await api('/api/admin/state'); renderShell(); };
   id('fg').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { gps: { warnM: id('gw').value, dangerM: id('gd').value, voice: id('gv').checked } } }); toast('Avisos GPS guardados', 'ok'); refresh(); };
-  id('fw').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { weather: { lat: id('wlat').value, lng: id('wlng').value, rainThresholdMm: id('t1').value, rainThresholdMm3h: id('t3').value } } }); toast('Umbrales guardados', 'ok'); refresh(); };
+  id('fw').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { weather: { lat: id('wlat').value, lng: id('wlng').value, rainThresholdMm: id('t1').value, rainThresholdMm3h: id('t3').value, metarStation: id('metar').value, owmKey: id('owm').value } } }); toast('Clima guardado', 'ok'); refresh(); };
 }
 
 /* ================= helpers ================= */

@@ -15,3 +15,5 @@ services:
         value: admin
       - key: ADMIN_PASSWORD
         generateValue: true   # Render crea una contraseña segura; la ves en Environment
+      - key: OWM_KEY
+        sync: false   # opcional: API key gratuita de OpenWeatherMap para sumar otra fuente de clima
