@@ -2,7 +2,7 @@ import { createMap } from './map-provider.js';
 import { parseLayerFile, summarize, importable } from './layers.js';
 import { fetchWaterways, KIND } from './osm-rivers.js';
 import { autoDetoursFor } from './nav.js';
-import { RIVER, ZSEV, LEVELS, STATUS, PTYPE, SEV, esc, ago, fmtTime, wxTime, toast, confirmBox, ICON, waveSvg, edgeFade } from './common.js';
+import { RIVER, ZSEV, LEVELS, STATUS, PTYPE, SEV, esc, ago, fmtTime, wxTime, toast, confirmBox, ICON, waveSvg, edgeFade, rainHours } from './common.js';
 
 const root = document.getElementById('root');
 let token = sessionStorage.getItem('av_token');
@@ -169,7 +169,8 @@ function sourcesCard(w) {
       ${w.decidedBy && w.decidedBy === s.name ? '<span class="chip accent">decide el nivel</span>' : ''}</div>`;
   };
   return `<div class="card"><div class="section-head"><h3>Fuentes del clima</h3><span class="small muted">revisado a las ${wxTime(w.checkedAt || new Date().toISOString())}</span></div>
-    <p class="small muted" style="margin:6px 0 12px">${w.ok ? `Resultado: <b>${esc(w.condition || '—')}</b>${w.intensity ? ` (intensidad ${w.intensity}/4)` : ''} · ${w.rainNow} mm/h ahora · ${w.rainPast3h} mm en 3 h · próximas 3 h ${w.rainNext3h} mm${w.probNext3h != null ? ` (${w.probNext3h}%)` : ''} · ${w.temperature ?? '—'} °C.` : 'Ninguna fuente responde ahora. Si está lloviendo, márcalo arriba o pon la alerta en manual.'} Gana la fuente que vea la lluvia más fuerte. Los modelos son pronósticos y a veces no ven los aguaceros locales; las observaciones (aeropuerto, equipo, reportes) mandan cuando existen.</p>
+    <p class="small muted" style="margin:6px 0 12px">${w.ok ? `Resultado: <b>${esc(w.condition || '—')}</b>${w.intensity ? ` (intensidad ${w.intensity}/4)` : ''} · ${w.rainNow} mm/h ahora · ${w.rainPast3h} mm en 3 h · próximas 3 h ${w.rainNext3h} mm${w.probNext3h != null ? ` (probabilidad ${w.probNext3h} %)` : ''} · ${w.temperature ?? '—'} °C.` : 'Ninguna fuente responde ahora. Si está lloviendo, márcalo arriba o pon la alerta en manual.'} Gana la fuente que vea la lluvia más fuerte. Los modelos son pronósticos y a veces no ven los aguaceros locales; las observaciones (aeropuerto, equipo, reportes) mandan cuando existen.</p>
+    ${w.ok && w.hourly?.length >= 3 ? `<div class="wx-card adm-hours">${rainHours(w)}<p class="small muted" style="margin:8px 0 0">Probabilidad de cada hora: la mayor entre la que publican los modelos y la parte de los modelos que prevén lluvia. Es lo mismo que ve la ciudadanía.</p></div>` : ''}
     <div class="src-list">${src.map(row).join('') || '<p class="small muted">Sin datos.</p>'}</div></div>`;
 }
 function simCard(w) {

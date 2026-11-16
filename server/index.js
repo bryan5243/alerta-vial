@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { load, save, nextId, reset } from './db.js';
-import { getWeather, getTide, levelFromWeather, riskIndex, describe, localSources } from './weather.js';
+import { getWeather, getTide, levelFromWeather, riskIndex, describe, localSources, dayParts, rainingNow } from './weather.js';
 import { getFloodForecast } from './flood.js';
 import { seedIfEmpty } from './seed.js';
 
@@ -64,6 +64,8 @@ function simulatedWeather(real) {
   // el sol sigue siendo el real; solo el cielo pasa a lluvia si la simulación llueve
   if (real?.sun) w.sun = { ...real.sun, sky: s.rainNow > 0 || s.weatherCode >= 50 ? 'lluvia' : real.sun.sky };
   w.hourly = real?.hourly || [];
+  if (s.rainNow > 0 && w.hourly.length) w.hourly = [rainingNow(w.hourly[0], s.rainNow), ...w.hourly.slice(1)];
+  w.periods = dayParts(w.hourly);
   w.outlook = s.rainNow > 0 ? { level: 'lloviendo', title: 'Está lloviendo', text: 'Revisa las calles inundadas y las vías alternas antes de salir.', reasons: [] } : real?.outlook;
   return Object.assign(w, describe(w));
 }
@@ -118,7 +120,7 @@ app.get('/api/public/state', async (req, res) => {
       mapProvider: db.config.mapProvider, googleMapsKey: db.config.googleMapsKey || '',
       rainThresholdMm: db.config.weather.rainThresholdMm, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: f },
     alert: { ...db.alert, effective, suggested },
-    weather: { ...weather, hourly: weather.hourly?.slice(0, 10) },
+    weather: { ...weather, hourly: weather.hourly?.slice(0, 25) },
     risk, tide, flood,
     layers: on('layers', (db.layers || []).filter(l => l.active !== false)),
     rivers: on('rivers', (db.rivers || []).filter(r => r.active !== false)),
@@ -178,7 +180,7 @@ app.get('/api/public/radar', async (req, res) => {
 app.get('/api/admin/state', auth, async (req, res) => {
   const db = load();
   const { weather, suggested, effective, risk, tide } = await computeStatus();
-  res.json({ ...db, config: { ...db.config, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: featuresCfg(db) }, alert: { ...db.alert, effective, suggested }, weather: { ...weather, hourly: weather.hourly?.slice(0, 10) }, risk, tide, reports: db.reports || [], layers: db.layers || [], rivers: db.rivers || [], zones: db.zones || [] });
+  res.json({ ...db, config: { ...db.config, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: featuresCfg(db) }, alert: { ...db.alert, effective, suggested }, weather: { ...weather, hourly: weather.hourly?.slice(0, 25) }, risk, tide, reports: db.reports || [], layers: db.layers || [], rivers: db.rivers || [], zones: db.zones || [] });
 });
 
 app.put('/api/admin/config', auth, (req, res) => {

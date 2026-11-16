@@ -81,3 +81,23 @@ export function edgeFade(el) {
   el.addEventListener('scroll', f, { passive: true }); new ResizeObserver(f).observe(el); f();
   return f;
 }
+
+export const dec = n => String(n).replace('.', ',');
+// Lluvia por horas (12 h, se desliza): probabilidad arriba y milímetros abajo; y el resumen por partes del día
+const tone = p => (p >= 60 ? ' hi' : p >= 30 ? ' mid' : '');
+export function rainHours(w) {
+  const hrs = (w.hourly || []).slice(0, 12).filter(h => h?.time);
+  if (hrs.length < 3) return '';
+  return `<div class="wx-hours"><div class="wx-hours-h"><span class="wx-hours-t">Lluvia por horas</span><span class="wx-hours-k">% de probabilidad · mm</span></div>
+    <div class="wx-hours-g" role="list" tabindex="0" aria-label="Probabilidad de lluvia de las próximas ${hrs.length} horas">${hrs.map((h, i) => {
+    const p = h.probability == null ? null : Math.max(0, Math.min(100, Math.round(h.probability))), mm = h.precipitation ?? 0, t = i ? `${h.time.slice(11, 13)} h` : 'Ahora';
+    return `<div class="wh${tone(p)}${i ? '' : ' now'}" role="listitem" aria-label="${t}: ${p == null ? 'sin dato' : `${p} %`}${mm >= .1 ? `, ${dec(mm)} mm` : ''}"><span class="wh-p">${p == null ? '–' : `${p}%`}</span><span class="wh-bar"><i style="height:${Math.max(4, p ?? 0)}%"></i></span><span class="wh-mm${mm >= .1 ? '' : ' z'}">${mm >= .1 ? dec(mm) : '0'}</span><span class="wh-t">${t}</span></div>`;
+  }).join('')}</div>${partsRows(w)}</div>`;
+}
+function partsRows(w) {
+  const ps = (w.periods || []).slice(0, 4); if (!ps.length) return '';
+  const hr = t => +t.slice(11, 13);
+  // todo seco: una sola línea en vez de cuatro renglones iguales
+  if (ps.every(p => p.probability < 30 && p.precipitation < .5)) return `<p class="wx-dry">Sin lluvia prevista en las próximas 24 horas.</p>`;
+  return `<div class="wx-parts">${ps.map(p => `<div class="wp${tone(p.probability)}"><span class="wp-l">${p.label}<small>${hr(p.from)}–${(hr(p.to) + 1) % 24} h</small></span><span class="wp-bar"><i style="width:${Math.max(3, p.probability)}%"></i></span><b class="wp-p">${p.probability}%</b><span class="wp-mm">${p.precipitation >= .1 ? `${dec(p.precipitation)} mm` : p.probability >= 30 ? '< 0,1 mm' : '0 mm'}</span></div>`).join('')}</div>`;
+}

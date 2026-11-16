@@ -2,7 +2,7 @@ import { createMap } from './map-provider.js';
 import { createGps, nearestOnLine, haversine, progressOn, isAhead } from './gps.js';
 import { createNav } from './nav.js';
 import { createWeatherFx } from './weather-fx.js';
-import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, wxTime, toast, ICON, waveSvg, edgeFade } from './common.js';
+import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, wxTime, toast, ICON, waveSvg, edgeFade, dec, rainHours } from './common.js';
 
 const $ = s => document.querySelector(s);
 let map, state, radarOn = false, radarFrames = [], radarTimer = null, picking = false, pickMarker = null, pickPos = null;
@@ -39,7 +39,6 @@ const WX_IC = {
 // Cielo según el clima real: decide el ícono, el color de la tarjeta y el efecto sobre el mapa
 const skyOf = w => (w?.intensity || 0) > 0 ? 'lluvia' : w?.sun?.sky || ((w?.cloudCover ?? 0) >= 80 ? 'nublado' : (w?.cloudCover ?? 0) >= 40 ? 'parcial' : 'soleado');
 const skyIcon = w => { const i = w?.intensity || 0, sky = skyOf(w); return i >= 4 ? 'storm' : i > 0 ? 'rain' : sky === 'noche' ? 'moon' : sky === 'nublado' ? 'cloud' : sky === 'parcial' ? 'partly' : 'sun'; };
-const dec = n => String(n).replace('.', ',');
 const uvOn = w => w?.sun?.uvIndex != null && w.sun.isDay !== 0;
 // Efecto del cielo sobre el mapa (sol, nubes, noche); la lluvia la dibuja el canvas
 function applySky(w) {
@@ -56,28 +55,34 @@ function outlookCard(o) {
     <span class="ol-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 15a4 4 0 0 1-.5-8A6 6 0 0 1 18 8a3.5 3.5 0 0 1 0 7"/></svg><i></i><i></i><i></i></span>
     <div class="ol-tx"><b>${esc(o.title)}</b><p>${esc(o.text)}</p>${o.reasons?.length ? `<ul>${o.reasons.map(r => `<li>${esc(cap(r))}</li>`).join('')}</ul>` : ''}</div></div>`;
 }
-// Probabilidad de lluvia de las próximas 6 horas, hora por hora
-function hoursStrip(w) {
-  const hrs = (w.hourly || []).slice(1, 7).filter(h => h?.time);
-  if (hrs.length < 3) return '';
-  return `<div class="wx-hours"><span class="wx-hours-t">Próximas horas · probabilidad de lluvia</span><div class="wx-hours-g">${hrs.map(h => {
-    const p = Math.max(0, Math.min(100, Math.round(h.probability ?? 0))), mm = h.precipitation ?? 0;
-    return `<div class="wh${p >= 60 ? ' hi' : p >= 30 ? ' mid' : ''}" title="${h.time.slice(11, 16)} · ${p} %${mm ? ` · ${dec(mm)} mm` : ''}"><span class="wh-p">${p}%</span><span class="wh-bar"><i style="height:${Math.max(4, p)}%"></i></span><span class="wh-t">${h.time.slice(11, 13)}h</span></div>`;
-  }).join('')}</div></div>`;
+// Resumen de un vistazo: riesgo, lluvia y calles. Cada ficha lleva a su pestaña.
+function renderGlance(nFlood) {
+  const { weather: w, risk: r, config } = state, F = config.features || {}, el = $('#glance'), t = [];
+  if (F.risk !== false && r) t.push(`<button type="button" class="gl lv-${r.level}" data-go="sum" aria-label="Índice de riesgo ${r.value} de 100"><span class="gl-v"><b>${r.value}</b><small>/100</small></span><span class="gl-l">Riesgo</span><span class="gl-bar"><i style="width:${r.value}%"></i></span></button>`);
+  if (F.weather !== false && w?.ok) {
+    const p = w.probNext3h;
+    t.push((w.intensity || 0) > 0 ? `<button type="button" class="gl rain wet" data-go="sum"><span class="gl-v"><b>${dec(w.rainNow)}</b><small>mm/h</small></span><span class="gl-l">Lloviendo</span></button>`
+      : `<button type="button" class="gl rain${p >= 30 ? ' on' : ''}" data-go="sum" aria-label="Probabilidad de lluvia en las próximas 3 horas: ${p ?? 'sin dato'} %"><span class="gl-v"><b>${p ?? '–'}</b><small>%</small></span><span class="gl-l">Lluvia 3 h</span><span class="gl-bar"><i style="width:${p ?? 0}%"></i></span></button>`);
+  }
+  if (F.streets !== false) t.push(`<button type="button" class="gl st${nFlood ? ' on' : ' ok'}" data-go="streets" aria-label="${nFlood} ${nFlood === 1 ? 'calle inundada' : 'calles inundadas'}"><span class="gl-v"><b>${nFlood}</b><small>${nFlood === 1 ? 'calle' : 'calles'}</small></span><span class="gl-l">Inundadas</span></button>`);
+  el.innerHTML = t.join(''); el.hidden = !t.length;
 }
+const goTab = id => { const t = document.querySelector(`.tab[data-tab="${id}"]`); if (!t || t.hidden) return; t.click();
+  if (window.innerWidth <= 900 && !matchMedia('(min-width:768px) and (min-height:561px)').matches) window.scrollTo({ top: Math.max(0, $('.panel').getBoundingClientRect().top + window.scrollY - Math.round(window.innerHeight * .3)), behavior: 'smooth' }); };
+$('#glance').addEventListener('click', e => { const b = e.target.closest('[data-go]'); if (b) goTab(b.dataset.go); });
 // Tarjeta "Clima ahora": cielo, temperatura, lluvia y sol (índice UV, radiación, salida y puesta)
 function weatherCard(w) {
   const sky = skyOf(w), s = w.sun, night = s?.isDay === 0;
   const uvBadge = uvOn(w) ? `<div class="uv-badge uv-${s.uv.key}" title="Índice UV (escala de la OMS)"><b>${dec(s.uvIndex)}</b><small>UV ${esc(s.uv.label.toLowerCase())}</small></div>` : '';
   const pos = s?.uvIndex != null ? Math.min(100, (night ? 0 : s.uvIndex) / 12 * 100) : null;
   const sunRow = s ? `<div class="wx-sun">
-      ${pos != null && !night ? `<div class="uv-scale" role="img" aria-label="Índice UV ${dec(s.uvIndex)} de 11 o más"><i style="left:${pos}%"></i></div><div class="uv-ticks"><span>Bajo</span><span>Moderado</span><span>Alto</span><span>Muy alto</span><span>Extremo</span></div>` : ''}
+      ${pos != null && !night ? `<div class="wx-hours-h"><span class="wx-hours-t">Sol e índice UV</span><span class="wx-hours-k">ahora ${dec(s.uvIndex)} · ${esc(s.uv.label.toLowerCase())}</span></div><div class="uv-scale" role="img" aria-label="Índice UV ${dec(s.uvIndex)} de 11 o más"><i style="left:${pos}%"></i></div><div class="uv-ticks"><span>Bajo</span><span>Moderado</span><span>Alto</span><span>Muy alto</span><span>Extremo</span></div>` : ''}
       <div class="wx-sun-meta">
         ${!night && s.radiation != null ? `<span>${WX_IC.sun}Radiación <b>${s.radiation} W/m²</b></span>` : ''}
         ${s.uvMax != null ? `<span>Máx. hoy <b>UV ${dec(s.uvMax)}</b></span>` : ''}
         ${s.sunrise ? `<span>${night ? 'Amanece' : 'Sol'} <b>${wxTime(s.sunrise)}${night ? '' : `–${wxTime(s.sunset)}`}</b></span>` : ''}
       </div>
-      ${!night && s.uvIndex >= 3 && !(w.intensity > 0) ? `<p class="uv-tip uv-${s.uv.key}">${esc(s.uv.advice)}</p>` : ''}
+      ${!night && s.uvIndex >= 3 && !(w.intensity > 0) && s.uv.advice ? `<p class="uv-tip uv-${s.uv.key}">${esc(s.uv.advice)}</p>` : ''}
     </div>` : '';
   return `<div class="wx-card sky-${sky}">
     <div class="wx-now"><span class="wx-big">${WX_IC[skyIcon(w)]}</span>
@@ -86,7 +91,7 @@ function weatherCard(w) {
       <div class="stat${w.raining ? ' rain' : ''}"><b>${dec(w.rainNow)}<small> mm/h</small></b><span>Lluvia ahora</span></div>
       <div class="stat"><b>${dec(w.rainPast3h)}<small> mm</small></b><span>Últimas 3 h</span></div>
       <div class="stat"><b>${dec(w.rainNext3h)}<small> mm</small></b><span>Próximas 3 h</span></div>
-    </div>${hoursStrip(w)}${sunRow}</div>`;
+    </div>${rainHours(w)}${sunRow}</div>`;
 }
 function renderWx(w) {
   const chip = $('#wx-chip'); wxFx.set(w); applySky(w);
@@ -251,7 +256,11 @@ function render(reports) {
   const w = weather; renderWx(w);
   $('#weather').innerHTML = w.ok ? outlookCard(w.outlook) + weatherCard(w)
     : `<div class="wx-card wx-off">${ICON.cloud}<span>Sin datos de clima por ahora. Las alertas manuales siguen activas.</span></div>`;
-  $('#srcline').innerHTML = `${ICON.cloud} Clima: ${esc(w.source)}${w.ok ? ` · dato de las ${wxTime(w.observedAt)}${w.decidedBy ? ` · lluvia detectada por ${esc(w.decidedBy)}` : ''}${w.probNext3h != null ? ` · prob. lluvia 3 h ${w.probNext3h}%` : ''} · umbral ${config.rainThresholdMm} mm/h` : ''} · nivel sugerido por clima: <span class="chip ${alert.suggested}">${LEVELS[alert.suggested]}</span>`;
+  const srcOpen = $('#srcline details')?.open;
+  $('#srcline').innerHTML = `<details class="src"${srcOpen ? ' open' : ''}><summary>${ICON.info}<span>De dónde salen los datos${w.ok ? ` <small>· ${wxTime(w.observedAt)}</small>` : ''}</span></summary><div class="src-b">
+    <p><b>Clima:</b> ${esc(w.source)}${w.ok ? `, dato de las ${wxTime(w.observedAt)}` : ''}.${w.decidedBy ? ` Lluvia detectada por ${esc(w.decidedBy)}.` : ''}</p>
+    ${w.ok && w.hourly?.length ? `<p><b>Probabilidad de lluvia:</b> la mayor entre la que publican los modelos y la parte de los modelos que prevén lluvia en cada hora${w.hourly[0]?.of ? ` (${w.hourly[0].of} modelos ahora)` : ''}.</p>` : ''}
+    <p><b>Semáforo:</b> sube con lluvia medida desde ${dec(config.rainThresholdMm)} mm/h. Nivel sugerido por el clima: <span class="chip ${alert.suggested}">${LEVELS[alert.suggested]}</span></p></div></details>`;
 
   // Google Flood Forecasting
   const f = state.flood; const fc = $('#flood'); fc.hidden = !!f.disabled;
@@ -266,6 +275,9 @@ function render(reports) {
   const rivers = state.rivers || [], zones = state.zones || [];
   $('#n-rivers').textContent = rivers.filter(r => r.status !== 'normal').length + zones.length + overflows.length;
   const nFlood = +$('#n-streets').textContent;
+  renderGlance(nFlood);
+  // La primera vez: si hay calles inundadas se abre esa pestaña; si no, el resumen
+  if (!render.started && (render.started = true) && nFlood && config.features?.streets !== false) document.querySelector('.tab[data-tab="streets"]')?.click();
   const olv = !weather.intensity && ['atencion', 'probable'].includes(weather.outlook?.level) ? (weather.outlook.level === 'probable' ? 'Lluvia probable' : 'Podría llover') : '';
   $('#peek-t').textContent = `${nFlood ? `${nFlood} ${nFlood === 1 ? 'calle inundada' : 'calles inundadas'}` : olv || 'Sin calles inundadas'} · ${state.routes.length} ${state.routes.length === 1 ? 'vía alterna' : 'vías alternas'}`;
   $('#list-rivers').innerHTML = (rivers.length || zones.length || overflows.length) ? [
@@ -291,6 +303,8 @@ function render(reports) {
     <div class="item" style="cursor:default"><span class="dot ${r.level}" style="margin-top:6px"></span><div><div class="title" style="font-weight:500">${esc(r.text)}</div><div class="meta"><span class="chip ${r.level}">${LEVELS[r.level]}</span></div></div></div>`).join('')
     : empty(ICON.info, 'Sin recomendaciones activas.', '');
 
+  // el contador de una pestaña solo se muestra si hay algo que contar
+  document.querySelectorAll('.tab .n').forEach(n => { n.hidden = n.textContent.trim() === '0'; }); tabsFade();
   applyFeatures(config.features || {});
   // Índice de riesgo (estilo Amaru)
   renderRisk(state.risk);
@@ -321,7 +335,7 @@ function applyFeatures(F) {
   $('#btn-report').hidden = off('reports');
   const tabF = { streets: 'streets', routes: 'routes', rivers: 'rivers', recs: 'recommendations' };
   const tabs = [...document.querySelectorAll('.tab')];
-  tabs.forEach(t => { t.hidden = off(tabF[t.dataset.tab]); });
+  tabs.forEach(t => { t.hidden = t.dataset.tab === 'sum' ? off('risk') && off('weather') : off(tabF[t.dataset.tab]); });
   const vis = tabs.filter(t => !t.hidden);
   $('#tabs').hidden = !vis.length;
   const sel = tabs.find(t => t.getAttribute('aria-selected') === 'true');

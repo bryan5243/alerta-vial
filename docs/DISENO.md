@@ -320,3 +320,16 @@ En servidores compartidos (Render y similares) Open-Meteo puede responder "demas
 
 ### Aviso de lluvia posible (16-nov-2026)
 Además del semáforo, el mapa avisa cuando **podría llover pronto** (no cambia el nivel de alerta). Suma señales: probabilidad de lluvia en 3 h, cuántos modelos prevén lluvia, energía del aire para tormentas (CAPE de Open-Meteo), tormenta prevista por MET Norway y lo que ve el aeropuerto (lluvia en los alrededores, tormenta o cumulonimbos). Con 2 puntos: "Atención: podría llover pronto"; con 4: "Lluvia probable en las próximas horas", con la hora aproximada y un aviso emergente. La tarjeta del clima muestra la probabilidad de lluvia de las próximas 6 horas.
+
+### Probabilidad de lluvia por horas (16-nov-2026)
+La probabilidad salía en 0 % cuando la fuente no la publicaba (MET Norway no la da para Ecuador) aunque varios modelos sí previeran lluvia.
+- Ahora se arma un **pronóstico hora por hora de 24 h** juntando todos los modelos que respondieron (`mergeHourly` en `server/weather.js`).
+- Probabilidad de cada hora = la mayor entre (a) el promedio de la probabilidad que publican los modelos y (b) la parte de los modelos que prevén lluvia (0,1 mm o más) en esa hora. Con 1 o 2 modelos se estima por los milímetros. Se redondea de 5 en 5.
+- Milímetros de la hora: si al menos un tercio de los modelos ve lluvia, el promedio de esos; si no, el promedio de todos.
+- Si una fuente confirma que está lloviendo, la hora en curso pasa a 100 %.
+- El panel muestra "Lluvia por horas" (12 horas que se deslizan) y el resumen por partes del día (tarde, noche, madrugada, mañana). El semáforo no cambia de reglas.
+
+### Panel pensado para el teléfono (16-nov-2026)
+- Arriba, tres fichas de un vistazo: **Riesgo /100**, **Lluvia 3 h %** (o mm/h si llueve) y **Calles inundadas**; cada una abre su pestaña.
+- Pestañas: Resumen (aviso de lluvia, clima, lluvia por horas, sol y UV, índice de riesgo, de dónde salen los datos) · Calles · Vías alternas · Ríos · Consejos. Si hay calles inundadas, la página abre en Calles.
+- Texto del panel nunca menor a 12 px; los avisos (toasts) no tapan el botón Reportar ni la tira de la hoja.

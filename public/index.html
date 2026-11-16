@@ -43,13 +43,13 @@
   .map-actions .btn{background:var(--surface);color:var(--ink);border-color:var(--line);box-shadow:var(--shadow-1)} .map-actions .btn:hover{background:var(--surface-2)}
   .map-actions .btn.on{background:var(--accent-soft);color:var(--accent-ink);border-color:var(--accent)}
   .fab{position:absolute;right:70px;bottom:26px;z-index:500;box-shadow:var(--shadow-2);border-radius:14px;padding:12px 18px}
-  .weather{padding:16px 20px 0}
   .weather>.skel{height:150px;border-radius:16px}
-  .srcline{padding:8px 20px 0;font-size:.76rem;color:var(--muted);display:block;line-height:1.7}
-  .tabs{flex:none;display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;padding:12px 12px 0;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:2}
+  .pane-sum{display:flex;flex-direction:column;gap:12px} .pane-sum[hidden]{display:none}
+  .tabs{flex:none;display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;padding:8px 12px 0;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:2}
   .tab{flex:1 0 auto;white-space:nowrap;min-height:44px;background:none;border:0;border-bottom:2.5px solid transparent;font-weight:600;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px 6px;font-size:.875rem;transition:color .15s,border-color .15s}
   .tab:hover{color:var(--ink)}
   .tab .n{background:var(--surface-2);border-radius:999px;padding:0 6px;font-size:.72rem;font-variant-numeric:tabular-nums}
+  .tab .n[hidden]{display:none}
   .tab[aria-selected="true"]{color:var(--ink);border-color:var(--accent)} .tab[aria-selected="true"] .n{background:var(--accent-soft);color:var(--accent-ink)}
   @media (min-width:1181px){ .main{grid-template-columns:420px 1fr} }
   .peek{display:none}
@@ -61,7 +61,7 @@
   .sheet .grab{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 14px}
   .picking{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:600;background:var(--ink);color:#fff;padding:10px 16px;border-radius:12px;font-size:.9rem;box-shadow:var(--shadow-2);display:none;gap:10px;align-items:center}
   .picking.on{display:flex}
-  .flood-card{margin:12px 20px 0;padding:12px 14px;border-radius:12px;background:var(--surface-2);font-size:.82rem;display:flex;gap:10px;align-items:flex-start}
+  .flood-card{padding:12px 14px;border-radius:12px;background:var(--surface-2);font-size:.82rem;display:flex;gap:10px;align-items:flex-start}
   .flood-card svg.i{color:var(--accent);margin-top:2px}
   .gps-btn{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important;gap:8px;padding:0 14px}
   .gps-btn.on{background:var(--roja)!important;border-color:var(--roja)!important}
@@ -85,7 +85,7 @@
     .gps-bar{gap:6px;padding:6px 6px 6px 12px} .gps-bar .btn.icon{width:38px} #gps-follow{display:none}
     .sim-t{display:none} #gps-sim{width:38px;padding:0}
     .gps-on .gps-btn{width:44px;padding:0!important} .gps-on .gps-lbl{display:none}
-    .tab{font-size:.84rem;white-space:nowrap}
+    .tab{white-space:nowrap}
     .layers-pop{width:min(260px,calc(100vw - 90px))}
     .shell{height:auto;min-height:100dvh}
     .main{grid-template-columns:1fr;grid-template-rows:52dvh auto}
@@ -94,7 +94,7 @@
     .top .upd{display:none} .legend{display:none}
     .fab{right:auto;left:14px;bottom:14px}
     header.top{padding:8px 14px;gap:10px} .brand{gap:10px} .brand img{height:30px} .brand .sep{height:28px} .brand small{font-size:.72rem}
-    @media (max-width:520px){ .brand small{display:none} } .weather,.tabs,.pane,.srcline{padding-left:16px;padding-right:16px}
+    @media (max-width:520px){ .brand small{display:none} } .tabs,.pane,.glance{padding-left:16px;padding-right:16px}
     /* --- Móvil: más mapa, menos texto encima --- */
     .main{grid-template-rows:calc(100dvh - var(--chrome,116px) - 34px) auto}
     .level-band{padding:8px 44px 8px 14px;min-height:0;gap:10px;cursor:pointer}
@@ -129,8 +129,12 @@
     .peek-ic{display:grid;place-items:center;color:var(--accent);transition:transform .25s var(--ease)} .peek-ic svg{width:16px;height:16px;transform:rotate(180deg)}
     .panel-up .peek-ic{transform:rotate(180deg)}
     .peek:active .peek-t{opacity:.7}
+    /* avisos: por encima del botón Reportar y de la tira de la hoja mientras se ve el mapa */
+    body:not(.panel-up):not(.gps-on):not(.map-full) .toast-wrap{bottom:calc(126px + env(safe-area-inset-bottom))}
+    @media (max-width:480px){ .tab .t-x{display:none} }
+    @media (max-width:380px){ .tabs{padding-left:8px;padding-right:8px;gap:0} .tab{padding:8px 4px;font-size:.84rem} }
   }
-  @media (min-width:901px){ #btn-full{display:none} .legend{bottom:26px} .peek{display:none} }
+  @media (min-width:901px){ #btn-full{display:none} .legend{bottom:26px} .peek{display:none} .toast-wrap{bottom:calc(96px + env(safe-area-inset-bottom))} }
   @media (min-width:1181px){ .legend{max-width:calc(100% - 330px)} }
   @media (min-width:901px) and (min-height:561px){ .band-more{display:none} }
   /* Pantallas bajas (celular en horizontal, laptops pequeñas): encabezado y alerta compactos para dejar espacio al mapa */
@@ -183,7 +187,8 @@
     .main{grid-template-columns:320px 1fr;grid-template-rows:minmax(0,1fr)}
     .mapwrap{order:0;position:relative;top:auto;z-index:auto;--peek:0px}
     .panel{border-top:0;border-right:1px solid var(--line);border-radius:0;margin-top:0;z-index:auto}
-    .peek{display:none}
+    .peek{display:none} .glance{padding-top:14px}
+    body:not(.panel-up):not(.gps-on):not(.map-full) .toast-wrap{bottom:calc(20px + env(safe-area-inset-bottom))}
     .legend{display:flex;left:10px;right:auto;bottom:22px;max-width:calc(100% - 84px);font-size:.72rem;gap:6px 10px;padding:6px 10px}
     .fab{left:auto;right:10px;bottom:22px;width:52px;height:52px;padding:0;border-radius:50%;justify-content:center}
     .fab .fab-t{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
@@ -196,7 +201,7 @@
   .gps-bar .gps-txt b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .fab{display:inline-flex;align-items:center;gap:8px} .fab .fab-ic svg{width:18px;height:18px;display:block}
   @media (min-width:901px){ .sheet{border-radius:22px;margin-bottom:24px} .sheet-bg{align-items:center} }
-  #risk[hidden],#weather[hidden],#srcline[hidden],.tabs[hidden],.tab[hidden],.legend[hidden],.legend span[hidden],.map-actions .btn[hidden],.fab[hidden]{display:none!important}
+  #risk[hidden],#weather[hidden],#srcline[hidden],.glance[hidden],.tabs[hidden],.tab[hidden],.legend[hidden],.legend span[hidden],.map-actions .btn[hidden],.fab[hidden]{display:none!important}
 </style>
 </head>
 <body>
@@ -221,17 +226,21 @@
   <div class="main">
     <aside class="panel" aria-label="Información de alertas">
       <button type="button" class="peek" id="peek" aria-label="Ver calles, vías alternas y consejos"><span class="peek-grab" aria-hidden="true"></span><span class="peek-t" id="peek-t">Calles, vías alternas y consejos</span><span class="peek-ic" id="peek-ic" aria-hidden="true"></span></button>
-      <div class="risk" id="risk" aria-label="Índice de riesgo de inundación"></div>
-      <div class="weather" id="weather"><div class="skel"></div></div>
-      <div class="srcline" id="srcline"></div>
-      <div class="flood-card" id="flood" hidden></div>
+      <div class="glance" id="glance" aria-label="Resumen del estado"><span class="skel"></span><span class="skel"></span><span class="skel"></span></div>
       <div class="tabs" id="tabs" role="tablist">
-        <button class="tab" role="tab" aria-selected="true" data-tab="streets">Calles <span class="n" id="n-streets">–</span></button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="routes">Vías alternas <span class="n" id="n-routes">–</span></button>
+        <button class="tab" role="tab" aria-selected="true" data-tab="sum">Resumen</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="streets">Calles <span class="n" id="n-streets">–</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="routes">Vías<span class="t-x"> alternas</span> <span class="n" id="n-routes">–</span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="rivers">Ríos <span class="n" id="n-rivers">–</span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="recs">Consejos <span class="n" id="n-recs">–</span></button>
       </div>
-      <section class="pane" id="pane-streets" role="tabpanel"><div class="list" id="list-streets"><div class="skel"></div><div class="skel"></div></div></section>
+      <section class="pane pane-sum" id="pane-sum" role="tabpanel">
+        <div class="weather" id="weather"><div class="skel"></div></div>
+        <div class="risk" id="risk" aria-label="Índice de riesgo de inundación"></div>
+        <div class="flood-card" id="flood" hidden></div>
+        <div class="srcline" id="srcline"></div>
+      </section>
+      <section class="pane" id="pane-streets" role="tabpanel" hidden><div class="list" id="list-streets"><div class="skel"></div><div class="skel"></div></div></section>
       <section class="pane" id="pane-routes" role="tabpanel" hidden><div class="list" id="list-routes"></div></section>
       <section class="pane" id="pane-rivers" role="tabpanel" hidden><div class="list" id="list-rivers"></div></section>
       <section class="pane" id="pane-recs" role="tabpanel" hidden><div class="list" id="list-recs"></div></section>
