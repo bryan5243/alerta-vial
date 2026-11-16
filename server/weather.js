@@ -31,7 +31,8 @@ async function getJson(url, ms = 8000) {
 // Un modelo de Open-Meteo (pedidos por separado: si uno falla, los demás siguen)
 async function openMeteoModel(model, lat, lng) {
   const url = new URL('https://api.open-meteo.com/v1/forecast');
-  const q = { latitude: lat, longitude: lng, current: 'precipitation,rain,showers,temperature_2m,weather_code,cloud_cover',
+  const q = { latitude: lat, longitude: lng, current: 'precipitation,rain,showers,temperature_2m,weather_code,cloud_cover,is_day,uv_index,shortwave_radiation',
+    daily: 'uv_index_max,sunrise,sunset',
     hourly: 'precipitation,precipitation_probability', past_hours: 3, forecast_hours: 24, timezone: 'America/Guayaquil' };
   if (model !== 'best_match') q.models = model;
   url.search = new URLSearchParams(q);
@@ -48,7 +49,11 @@ async function openMeteoModel(model, lat, lng) {
   // El código del cielo solo cuenta si viene con lluvia medible: un "llovizna" con 0 mm no es lluvia.
   // Tormenta (95–99) con al menos 1 mm/h sí se toma como tormenta.
   const code = j.current?.weather_code, storm = code >= 95 && rainNow >= 1;
-  return { model, name: MODELS[model], ok: true, observedAt: j.current?.time, temperature: j.current?.temperature_2m, cloudCover: j.current?.cloud_cover,
+  const D = j.daily || {};
+  // Sol: si es de día, índice UV (OMS), radiación solar en W/m² y horas de salida y puesta del sol
+  const sun = { isDay: j.current?.is_day ?? null, uvIndex: j.current?.uv_index ?? null, radiation: j.current?.shortwave_radiation ?? null,
+    uvMax: D.uv_index_max?.[0] ?? null, sunrise: D.sunrise?.[0] ?? null, sunset: D.sunset?.[0] ?? null };
+  return { model, name: MODELS[model], ok: true, observedAt: j.current?.time, temperature: j.current?.temperature_2m, cloudCover: j.current?.cloud_cover, sun,
     weatherCode: code, rainNow, intensity: storm ? 4 : mmInt(rainNow),
     rainPast3h: sum(hours.slice(Math.max(0, nowIdx - 3), nowIdx + 1)), rainNext3h: sum(hours.slice(nowIdx + 1, nowIdx + 4)),
     rainNext24h: sum(hours.slice(nowIdx + 1, nowIdx + 25)),
@@ -166,9 +171,29 @@ export function combine({ models, metar, owm, at }, extra = []) {
     weatherCode: intensity ? INT_CODE[intensity] : baseRainy ? 3 : baseCode,
     hourly: base?.hourly || [],
   };
+  w.sun = sunInfo(base?.sun || okM.find(m => m.sun?.uvIndex != null)?.sun, w.cloudCover, intensity);
   Object.assign(w, describe(w));
   if (intensity !== w.intensity) Object.assign(w, { intensity, raining: intensity > 0, condition: intensity ? INT_TXT[intensity] : w.condition });
+  // Sin lluvia: de día y despejado es "Soleado"; de noche, "Noche despejada"
+  if (!w.intensity && w.condition === 'Despejado' && w.sun) w.condition = w.sun.sky === 'noche' ? 'Noche despejada' : 'Soleado';
   return w;
+}
+
+// Índice UV según la escala de la OMS, con el consejo para la gente
+const UV = [[11, 'extremo', 'Extremo', 'Evita salir al sol; si sales, protector, gorra, lentes y ropa que cubra.'],
+  [8, 'muy-alto', 'Muy alto', 'Evita el sol de 10:00 a 15:00. Protector solar, gorra y lentes.'],
+  [6, 'alto', 'Alto', 'Usa protector solar y gorra; busca sombra al mediodía.'],
+  [3, 'moderado', 'Moderado', 'Protector solar si vas a estar más de 30 minutos al sol.'],
+  [0, 'bajo', 'Bajo', 'Sin riesgo por el sol.']];
+export const uvLevel = v => { const u = UV.find(([min]) => (v ?? 0) >= min); return { key: u[1], label: u[2], advice: u[3] }; };
+// Estado del cielo para el mapa y el panel: soleado, parcial, nublado, lluvia o noche
+function sunInfo(s, cloud, intensity) {
+  if (!s) return null;
+  const night = s.isDay === 0, c = cloud ?? 0;
+  const sky = intensity > 0 ? 'lluvia' : night ? 'noche' : c >= 80 ? 'nublado' : c >= 40 ? 'parcial' : 'soleado';
+  const uv = s.uvIndex == null ? null : Math.round(s.uvIndex * 10) / 10;
+  return { ...s, uvIndex: uv, uvMax: s.uvMax == null ? null : Math.round(s.uvMax * 10) / 10, radiation: s.radiation == null ? null : Math.round(s.radiation),
+    sky, uv: uvLevel(night ? 0 : uv), uvMaxLevel: uvLevel(s.uvMax) };
 }
 
 // Fuentes locales: lo que marca el equipo y los reportes ciudadanos de la última hora

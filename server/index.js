@@ -61,6 +61,8 @@ function simulatedWeather(real) {
   const w = { ok: true, source: 'Simulación de prueba', simulated: true, simUntil: new Date(s.until).toISOString(), observedAt: new Date().toISOString(),
     temperature: real?.temperature ?? 26, rainNow: s.rainNow, rainPast3h: s.rainPast3h, rainNext3h: s.rainNext3h, rainNext24h: s.rainNext3h * 2,
     probNext3h: s.probNext3h, maxProbability24h: s.probNext3h, cloudCover: s.rainNow > 0 || s.weatherCode ? 95 : 40, weatherCode: s.weatherCode, hourly: [] };
+  // el sol sigue siendo el real; solo el cielo pasa a lluvia si la simulación llueve
+  if (real?.sun) w.sun = { ...real.sun, sky: s.rainNow > 0 || s.weatherCode >= 50 ? 'lluvia' : real.sun.sky };
   return Object.assign(w, describe(w));
 }
 async function computeStatus() {

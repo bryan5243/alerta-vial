@@ -74,7 +74,7 @@ async function initMap() {
 }
 async function refresh() { db = await api('/api/admin/state'); document.getElementById('top-level').className = `chip ${db.alert.effective}`; document.getElementById('top-level').textContent = LEVELS[db.alert.effective]; topWeather(); renderSection(); }
 function topWeather() {
-  const w = db.weather; document.getElementById('top-weather').textContent = w.ok ? `Clima: ${w.condition || '—'} · ${w.rainNow} mm/h${w.decidedBy ? ` (${w.decidedBy})` : ''} · sugiere ${LEVELS[db.alert.suggested]}` : 'Clima no disponible (sin conexión con las fuentes)';
+  const w = db.weather; document.getElementById('top-weather').textContent = w.ok ? `Clima: ${w.condition || '—'} · ${w.rainNow} mm/h${w.decidedBy ? ` (${w.decidedBy})` : ''}${w.sun?.uvIndex != null && w.sun.isDay ? ` · UV ${String(w.sun.uvIndex).replace('.', ',')} ${w.sun.uv.label.toLowerCase()}` : ''} · sugiere ${LEVELS[db.alert.suggested]}` : 'Clima no disponible (sin conexión con las fuentes)';
 }
 
 function renderSection() {

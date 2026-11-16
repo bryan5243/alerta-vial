@@ -33,16 +33,55 @@ const WX_IC = {
   storm: '<svg viewBox="0 0 24 24"><path d="M7 15a4 4 0 0 1-.5-8A6 6 0 0 1 18 8a3.5 3.5 0 0 1 0 7"/><path d="M13 12l-3 5h4l-3 5"/></svg>',
   cloud: '<svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 11a3.5 3.5 0 0 1 0 7z"/></svg>',
   sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  partly: '<svg viewBox="0 0 24 24"><path d="M9 2.5v1.5M3.6 4.6l1.1 1.1M2 10h1.5M14.4 4.6l-1.1 1.1"/><path d="M12.6 9.2A4 4 0 1 0 6 12.6"/><path d="M8.5 20a3.5 3.5 0 0 1-.3-7 5 5 0 0 1 9.5 1A3 3 0 0 1 17.5 20z"/></svg>',
+  moon: '<svg viewBox="0 0 24 24"><path d="M20.5 13.5A8.5 8.5 0 1 1 10.5 3.5a6.6 6.6 0 0 0 10 10z"/></svg>',
 };
-function renderWx(w) {
-  const chip = $('#wx-chip'); wxFx.set(w);
-  if (!w?.ok || state.config.features?.weather === false) { chip.hidden = true; return; }
-  const i = w.intensity || 0, ic = i >= 4 ? 'storm' : i > 0 ? 'rain' : (w.cloudCover ?? 0) >= 60 ? 'cloud' : 'sun';
-  chip.hidden = false; chip.className = `wx-chip i${i}`;
-  chip.innerHTML = `<span class="wx-ic">${WX_IC[ic]}</span><b>${esc(w.condition || 'Clima')}</b>${w.rainNow > 0 ? `<span>${String(w.rainNow).replace('.', ',')} mm/h</span>` : w.probNext3h >= 40 ? `<span>${w.probNext3h}% en 3 h</span>` : ''}${w.simulated ? '<em>prueba</em>' : ''}${i > 0 ? `<u aria-hidden="true">${wxFx.enabled ? 'animación' : 'sin animación'}</u>` : ''}`;
-  chip.title = `${w.decidedBy ? `Lo detectó: ${w.decidedBy}` : `Fuente: ${w.source}`} · dato de las ${wxTime(w.observedAt)}${i > 0 ? ' · toca para mostrar u ocultar la animación' : ''}`;
+// Cielo según el clima real: decide el ícono, el color de la tarjeta y el efecto sobre el mapa
+const skyOf = w => (w?.intensity || 0) > 0 ? 'lluvia' : w?.sun?.sky || ((w?.cloudCover ?? 0) >= 80 ? 'nublado' : (w?.cloudCover ?? 0) >= 40 ? 'parcial' : 'soleado');
+const skyIcon = w => { const i = w?.intensity || 0, sky = skyOf(w); return i >= 4 ? 'storm' : i > 0 ? 'rain' : sky === 'noche' ? 'moon' : sky === 'nublado' ? 'cloud' : sky === 'parcial' ? 'partly' : 'sun'; };
+const dec = n => String(n).replace('.', ',');
+const uvOn = w => w?.sun?.uvIndex != null && w.sun.isDay !== 0;
+// Efecto del cielo sobre el mapa (sol, nubes, noche); la lluvia la dibuja el canvas
+function applySky(w) {
+  const mw = document.querySelector('.mapwrap');
+  const sky = wxFx.enabled && w?.ok && state?.config?.features?.weather !== false ? skyOf(w) : '';
+  for (const k of ['soleado', 'parcial', 'nublado', 'noche']) mw.classList.toggle(`sky-${k}`, sky === k);
+  mw.style.setProperty('--sun', Math.min(1, Math.max(.45, (w?.sun?.uvIndex ?? 6) / 10)).toFixed(2));
 }
-$('#wx-chip').addEventListener('click', () => { if (!(state?.weather?.intensity > 0)) return; const on = wxFx.toggle(); toast(on ? 'Animación de lluvia activada' : 'Animación de lluvia oculta', 'ok'); renderWx(state.weather); });
+// Tarjeta "Clima ahora": cielo, temperatura, lluvia y sol (índice UV, radiación, salida y puesta)
+function weatherCard(w) {
+  const sky = skyOf(w), s = w.sun, night = s?.isDay === 0;
+  const uvBadge = uvOn(w) ? `<div class="uv-badge uv-${s.uv.key}" title="Índice UV (escala de la OMS)"><b>${dec(s.uvIndex)}</b><small>UV ${esc(s.uv.label.toLowerCase())}</small></div>` : '';
+  const pos = s?.uvIndex != null ? Math.min(100, (night ? 0 : s.uvIndex) / 12 * 100) : null;
+  const sunRow = s ? `<div class="wx-sun">
+      ${pos != null && !night ? `<div class="uv-scale" role="img" aria-label="Índice UV ${dec(s.uvIndex)} de 11 o más"><i style="left:${pos}%"></i></div><div class="uv-ticks"><span>Bajo</span><span>Moderado</span><span>Alto</span><span>Muy alto</span><span>Extremo</span></div>` : ''}
+      <div class="wx-sun-meta">
+        ${!night && s.radiation != null ? `<span>${WX_IC.sun}Radiación <b>${s.radiation} W/m²</b></span>` : ''}
+        ${s.uvMax != null ? `<span>Máx. hoy <b>UV ${dec(s.uvMax)}</b></span>` : ''}
+        ${s.sunrise ? `<span>${night ? 'Amanece' : 'Sol'} <b>${wxTime(s.sunrise)}${night ? '' : `–${wxTime(s.sunset)}`}</b></span>` : ''}
+      </div>
+      ${!night && s.uvIndex >= 3 && !(w.intensity > 0) ? `<p class="uv-tip uv-${s.uv.key}">${esc(s.uv.advice)}</p>` : ''}
+    </div>` : '';
+  return `<div class="wx-card sky-${sky}">
+    <div class="wx-now"><span class="wx-big">${WX_IC[skyIcon(w)]}</span>
+      <div class="wx-now-t"><b>${esc(w.condition || 'Clima')}</b><small>${w.temperature != null ? `${Math.round(w.temperature)}°C · ` : ''}dato de las ${wxTime(w.observedAt)}</small></div>${uvBadge}</div>
+    <div class="wx-stats">
+      <div class="stat${w.raining ? ' rain' : ''}"><b>${dec(w.rainNow)}<small> mm/h</small></b><span>Lluvia ahora</span></div>
+      <div class="stat"><b>${dec(w.rainPast3h)}<small> mm</small></b><span>Últimas 3 h</span></div>
+      <div class="stat"><b>${dec(w.rainNext3h)}<small> mm</small></b><span>Próximas 3 h</span></div>
+    </div>${sunRow}</div>`;
+}
+function renderWx(w) {
+  const chip = $('#wx-chip'); wxFx.set(w); applySky(w);
+  if (!w?.ok || state.config.features?.weather === false) { chip.hidden = true; return; }
+  const i = w.intensity || 0, ic = skyIcon(w);
+  chip.hidden = false; chip.className = `wx-chip i${i} sky-${skyOf(w)}`;
+  const extra = w.rainNow > 0 ? `<span>${dec(w.rainNow)} mm/h</span>` : w.probNext3h >= 40 ? `<span>${w.probNext3h}% en 3 h</span>` : '';
+  const uv = !i && uvOn(w) && w.sun.uvIndex >= 3 ? `<span class="uv-tag uv-${w.sun.uv.key}">UV ${dec(w.sun.uvIndex)}</span>` : '';
+  chip.innerHTML = `<span class="wx-ic">${WX_IC[ic]}</span><b>${esc(w.condition || 'Clima')}</b>${w.temperature != null && !i ? `<span>${Math.round(w.temperature)}°C</span>` : ''}${extra}${uv}${w.simulated ? '<em>prueba</em>' : ''}<u aria-hidden="true">${wxFx.enabled ? 'efectos' : 'sin efectos'}</u>`;
+  chip.title = `${w.decidedBy ? `Lo detectó: ${w.decidedBy}` : `Fuente: ${w.source}`} · dato de las ${wxTime(w.observedAt)} · toca para mostrar u ocultar el clima sobre el mapa`;
+}
+$('#wx-chip').addEventListener('click', () => { if (!state?.weather?.ok) return; const on = wxFx.toggle(); toast(on ? 'Clima sobre el mapa activado' : 'Clima sobre el mapa oculto', 'ok'); renderWx(state.weather); });
 
 // Simulador de navegación (Admin → Simular navegación abre el mapa con ?sim=1)
 const SIM = new URLSearchParams(location.search).has('sim');
@@ -190,12 +229,9 @@ function render(reports) {
 
   // Clima
   const w = weather; renderWx(w);
-  $('#weather').innerHTML = w.ok ? `
-    <div class="stat${w.raining ? ' rain' : ''}"><b>${w.rainNow} <small>mm</small></b><span>${esc(w.condition || 'Lluvia ahora')}</span></div>
-    <div class="stat"><b>${w.rainPast3h} <small>mm</small></b><span>Últimas 3 h</span></div>
-    <div class="stat"><b>${w.rainNext3h} <small>mm</small></b><span>Próximas 3 h</span></div>`
-    : `<div class="stat" style="grid-column:1/-1;display:flex;gap:10px;align-items:center">${ICON.cloud}<span>Sin datos de clima por ahora. Las alertas manuales siguen activas.</span></div>`;
-  $('#srcline').innerHTML = `${ICON.cloud} Clima: ${esc(w.source)}${w.ok ? ` · dato de las ${wxTime(w.observedAt)}${w.decidedBy ? ` · lluvia detectada por ${esc(w.decidedBy)}` : ''} · ${esc(w.condition || '')}${w.temperature != null ? ` · ${w.temperature}°C` : ''}${w.probNext3h != null ? ` · prob. lluvia 3 h ${w.probNext3h}%` : ''} · umbral ${config.rainThresholdMm} mm/h` : ''} · nivel sugerido por clima: <span class="chip ${alert.suggested}">${LEVELS[alert.suggested]}</span>`;
+  $('#weather').innerHTML = w.ok ? weatherCard(w)
+    : `<div class="wx-card wx-off">${ICON.cloud}<span>Sin datos de clima por ahora. Las alertas manuales siguen activas.</span></div>`;
+  $('#srcline').innerHTML = `${ICON.cloud} Clima: ${esc(w.source)}${w.ok ? ` · dato de las ${wxTime(w.observedAt)}${w.decidedBy ? ` · lluvia detectada por ${esc(w.decidedBy)}` : ''}${w.probNext3h != null ? ` · prob. lluvia 3 h ${w.probNext3h}%` : ''} · umbral ${config.rainThresholdMm} mm/h` : ''} · nivel sugerido por clima: <span class="chip ${alert.suggested}">${LEVELS[alert.suggested]}</span>`;
 
   // Google Flood Forecasting
   const f = state.flood; const fc = $('#flood'); fc.hidden = !!f.disabled;
