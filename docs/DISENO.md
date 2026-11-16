@@ -310,3 +310,10 @@ lateral + mapa. El panel admin usa barra inferior en celular.
   - Pronóstico: amarilla solo con probabilidad ≥ 80 % y varios modelos con ≥ la mitad del umbral en 3 h.
   - Índice de riesgo: amarilla desde 30 (antes 20), naranja desde 50 (antes 45), para que una sola señal no baste.
 - Puntos automáticos y sus vías alternas: se encienden con naranja/roja; al bajar a amarilla o verde se apagan también los puntos automáticos que se encendieron a mano durante la alerta (`alert.lastEffective`). Generar vías alternas automáticas deja el punto en modo automático.
+
+### Límite de consultas de Open-Meteo (16-nov-2026)
+En servidores compartidos (Render y similares) Open-Meteo puede responder "demasiadas consultas" (429), porque la IP la usan muchos.
+- Los 8 modelos se piden en **una sola consulta** (antes eran 8) y se guardan 10 minutos.
+- Si Open-Meteo responde 429, no se le vuelve a preguntar en 15 minutos y se sigue usando el último dato bueno (hasta 1 hora), avisando "Dato de Open-Meteo de hace X min".
+- **MET Norway (yr.no)**, otra fuente que usa Amaru, entra como un modelo más (9 en total; un tercio tiene que coincidir) y queda de respaldo con lluvia, nubosidad, temperatura y UV (cielo despejado corregido por nubosidad).
+- El aeropuerto (METAR SERO) sigue funcionando aunque fallen los pronósticos.

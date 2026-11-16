@@ -1,5 +1,5 @@
 // Clima de varias fuentes, porque un solo pronóstico no ve los aguaceros locales de la costa:
-//  · Open-Meteo con 8 modelos meteorológicos distintos (pronóstico; se pide que al menos 2 coincidan)
+//  · Open-Meteo con 8 modelos meteorológicos (una sola consulta) + MET Norway (yr.no): pronósticos; un tercio tiene que coincidir
 //  · Estación del aeropuerto de Santa Rosa (METAR SERO, NOAA): observación real, cuando el aeropuerto reporta
 //  · OpenWeatherMap (opcional, con API key gratuita)
 //  · Lo que marca el equipo en el panel ("Está lloviendo ahora") y los reportes ciudadanos recientes
@@ -28,38 +28,112 @@ async function getJson(url, ms = 8000) {
   return res.json();
 }
 
-// Un modelo de Open-Meteo (pedidos por separado: si uno falla, los demás siguen)
-async function openMeteoModel(model, lat, lng) {
+// Open-Meteo: los 8 modelos en UNA sola consulta (antes eran 8; los servidores compartidos agotan el límite gratuito
+// y Open-Meteo responde "demasiadas consultas"). Con varios modelos, "hourly" y "daily" vienen con sufijo _<modelo>
+// y "current" trae un solo juego de valores (el del mejor modelo): la lluvia de cada modelo sale de su hora actual.
+const OM_TTL = 10 * 60 * 1000;     // el dato "actual" de Open-Meteo cambia cada 15 min: no hace falta pedirlo más seguido
+const OM_BLOCK = 15 * 60 * 1000;   // si responde "demasiadas consultas", no se vuelve a pedir en 15 min
+const OM_STALE = 60 * 60 * 1000;   // mientras tanto se sigue mostrando el último dato bueno, hasta 1 hora
+let om = { at: 0, key: '', models: null, goodAt: 0, good: null, blockedUntil: 0, error: '' };
+
+function omQuery(lat, lng, models) {
   const url = new URL('https://api.open-meteo.com/v1/forecast');
-  const q = { latitude: lat, longitude: lng, current: 'precipitation,rain,showers,temperature_2m,weather_code,cloud_cover,is_day,uv_index,shortwave_radiation',
-    daily: 'uv_index_max,sunrise,sunset',
-    hourly: 'precipitation,precipitation_probability', past_hours: 3, forecast_hours: 24, timezone: 'America/Guayaquil' };
-  if (model !== 'best_match') q.models = model;
-  url.search = new URLSearchParams(q);
-  const j = await getJson(url);
+  url.search = new URLSearchParams({ latitude: lat, longitude: lng,
+    current: 'precipitation,rain,showers,temperature_2m,weather_code,cloud_cover,is_day,uv_index,shortwave_radiation',
+    daily: 'uv_index_max,sunrise,sunset', hourly: 'precipitation,precipitation_probability',
+    past_hours: 3, forecast_hours: 24, timezone: 'America/Guayaquil', ...(models ? { models } : {}) });
+  return url;
+}
+// Saca los datos de un modelo de la respuesta (sufijo = respuesta con varios modelos)
+function omParse(model, j, sfx) {
+  const g = (o, k) => (sfx ? o?.[`${k}_${model}`] : o?.[k]);
   const H = j.hourly || {}, times = H.time || [];
-  const hours = times.map((t, i) => ({ time: t, precipitation: H.precipitation?.[i] ?? null, probability: H.precipitation_probability?.[i] ?? null }));
-  if (!hours.length || hours.every(h => h.precipitation == null)) throw new Error('sin datos para este punto');
-  const nowIdx = Math.max(0, hours.findIndex(h => h.time.slice(0, 13) === String(j.current?.time || '').slice(0, 13)));
+  const P = g(H, 'precipitation') || [], PP = g(H, 'precipitation_probability') || [];
+  const hours = times.map((t, i) => ({ time: t, precipitation: P[i] ?? null, probability: PP[i] ?? null }));
+  if (!hours.length || hours.every(h => h.precipitation == null)) return { model, name: MODELS[model], ok: false, error: 'sin datos para este punto', intensity: 0 };
+  const cur = j.current || {}, useCur = model === 'best_match' || !sfx; // "current" es del mejor modelo
+  const nowIdx = Math.max(0, hours.findIndex(h => h.time.slice(0, 13) === String(cur.time || '').slice(0, 13)));
   const sum = arr => r1(arr.reduce((s, h) => s + (h.precipitation || 0), 0));
   // "current" suele ser la suma de los últimos 15 min: se pasa a mm/h para compararla con la hora.
-  const k = 3600 / (j.current?.interval || 900);
-  const cur = Math.max(j.current?.precipitation ?? 0, (j.current?.rain ?? 0) + (j.current?.showers ?? 0)) * k;
-  const rainNow = r1(Math.max(cur, hours[nowIdx]?.precipitation ?? 0));
+  const k = 3600 / (cur.interval || 900);
+  const curMm = useCur ? Math.max(cur.precipitation ?? 0, (cur.rain ?? 0) + (cur.showers ?? 0)) * k : 0;
+  const rainNow = r1(Math.max(curMm, hours[nowIdx]?.precipitation ?? 0));
   // El código del cielo solo cuenta si viene con lluvia medible: un "llovizna" con 0 mm no es lluvia.
   // Tormenta (95–99) con al menos 1 mm/h sí se toma como tormenta.
-  const code = j.current?.weather_code, storm = code >= 95 && rainNow >= 1;
+  const code = useCur ? cur.weather_code : undefined, storm = code >= 95 && rainNow >= 1;
   const D = j.daily || {};
   // Sol: si es de día, índice UV (OMS), radiación solar en W/m² y horas de salida y puesta del sol
-  const sun = { isDay: j.current?.is_day ?? null, uvIndex: j.current?.uv_index ?? null, radiation: j.current?.shortwave_radiation ?? null,
-    uvMax: D.uv_index_max?.[0] ?? null, sunrise: D.sunrise?.[0] ?? null, sunset: D.sunset?.[0] ?? null };
-  return { model, name: MODELS[model], ok: true, observedAt: j.current?.time, temperature: j.current?.temperature_2m, cloudCover: j.current?.cloud_cover, sun,
+  const sun = useCur ? { isDay: cur.is_day ?? null, uvIndex: cur.uv_index ?? null, radiation: cur.shortwave_radiation ?? null,
+    uvMax: g(D, 'uv_index_max')?.[0] ?? null, sunrise: g(D, 'sunrise')?.[0] ?? null, sunset: g(D, 'sunset')?.[0] ?? null } : null;
+  return { model, name: MODELS[model], ok: true, observedAt: cur.time, temperature: useCur ? cur.temperature_2m : undefined, cloudCover: useCur ? cur.cloud_cover : undefined, sun,
     weatherCode: code, rainNow, intensity: storm ? 4 : mmInt(rainNow),
     rainPast3h: sum(hours.slice(Math.max(0, nowIdx - 3), nowIdx + 1)), rainNext3h: sum(hours.slice(nowIdx + 1, nowIdx + 4)),
     rainNext24h: sum(hours.slice(nowIdx + 1, nowIdx + 25)),
     probNext3h: hours.some(h => h.probability != null) ? Math.max(0, ...hours.slice(nowIdx, nowIdx + 4).map(h => h.probability || 0)) : null,
     maxProbability24h: hours.some(h => h.probability != null) ? Math.max(0, ...hours.slice(nowIdx + 1, nowIdx + 25).map(h => h.probability || 0)) : null,
     hourly: hours.slice(nowIdx, nowIdx + 12) };
+}
+async function openMeteoAll(lat, lng) {
+  const ids = Object.keys(MODELS), key = `${lat},${lng}`, now = Date.now();
+  if (om.models && om.key === key && now - om.at < OM_TTL) return om.models;
+  const fail = (error) => {
+    // Sin dato nuevo: se sigue usando el último bueno (si no es muy viejo), avisando de cuándo es
+    if (om.good && om.key === key && now - om.goodAt < OM_STALE) {
+      const min = Math.round((now - om.goodAt) / 60000);
+      return om.good.map(m => ({ ...m, stale: true, staleMin: min, staleWhy: error }));
+    }
+    return ids.map(m => ({ model: m, name: MODELS[m], ok: false, error, intensity: 0 }));
+  };
+  if (now < om.blockedUntil && om.key === key) return fail(om.error);
+  let models;
+  try {
+    const j = await getJson(omQuery(lat, lng, ids.join(',')), 10000);
+    models = ids.map(m => omParse(m, j, true));
+  } catch (e) {
+    if (/demasiadas consultas/.test(e.message)) { om = { ...om, key, models: null, blockedUntil: now + OM_BLOCK, error: e.message }; return fail(e.message); }
+    // Si la consulta combinada no funciona por otro motivo, al menos se intenta el mejor modelo solo
+    try { models = [omParse('best_match', await getJson(omQuery(lat, lng)), false), ...ids.slice(1).map(m => ({ model: m, name: MODELS[m], ok: false, error: e.message, intensity: 0 }))]; }
+    catch (e2) { om = { ...om, key, models: null, error: e2.message }; return fail(e2.message); }
+  }
+  om = { ...om, key, at: now, models, error: '' };
+  if (models.some(m => m.ok)) Object.assign(om, { good: models, goodAt: now });
+  return models;
+}
+
+// MET Norway (yr.no), la otra fuente que usa Amaru: un modelo más para el consenso y respaldo si Open-Meteo falla.
+// Pide identificarse con un User-Agent con contacto y no consultar más de lo necesario (10 min de caché).
+const METNO_UA = { 'user-agent': 'AlertaVial/1.0 github.com/bryan5243/alerta-vial' };
+let metnoCache = { at: 0, key: '', data: null };
+const METNO_CODE = s => (/thunder/.test(s) ? 95 : /heavyrain|heavysleet/.test(s) ? 65 : /lightrain|lightsleet/.test(s) ? 61 : /rain|sleet/.test(s) ? 63
+  : /fog/.test(s) ? 45 : /^cloudy/.test(s) ? 3 : /partlycloudy/.test(s) ? 2 : /fair/.test(s) ? 1 : 0);
+async function metnoSource(lat, lng) {
+  const key = `${lat},${lng}`;
+  if (metnoCache.data && metnoCache.key === key && Date.now() - metnoCache.at < OM_TTL) return metnoCache.data;
+  let data;
+  try {
+    let res;
+    try { res = await fetch(`https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=${(+lat).toFixed(4)}&lon=${(+lng).toFixed(4)}`, { signal: AbortSignal.timeout(8000), headers: METNO_UA }); }
+    catch (e) { throw new Error(e.name === 'TimeoutError' ? 'no respondió a tiempo' : 'sin conexión'); }
+    if (!res.ok) throw new Error(res.status === 429 || res.status === 403 ? 'demasiadas consultas, reintenta luego' : `respondió con error ${res.status}`);
+    const ts = (await res.json())?.properties?.timeseries || [];
+    const t0 = ts[0]; if (!t0) throw new Error('sin datos para este punto');
+    const det = t0.data?.instant?.details || {}, n1 = t0.data?.next_1_hours || {}, sym = n1.summary?.symbol_code || t0.data?.next_6_hours?.summary?.symbol_code || '';
+    const mm = i => ts[i]?.data?.next_1_hours?.details?.precipitation_amount ?? 0;
+    const rainNow = r1(mm(0)), code = METNO_CODE(sym), storm = code >= 95 && rainNow >= 1;
+    const local = new Date(new Date(t0.time).getTime() - 5 * 3600e3), hr = local.getUTCHours();
+    const isDay = /_night/.test(sym) ? 0 : /_day/.test(sym) ? 1 : hr >= 6 && hr < 18 ? 1 : 0;
+    // UV con cielo despejado corregido por la nubosidad (factor empírico de Kasten-Czeplak)
+    const cloud = det.cloud_area_fraction ?? null;
+    const uv = det.ultraviolet_index_clear_sky == null ? null : r1(det.ultraviolet_index_clear_sky * (1 - 0.75 * Math.pow((cloud ?? 0) / 100, 3.4)));
+    const prob = ts.slice(0, 4).map(x => x.data?.next_1_hours?.details?.probability_of_precipitation).filter(v => v != null);
+    data = { model: 'met_no', name: 'MET Norway (yr.no)', ok: true, observedAt: local.toISOString().slice(0, 16),
+      temperature: det.air_temperature, cloudCover: cloud == null ? undefined : Math.round(cloud), weatherCode: code, rainNow, intensity: storm ? 4 : mmInt(rainNow),
+      sun: { isDay: isDay ? 1 : 0, uvIndex: isDay ? uv : 0, radiation: null, uvMax: null, sunrise: null, sunset: null },
+      rainPast3h: 0, rainNext3h: r1(mm(1) + mm(2) + mm(3)), rainNext24h: r1(ts.slice(1, 25).reduce((a, _, i) => a + mm(i + 1), 0)),
+      probNext3h: prob.length ? Math.max(...prob) : null, maxProbability24h: null, hourly: [] };
+  } catch (e) { data = { model: 'met_no', name: 'MET Norway (yr.no)', ok: false, error: e.message, intensity: 0 }; }
+  metnoCache = { at: Date.now(), key, data };
+  return data;
 }
 
 // METAR: reporte del aeropuerto. Ej. "SERO 142300Z 24005KT 3000 +TSRA BKN010CB 24/23 Q1010"
@@ -124,31 +198,34 @@ export async function getWeather({ lat, lng, metarStation = 'SERO', owmKey = '' 
   let remote;
   if (cache.data && cache.key === key && Date.now() - cache.at < TTL) remote = cache.data;
   else {
-    const [models, metar, owm] = await Promise.all([
-      Promise.all(Object.keys(MODELS).map(m => openMeteoModel(m, lat, lng).catch(e => ({ model: m, name: MODELS[m], ok: false, error: e.message, intensity: 0 })))),
+    const [omModels, metno, metar, owm] = await Promise.all([
+      openMeteoAll(lat, lng).catch(e => Object.keys(MODELS).map(m => ({ model: m, name: MODELS[m], ok: false, error: e.message, intensity: 0 }))),
+      metnoSource(lat, lng),
       metarStation ? metarSource(metarStation) : Promise.resolve(null),
       owmSource(lat, lng, owmKey),
     ]);
-    remote = { models, metar, owm, at: new Date().toISOString() };
+    remote = { models: [...omModels, metno], metar, owm, at: new Date().toISOString() };
     cache = { at: Date.now(), key, data: remote };
   }
   return combine(remote, extra);
 }
 
 export function combine({ models, metar, owm, at }, extra = []) {
-  const okM = models.filter(m => m.ok), base = okM.find(m => m.model === 'best_match') || okM[0];
+  const okM = models.filter(m => m.ok), base = okM.find(m => m.model === 'best_match') || okM.find(m => m.model === 'met_no') || okM[0];
   // Como Amaru: las señales tienen que coincidir. Un modelo solo no basta: hace falta que al menos
-  // 3 de 8 (35 %) vean lluvia medible. Y si el mejor modelo dice cielo casi despejado, los modelos no cuentan.
-  const need = Math.max(2, Math.ceil(okM.length * 0.35));
+  // un tercio de los modelos (3 de 9) vean lluvia medible. Y si el mejor modelo dice cielo casi despejado, los modelos no cuentan.
+  const need = Math.max(2, Math.ceil(okM.length / 3));
   const kth = arr => { const v = arr.slice().sort((x, y) => y - x); return v.length >= need ? v[need - 1] : 0; };
   const clear = (base?.cloudCover ?? 100) < 50;
   const raining = okM.filter(m => m.intensity > 0);
   const mInt = clear ? 0 : kth(okM.map(m => m.intensity)), mRain = mInt ? r1(kth(okM.map(m => m.rainNow))) : 0;
-  const modelSrc = { id: 'modelos', kind: 'pronóstico', name: `Open-Meteo · ${okM.length} de ${models.length} modelos`, ok: okM.length > 0,
+  const omOk = okM.filter(m => m.model !== 'met_no').length, stale = okM.find(m => m.stale);
+  const provs = [omOk && 'Open-Meteo', okM.some(m => m.model === 'met_no') && 'MET Norway'].filter(Boolean).join(' + ') || 'Open-Meteo + MET Norway';
+  const modelSrc = { id: 'modelos', kind: 'pronóstico', name: `${provs} · ${okM.length} de ${models.length} modelos`, ok: okM.length > 0,
     at: base?.observedAt, intensity: mInt, rainNow: mRain,
-    detail: !okM.length ? 'Sin conexión con Open-Meteo'
-      : `${raining.length} de ${okM.length} modelos ven lluvia medible${raining.length ? ` (${raining.map(m => m.name).join(', ')})` : ''}; hacen falta ${need}${clear && raining.length ? ' · no cuenta: el cielo está casi despejado' : ''} · nubosidad ${base?.cloudCover ?? '—'} %`,
-    error: okM.length ? undefined : models[0]?.error, models: models.map(m => ({ name: m.name, ok: m.ok, rainNow: m.rainNow ?? 0, intensity: m.intensity || 0, error: m.error })) };
+    detail: !okM.length ? `Sin conexión con los pronósticos (${[...new Set(models.map(m => m.error).filter(Boolean))].join(' · ')})`
+      : `${stale ? `Dato de Open-Meteo de hace ${stale.staleMin} min (${stale.staleWhy}) · ` : ''}${raining.length} de ${okM.length} modelos ven lluvia medible${raining.length ? ` (${raining.map(m => m.name).join(', ')})` : ''}; hacen falta ${need}${clear && raining.length ? ' · no cuenta: el cielo está casi despejado' : ''} · nubosidad ${base?.cloudCover ?? '—'} %`,
+    error: okM.length ? undefined : models[0]?.error, models: models.map(m => ({ name: m.name, ok: m.ok, rainNow: m.rainNow ?? 0, intensity: m.intensity || 0, error: m.error, stale: m.stale ? m.staleMin : undefined })) };
   const sources = [modelSrc, metar, owm, ...extra].filter(Boolean);
   const live = sources.filter(s => s.ok);
   if (!live.length) return { ok: false, source: 'Open-Meteo', error: modelSrc.error || 'sin conexión', rainNow: 0, rainPast3h: 0, rainNext3h: 0, rainNext24h: 0, hourly: [], sources, checkedAt: at };
@@ -160,9 +237,9 @@ export function combine({ models, metar, owm, at }, extra = []) {
   const w = {
     ok: true, sources, checkedAt: at, modelsNeeded: need,
     decidedBy: intensity > 0 ? top.name : null,
-    source: live.map(s => s.id === 'modelos' ? `Open-Meteo (${okM.length} modelos)` : s.name).join(' + '),
+    source: live.map(s => s.id === 'modelos' ? `${provs} (${okM.length} modelos)` : s.name).join(' + '),
     observedAt: (intensity > 0 ? top.at : base?.observedAt) || at,
-    temperature: base?.temperature ?? owm?.temperature, cloudCover: Math.max(base?.cloudCover ?? 0, owm?.cloudCover ?? 0, intensity ? 95 : 0),
+    temperature: base?.temperature ?? okM.find(m => m.temperature != null)?.temperature ?? owm?.temperature, cloudCover: Math.max(base?.cloudCover ?? 0, owm?.cloudCover ?? 0, intensity ? 95 : 0),
     rainNow: intensity ? r1(Math.max(...live.map(s => (s.intensity ? s.rainNow || 0 : 0)))) : 0,
     rainPast3h: Math.max(pick('rainPast3h'), intensity >= 2 ? INT_MM[intensity] : 0),
     rainNext3h: pick('rainNext3h'), rainNext24h: pick('rainNext24h'),
