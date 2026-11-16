@@ -232,7 +232,8 @@ export function combine({ models, metar, owm, at }, extra = []) {
   // Entre fuentes gana la que vea la lluvia más fuerte (cada una ya es confiable por sí sola: observación o consenso de modelos)
   const top = live.reduce((x, s) => (s.intensity > x.intensity || (s.intensity === x.intensity && (s.rainNow || 0) > (x.rainNow || 0)) ? s : x), live[0]);
   const intensity = top.intensity || 0;
-  const pick = k => r1(kth(okM.map(m => m[k] || 0)));
+  // Milímetros de las últimas/próximas horas: el valor en que coinciden los modelos; si responden muy pocos, el mayor de ellos
+  const pick = k => { const v = okM.map(m => m[k] || 0); return r1(v.length >= need ? kth(v) : Math.max(0, ...v)); };
   const baseCode = base?.weatherCode ?? 0, baseRainy = baseCode >= 50; // códigos de lluvia del modelo
   const w = {
     ok: true, sources, checkedAt: at, modelsNeeded: need,
