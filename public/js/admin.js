@@ -247,6 +247,8 @@ async function genAuto(points, btn) {
     let list = [];
     try { list = await autoDetoursFor(p, db.points); } catch {}
     if (!list.length) none.push(p.name);
+    // Un punto con vía alterna se enciende solo con alerta naranja/roja y se apaga cuando baja
+    else if (!p.auto) { try { await api(`/api/admin/points/${p.id}`, { method: 'PUT', body: { auto: true, active: false } }); } catch {} }
     for (const d of list) {
       try { await api('/api/admin/routes', { method: 'POST', body: { name: `Desvío ${d.axis} · ${p.name}`, from: '', to: '', avoids: p.id, auto: true, active: true, coords: d.coords,
         description: `Desvío automático que evita ${p.name}${d.extra > 30 ? ` (unos ${Math.round(d.extra / 10) * 10} m más)` : ''}.` } }); made++; } catch {}

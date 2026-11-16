@@ -299,3 +299,14 @@ lateral + mapa. El panel admin usa barra inferior en celular.
   - Reportes ciudadanos de la última hora (2 reportes o 1 verificado cuentan como lluvia).
 - Admin → Alerta → "Fuentes del clima" muestra qué dice cada fuente, la hora del dato y cuál decide el nivel. El mapa público muestra la fuente y la hora en la línea de clima.
 - RainViewer no tiene radares en Ecuador (su página de cobertura no lo incluye), por eso el radar del mapa puede verse vacío.
+
+### Menos falsas alarmas: las señales tienen que coincidir (como Amaru)
+- 16-nov-2026: con sol el sistema mostraba "Llovizna" y alerta amarilla. Causas: el código de cielo "llovizna" de un modelo bastaba aunque no lloviera, 0,1–0,4 mm/h de garúa de los modelos contaba como lluvia, la lluvia "en los alrededores" del aeropuerto (VCSH) contaba como leve, y el pronóstico solo encendía la amarilla.
+- Amaru (amaruapp.com) usa Open-Meteo, RainViewer, MET Norway, Google Flood Forecasting y reportes de usuarios, y no deja que una sola señal encienda una alerta alta: "hace falta que coincidan".
+- Reglas nuevas:
+  - Lluvia medible: al menos 0,5 mm/h. Un código de lluvia sin milímetros no cuenta.
+  - Modelos: hacen falta al menos 3 de 8 con lluvia medible, y no cuentan si el mejor modelo da menos de 50 % de nubes.
+  - Aeropuerto: solo cuenta la lluvia sobre la estación (RA, DZ, TS), no VC.
+  - Pronóstico: amarilla solo con probabilidad ≥ 80 % y varios modelos con ≥ la mitad del umbral en 3 h.
+  - Índice de riesgo: amarilla desde 30 (antes 20), naranja desde 50 (antes 45), para que una sola señal no baste.
+- Puntos automáticos y sus vías alternas: se encienden con naranja/roja; al bajar a amarilla o verde se apagan también los puntos automáticos que se encendieron a mano durante la alerta (`alert.lastEffective`). Generar vías alternas automáticas deja el punto en modo automático.

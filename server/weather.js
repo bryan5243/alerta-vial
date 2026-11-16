@@ -13,7 +13,9 @@ let metarCache = { at: 0, data: null }, owmCache = { at: 0, key: '', data: null 
 export const MODELS = { best_match: 'Mejor modelo', ecmwf_ifs025: 'ECMWF (Europa)', gfs_seamless: 'GFS (EE. UU.)', icon_seamless: 'ICON (Alemania)',
   jma_seamless: 'JMA (Japón)', meteofrance_seamless: 'Météo-France', ukmo_seamless: 'UK Met Office', gem_seamless: 'GEM (Canadá)' };
 const r1 = x => +(+x || 0).toFixed(1);
-const mmInt = mm => (mm >= 8 ? 3 : mm >= 2.5 ? 2 : mm >= 0.2 ? 1 : 0);
+// Lluvia medible: menos de 0,5 mm/h es "ruido" de los modelos (garúa de la costa que no moja la calle).
+const MIN_MM = 0.5;
+const mmInt = mm => (mm >= 8 ? 3 : mm >= 2.5 ? 2 : mm >= MIN_MM ? 1 : 0);
 const INT_MM = [0, 1, 4, 10, 20]; // lluvia típica (mm/h) para una intensidad observada sin medición
 const INT_TXT = ['Sin lluvia', 'Lluvia leve', 'Lluvia moderada', 'Lluvia fuerte', 'Tormenta eléctrica'];
 const INT_CODE = [0, 61, 63, 65, 95];
@@ -43,9 +45,11 @@ async function openMeteoModel(model, lat, lng) {
   const k = 3600 / (j.current?.interval || 900);
   const cur = Math.max(j.current?.precipitation ?? 0, (j.current?.rain ?? 0) + (j.current?.showers ?? 0)) * k;
   const rainNow = r1(Math.max(cur, hours[nowIdx]?.precipitation ?? 0));
-  const [codeInt] = CODE[j.current?.weather_code] || [0];
+  // El código del cielo solo cuenta si viene con lluvia medible: un "llovizna" con 0 mm no es lluvia.
+  // Tormenta (95–99) con al menos 1 mm/h sí se toma como tormenta.
+  const code = j.current?.weather_code, storm = code >= 95 && rainNow >= 1;
   return { model, name: MODELS[model], ok: true, observedAt: j.current?.time, temperature: j.current?.temperature_2m, cloudCover: j.current?.cloud_cover,
-    weatherCode: j.current?.weather_code, rainNow, intensity: Math.max(codeInt, mmInt(rainNow)),
+    weatherCode: code, rainNow, intensity: storm ? 4 : mmInt(rainNow),
     rainPast3h: sum(hours.slice(Math.max(0, nowIdx - 3), nowIdx + 1)), rainNext3h: sum(hours.slice(nowIdx + 1, nowIdx + 4)),
     rainNext24h: sum(hours.slice(nowIdx + 1, nowIdx + 25)),
     probNext3h: hours.some(h => h.probability != null) ? Math.max(0, ...hours.slice(nowIdx, nowIdx + 4).map(h => h.probability || 0)) : null,
@@ -67,8 +71,8 @@ export function parseMetar(raw) {
     if (!ts && m[1] === '+') i = 3;
     if (i > intensity) { intensity = i; txt = ts ? (rain ? 'Tormenta con lluvia' : 'Tormenta eléctrica') : `${m[1] === '+' ? 'Lluvia fuerte' : m[1] === '-' ? 'Lluvia leve' : /DZ/.test(m[3]) && !/RA/.test(m[3]) ? 'Llovizna' : 'Lluvia'}${m[2] === 'SH' ? ' (chubasco)' : ''}`; }
   }
-  // VC = lluvia a menos de ~16 km del aeropuerto, que puede estar cayendo sobre la ciudad: cuenta como leve.
-  if (!intensity && near) return { intensity: 1, near, text: 'Lluvia en los alrededores' };
+  // VC = lluvia a 8–16 km del aeropuerto, no sobre él: se informa pero no sube el semáforo.
+  if (!intensity && near) return { intensity: 0, near, text: 'Lluvia en los alrededores (no sobre el aeropuerto)' };
   return { intensity, near, text: txt || 'Sin lluvia' };
 }
 async function metarSource(station) {
@@ -99,7 +103,8 @@ async function owmSource(lat, lng, key) {
   try {
     const j = await getJson(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lng}&appid=${encodeURIComponent(key)}&units=metric&lang=es`);
     const id = j.weather?.[0]?.id || 800, mm = r1(j.rain?.['1h'] ?? (j.rain?.['3h'] ? j.rain['3h'] / 3 : 0));
-    const codeInt = id >= 200 && id < 300 ? 4 : id >= 300 && id < 400 ? 1 : [500, 520].includes(id) ? 1 : [501, 521, 511].includes(id) ? 2 : id >= 502 && id < 600 ? 3 : 0;
+    // Llovizna/lluvia leve sin milímetros no cuenta (mismo criterio que los modelos)
+    const codeInt = id >= 200 && id < 300 ? 4 : [501, 521, 511].includes(id) ? 2 : id >= 502 && id < 600 ? 3 : 0;
     const intensity = Math.max(codeInt, mmInt(mm));
     d = { ...base, ok: true, at: new Date((j.dt || Date.now() / 1000) * 1000).toISOString(), intensity, rainNow: Math.max(mm, intensity ? INT_MM[intensity] / 2 : 0),
       temperature: j.main?.temp, cloudCover: j.clouds?.all, detail: `${j.weather?.[0]?.description || ''}${mm ? ` · ${mm} mm/h` : ''}` };
@@ -127,35 +132,42 @@ export async function getWeather({ lat, lng, metarStation = 'SERO', owmKey = '' 
 
 export function combine({ models, metar, owm, at }, extra = []) {
   const okM = models.filter(m => m.ok), base = okM.find(m => m.model === 'best_match') || okM[0];
-  // Modelos: se toma el segundo valor más alto (al menos 2 modelos de acuerdo) para no alarmar por un solo modelo.
-  const second = arr => { const v = arr.slice().sort((a, b) => b - a); return v.length >= 3 ? v[1] : v[0] ?? 0; };
-  const mInt = second(okM.map(m => m.intensity)), mRain = r1(second(okM.map(m => m.rainNow)));
+  // Como Amaru: las señales tienen que coincidir. Un modelo solo no basta: hace falta que al menos
+  // 3 de 8 (35 %) vean lluvia medible. Y si el mejor modelo dice cielo casi despejado, los modelos no cuentan.
+  const need = Math.max(2, Math.ceil(okM.length * 0.35));
+  const kth = arr => { const v = arr.slice().sort((x, y) => y - x); return v.length >= need ? v[need - 1] : 0; };
+  const clear = (base?.cloudCover ?? 100) < 50;
   const raining = okM.filter(m => m.intensity > 0);
+  const mInt = clear ? 0 : kth(okM.map(m => m.intensity)), mRain = mInt ? r1(kth(okM.map(m => m.rainNow))) : 0;
   const modelSrc = { id: 'modelos', kind: 'pronóstico', name: `Open-Meteo · ${okM.length} de ${models.length} modelos`, ok: okM.length > 0,
     at: base?.observedAt, intensity: mInt, rainNow: mRain,
-    detail: okM.length ? (raining.length ? `${raining.length} de ${okM.length} modelos ven lluvia (${raining.map(m => m.name).join(', ')})` : 'Ningún modelo ve lluvia en esta hora') : 'Sin conexión con Open-Meteo',
+    detail: !okM.length ? 'Sin conexión con Open-Meteo'
+      : `${raining.length} de ${okM.length} modelos ven lluvia medible${raining.length ? ` (${raining.map(m => m.name).join(', ')})` : ''}; hacen falta ${need}${clear && raining.length ? ' · no cuenta: el cielo está casi despejado' : ''} · nubosidad ${base?.cloudCover ?? '—'} %`,
     error: okM.length ? undefined : models[0]?.error, models: models.map(m => ({ name: m.name, ok: m.ok, rainNow: m.rainNow ?? 0, intensity: m.intensity || 0, error: m.error })) };
   const sources = [modelSrc, metar, owm, ...extra].filter(Boolean);
   const live = sources.filter(s => s.ok);
   if (!live.length) return { ok: false, source: 'Open-Meteo', error: modelSrc.error || 'sin conexión', rainNow: 0, rainPast3h: 0, rainNext3h: 0, rainNext24h: 0, hourly: [], sources, checkedAt: at };
-  const top = live.reduce((a, s) => (s.intensity > a.intensity || (s.intensity === a.intensity && (s.rainNow || 0) > (a.rainNow || 0)) ? s : a), live[0]);
+  // Entre fuentes gana la que vea la lluvia más fuerte (cada una ya es confiable por sí sola: observación o consenso de modelos)
+  const top = live.reduce((x, s) => (s.intensity > x.intensity || (s.intensity === x.intensity && (s.rainNow || 0) > (x.rainNow || 0)) ? s : x), live[0]);
   const intensity = top.intensity || 0;
-  const pickMax = k => r1(second(okM.map(m => m[k] || 0)));
+  const pick = k => r1(kth(okM.map(m => m[k] || 0)));
+  const baseCode = base?.weatherCode ?? 0, baseRainy = baseCode >= 50; // códigos de lluvia del modelo
   const w = {
-    ok: true, sources, checkedAt: at,
+    ok: true, sources, checkedAt: at, modelsNeeded: need,
     decidedBy: intensity > 0 ? top.name : null,
     source: live.map(s => s.id === 'modelos' ? `Open-Meteo (${okM.length} modelos)` : s.name).join(' + '),
     observedAt: (intensity > 0 ? top.at : base?.observedAt) || at,
     temperature: base?.temperature ?? owm?.temperature, cloudCover: Math.max(base?.cloudCover ?? 0, owm?.cloudCover ?? 0, intensity ? 95 : 0),
-    rainNow: r1(Math.max(...live.map(s => s.rainNow || 0))),
-    rainPast3h: Math.max(pickMax('rainPast3h'), intensity >= 2 ? INT_MM[intensity] : 0),
-    rainNext3h: pickMax('rainNext3h'), rainNext24h: pickMax('rainNext24h'),
+    rainNow: intensity ? r1(Math.max(...live.map(s => (s.intensity ? s.rainNow || 0 : 0)))) : 0,
+    rainPast3h: Math.max(pick('rainPast3h'), intensity >= 2 ? INT_MM[intensity] : 0),
+    rainNext3h: pick('rainNext3h'), rainNext24h: pick('rainNext24h'),
     probNext3h: base?.probNext3h ?? null, maxProbability24h: base?.maxProbability24h ?? null,
-    weatherCode: intensity > (CODE[base?.weatherCode]?.[0] || 0) ? INT_CODE[intensity] : base?.weatherCode,
+    // Si nadie confirma lluvia, el ícono no puede decir "llovizna": se muestra nublado (3) o el cielo del modelo.
+    weatherCode: intensity ? INT_CODE[intensity] : baseRainy ? 3 : baseCode,
     hourly: base?.hourly || [],
   };
   Object.assign(w, describe(w));
-  if (intensity > w.intensity) Object.assign(w, { intensity, raining: true, condition: INT_TXT[intensity] });
+  if (intensity !== w.intensity) Object.assign(w, { intensity, raining: intensity > 0, condition: intensity ? INT_TXT[intensity] : w.condition });
   return w;
 }
 
@@ -183,7 +195,7 @@ const CODE = { 51: [1, 'Llovizna'], 53: [1, 'Llovizna'], 55: [2, 'Llovizna inten
   80: [1, 'Chubascos leves'], 81: [2, 'Chubascos moderados'], 82: [3, 'Chubascos fuertes'], 95: [4, 'Tormenta eléctrica'], 96: [4, 'Tormenta con granizo'], 99: [4, 'Tormenta con granizo'] };
 export function describe(w) {
   const [codeInt, codeTxt] = CODE[w.weatherCode] || [0, ''];
-  const mmInt = w.rainNow >= 8 ? 3 : w.rainNow >= 2.5 ? 2 : w.rainNow > 0 ? 1 : 0;
+  const mmInt = w.rainNow >= 8 ? 3 : w.rainNow >= 2.5 ? 2 : w.rainNow >= MIN_MM ? 1 : 0;
   const intensity = Math.max(codeInt, mmInt);
   const condition = codeTxt || (mmInt === 3 ? 'Lluvia fuerte' : mmInt === 2 ? 'Lluvia moderada' : mmInt === 1 ? 'Lluvia leve'
     : w.probNext3h >= 60 ? 'Lluvia probable' : (w.cloudCover ?? 0) >= 70 ? 'Nublado' : (w.cloudCover ?? 0) >= 30 ? 'Parcialmente nublado' : 'Despejado');
@@ -235,7 +247,8 @@ export function riskIndex({ weather: w, cfg, flood, reports = [], tide, rivers =
   const tideV = tide?.ok ? clamp((tide.relative - 0.5) * 2) : 0;
   parts.push({ key: 'marea', label: 'Marea', max: 10, value: Math.round(tideV * 10), ok: !!tide?.ok });
   const value = parts.reduce((s, p) => s + p.value, 0);
-  return { value, parts, level: value >= 70 ? 'roja' : value >= 45 ? 'naranja' : value >= 20 ? 'amarilla' : 'normal' };
+  // Umbrales pensados para que una sola señal (por ejemplo, solo el pronóstico de 24 h, máx. 25) no encienda la amarilla.
+  return { value, parts, level: value >= 70 ? 'roja' : value >= 50 ? 'naranja' : value >= 30 ? 'amarilla' : 'normal' };
 }
 
 // Nivel sugerido por el clima: normal | amarilla | naranja | roja
@@ -244,7 +257,7 @@ export function levelFromWeather(w, cfg) {
   const t = cfg.rainThresholdMm, t3 = cfg.rainThresholdMm3h, i = w.intensity || 0;
   if (w.rainNow >= t * 3 || w.rainPast3h >= t3 * 2 || (i >= 4 && w.rainNow >= t)) return 'roja';
   if (w.rainNow >= t || w.rainPast3h >= t3 || i >= 3) return 'naranja';
-  // Cualquier lluvia en curso (aunque sea llovizna) o lluvia muy probable en las próximas horas: amarilla.
-  if (i >= 1 || w.rainNow > 0 || w.rainNext3h >= t / 2 || (w.probNext3h ?? 0) >= 70) return 'amarilla';
+  // Lluvia confirmada en curso, o lluvia casi segura (≥ 80 % y varios modelos con ≥ la mitad del umbral) en las próximas 3 h: amarilla.
+  if (i >= 1 || ((w.probNext3h ?? 0) >= 80 && w.rainNext3h >= t / 2)) return 'amarilla';
   return 'normal';
 }

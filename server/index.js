@@ -79,7 +79,20 @@ async function computeStatus() {
   const suggested = maxLevel(levelFromWeather(weather, db.config.weather), risk.level);
   // Durante una simulación el nivel publicado sigue al clima simulado, aunque la alerta esté en manual.
   const effective = db.alert.mode === 'manual' && !simOn() ? db.alert.level : suggested;
+  syncAutoPoints(db, effective);
   return { weather, suggested, effective, risk, tide, flood };
+}
+// Puntos automáticos (y sus vías alternas): se encienden solos con naranja/roja. Cuando el semáforo baja a
+// amarilla o verde, también se apagan los que se encendieron a mano durante la alerta, para que no queden
+// vías alternas publicadas sin peligro.
+function syncAutoPoints(db, effective) {
+  const prev = db.alert.lastEffective;
+  if (prev === effective) return;
+  if (prev && LV[prev] >= 2 && LV[effective] < 2) {
+    let n = 0; for (const p of db.points) if (p.auto && p.active) { p.active = false; n++; }
+    if (n) console.log(`Alerta bajó a ${effective}: ${n} punto(s) automáticos apagados con sus vías alternas.`);
+  }
+  db.alert.lastEffective = effective; save();
 }
 
 // ---------- API pública ----------
