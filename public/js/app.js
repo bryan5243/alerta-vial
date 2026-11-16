@@ -48,6 +48,23 @@ function applySky(w) {
   for (const k of ['soleado', 'parcial', 'nublado', 'noche']) mw.classList.toggle(`sky-${k}`, sky === k);
   mw.style.setProperty('--sun', Math.min(1, Math.max(.45, (w?.sun?.uvIndex ?? 6) / 10)).toFixed(2));
 }
+// Aviso de lluvia posible (no cambia el semáforo): se muestra cuando las fuentes ven señales de que podría llover
+const cap = t => t ? t[0].toUpperCase() + t.slice(1) : '';
+function outlookCard(o) {
+  if (!o || !['atencion', 'probable'].includes(o.level)) return '';
+  return `<div class="ol-card ol-${o.level}" role="status">
+    <span class="ol-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 15a4 4 0 0 1-.5-8A6 6 0 0 1 18 8a3.5 3.5 0 0 1 0 7"/></svg><i></i><i></i><i></i></span>
+    <div class="ol-tx"><b>${esc(o.title)}</b><p>${esc(o.text)}</p>${o.reasons?.length ? `<ul>${o.reasons.map(r => `<li>${esc(cap(r))}</li>`).join('')}</ul>` : ''}</div></div>`;
+}
+// Probabilidad de lluvia de las próximas 6 horas, hora por hora
+function hoursStrip(w) {
+  const hrs = (w.hourly || []).slice(1, 7).filter(h => h?.time);
+  if (hrs.length < 3) return '';
+  return `<div class="wx-hours"><span class="wx-hours-t">Próximas horas · probabilidad de lluvia</span><div class="wx-hours-g">${hrs.map(h => {
+    const p = Math.max(0, Math.min(100, Math.round(h.probability ?? 0))), mm = h.precipitation ?? 0;
+    return `<div class="wh${p >= 60 ? ' hi' : p >= 30 ? ' mid' : ''}" title="${h.time.slice(11, 16)} · ${p} %${mm ? ` · ${dec(mm)} mm` : ''}"><span class="wh-p">${p}%</span><span class="wh-bar"><i style="height:${Math.max(4, p)}%"></i></span><span class="wh-t">${h.time.slice(11, 13)}h</span></div>`;
+  }).join('')}</div></div>`;
+}
 // Tarjeta "Clima ahora": cielo, temperatura, lluvia y sol (índice UV, radiación, salida y puesta)
 function weatherCard(w) {
   const sky = skyOf(w), s = w.sun, night = s?.isDay === 0;
@@ -69,7 +86,7 @@ function weatherCard(w) {
       <div class="stat${w.raining ? ' rain' : ''}"><b>${dec(w.rainNow)}<small> mm/h</small></b><span>Lluvia ahora</span></div>
       <div class="stat"><b>${dec(w.rainPast3h)}<small> mm</small></b><span>Últimas 3 h</span></div>
       <div class="stat"><b>${dec(w.rainNext3h)}<small> mm</small></b><span>Próximas 3 h</span></div>
-    </div>${sunRow}</div>`;
+    </div>${hoursStrip(w)}${sunRow}</div>`;
 }
 function renderWx(w) {
   const chip = $('#wx-chip'); wxFx.set(w); applySky(w);
@@ -77,8 +94,11 @@ function renderWx(w) {
   const i = w.intensity || 0, ic = skyIcon(w);
   chip.hidden = false; chip.className = `wx-chip i${i} sky-${skyOf(w)}`;
   const extra = w.rainNow > 0 ? `<span>${dec(w.rainNow)} mm/h</span>` : w.probNext3h >= 40 ? `<span>${w.probNext3h}% en 3 h</span>` : '';
-  const uv = !i && uvOn(w) && w.sun.uvIndex >= 3 ? `<span class="uv-tag uv-${w.sun.uv.key}">UV ${dec(w.sun.uvIndex)}</span>` : '';
-  chip.innerHTML = `<span class="wx-ic">${WX_IC[ic]}</span><b>${esc(w.condition || 'Clima')}</b>${w.temperature != null && !i ? `<span>${Math.round(w.temperature)}°C</span>` : ''}${extra}${uv}${w.simulated ? '<em>prueba</em>' : ''}<u aria-hidden="true">${wxFx.enabled ? 'efectos' : 'sin efectos'}</u>`;
+  const ol = !i && ['atencion', 'probable'].includes(w.outlook?.level) ? `<span class="ol-tag ol-${w.outlook.level}">${w.outlook.level === 'probable' ? 'Lluvia probable' : 'Podría llover'}${w.outlook.from ? ` ${w.outlook.from.slice(11, 16)}` : ''}</span>` : '';
+  const uv = ol || (!i && uvOn(w) && w.sun.uvIndex >= 3 ? `<span class="uv-tag uv-${w.sun.uv.key}">UV ${dec(w.sun.uvIndex)}</span>` : '');
+  // aviso una sola vez cuando la lluvia pasa a "probable"
+  if (!i && w.outlook?.level === 'probable') { const k = `av_ol_${w.outlook.from || ''}`; try { if (!sessionStorage.getItem(k)) { sessionStorage.setItem(k, '1'); toast(`Lluvia probable${w.outlook.from ? ` desde las ${w.outlook.from.slice(11, 16)}` : ' en las próximas horas'}. Lleva paraguas.`); } } catch {} }
+  chip.innerHTML = `<span class="wx-ic">${WX_IC[ic]}</span><b>${esc(w.condition || 'Clima')}</b>${w.temperature != null && !i ? `<span>${Math.round(w.temperature)}°C</span>` : ''}${ol ? '' : extra}${uv}${w.simulated ? '<em>prueba</em>' : ''}<u aria-hidden="true">${wxFx.enabled ? 'efectos' : 'sin efectos'}</u>`;
   chip.title = `${w.decidedBy ? `Lo detectó: ${w.decidedBy}` : `Fuente: ${w.source}`} · dato de las ${wxTime(w.observedAt)} · toca para mostrar u ocultar el clima sobre el mapa`;
 }
 $('#wx-chip').addEventListener('click', () => { if (!state?.weather?.ok) return; const on = wxFx.toggle(); toast(on ? 'Clima sobre el mapa activado' : 'Clima sobre el mapa oculto', 'ok'); renderWx(state.weather); });
@@ -229,7 +249,7 @@ function render(reports) {
 
   // Clima
   const w = weather; renderWx(w);
-  $('#weather').innerHTML = w.ok ? weatherCard(w)
+  $('#weather').innerHTML = w.ok ? outlookCard(w.outlook) + weatherCard(w)
     : `<div class="wx-card wx-off">${ICON.cloud}<span>Sin datos de clima por ahora. Las alertas manuales siguen activas.</span></div>`;
   $('#srcline').innerHTML = `${ICON.cloud} Clima: ${esc(w.source)}${w.ok ? ` · dato de las ${wxTime(w.observedAt)}${w.decidedBy ? ` · lluvia detectada por ${esc(w.decidedBy)}` : ''}${w.probNext3h != null ? ` · prob. lluvia 3 h ${w.probNext3h}%` : ''} · umbral ${config.rainThresholdMm} mm/h` : ''} · nivel sugerido por clima: <span class="chip ${alert.suggested}">${LEVELS[alert.suggested]}</span>`;
 
@@ -246,7 +266,8 @@ function render(reports) {
   const rivers = state.rivers || [], zones = state.zones || [];
   $('#n-rivers').textContent = rivers.filter(r => r.status !== 'normal').length + zones.length + overflows.length;
   const nFlood = +$('#n-streets').textContent;
-  $('#peek-t').textContent = `${nFlood ? `${nFlood} ${nFlood === 1 ? 'calle inundada' : 'calles inundadas'}` : 'Sin calles inundadas'} · ${state.routes.length} ${state.routes.length === 1 ? 'vía alterna' : 'vías alternas'}`;
+  const olv = !weather.intensity && ['atencion', 'probable'].includes(weather.outlook?.level) ? (weather.outlook.level === 'probable' ? 'Lluvia probable' : 'Podría llover') : '';
+  $('#peek-t').textContent = `${nFlood ? `${nFlood} ${nFlood === 1 ? 'calle inundada' : 'calles inundadas'}` : olv || 'Sin calles inundadas'} · ${state.routes.length} ${state.routes.length === 1 ? 'vía alterna' : 'vías alternas'}`;
   $('#list-rivers').innerHTML = (rivers.length || zones.length || overflows.length) ? [
     ...overflows.map(o => `<button class="item" data-kind="overflows" data-id="${o.id}"><span class="dot roja" style="margin-top:6px"></span>
       <div><div class="title">Desborde reportado${o.street ? ` · ${esc(o.street)}` : ''}</div><div class="meta"><span class="chip roja">Activo</span> ${esc(o.description)} · ${ago(o.createdAt)}</div></div></button>`),

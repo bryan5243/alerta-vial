@@ -63,6 +63,8 @@ function simulatedWeather(real) {
     probNext3h: s.probNext3h, maxProbability24h: s.probNext3h, cloudCover: s.rainNow > 0 || s.weatherCode ? 95 : 40, weatherCode: s.weatherCode, hourly: [] };
   // el sol sigue siendo el real; solo el cielo pasa a lluvia si la simulación llueve
   if (real?.sun) w.sun = { ...real.sun, sky: s.rainNow > 0 || s.weatherCode >= 50 ? 'lluvia' : real.sun.sky };
+  w.hourly = real?.hourly || [];
+  w.outlook = s.rainNow > 0 ? { level: 'lloviendo', title: 'Está lloviendo', text: 'Revisa las calles inundadas y las vías alternas antes de salir.', reasons: [] } : real?.outlook;
   return Object.assign(w, describe(w));
 }
 async function computeStatus() {

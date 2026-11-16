@@ -40,7 +40,7 @@ function omQuery(lat, lng, models) {
   const url = new URL('https://api.open-meteo.com/v1/forecast');
   url.search = new URLSearchParams({ latitude: lat, longitude: lng,
     current: 'precipitation,rain,showers,temperature_2m,weather_code,cloud_cover,is_day,uv_index,shortwave_radiation',
-    daily: 'uv_index_max,sunrise,sunset', hourly: 'precipitation,precipitation_probability',
+    daily: 'uv_index_max,sunrise,sunset', hourly: 'precipitation,precipitation_probability,cape',
     past_hours: 3, forecast_hours: 24, timezone: 'America/Guayaquil', ...(models ? { models } : {}) });
   return url;
 }
@@ -48,8 +48,8 @@ function omQuery(lat, lng, models) {
 function omParse(model, j, sfx) {
   const g = (o, k) => (sfx ? o?.[`${k}_${model}`] : o?.[k]);
   const H = j.hourly || {}, times = H.time || [];
-  const P = g(H, 'precipitation') || [], PP = g(H, 'precipitation_probability') || [];
-  const hours = times.map((t, i) => ({ time: t, precipitation: P[i] ?? null, probability: PP[i] ?? null }));
+  const P = g(H, 'precipitation') || [], PP = g(H, 'precipitation_probability') || [], CP = g(H, 'cape') || [];
+  const hours = times.map((t, i) => ({ time: t, precipitation: P[i] ?? null, probability: PP[i] ?? null, cape: CP[i] ?? null }));
   if (!hours.length || hours.every(h => h.precipitation == null)) return { model, name: MODELS[model], ok: false, error: 'sin datos para este punto', intensity: 0 };
   const cur = j.current || {}, useCur = model === 'best_match' || !sfx; // "current" es del mejor modelo
   const nowIdx = Math.max(0, hours.findIndex(h => h.time.slice(0, 13) === String(cur.time || '').slice(0, 13)));
@@ -71,7 +71,9 @@ function omParse(model, j, sfx) {
     rainNext24h: sum(hours.slice(nowIdx + 1, nowIdx + 25)),
     probNext3h: hours.some(h => h.probability != null) ? Math.max(0, ...hours.slice(nowIdx, nowIdx + 4).map(h => h.probability || 0)) : null,
     maxProbability24h: hours.some(h => h.probability != null) ? Math.max(0, ...hours.slice(nowIdx + 1, nowIdx + 25).map(h => h.probability || 0)) : null,
-    hourly: hours.slice(nowIdx, nowIdx + 12) };
+    // CAPE: energía del aire para formar nubes de tormenta (J/kg). Más de ~1000 en la costa = aguaceros posibles
+    capeMax6h: hours.slice(nowIdx, nowIdx + 7).reduce((m, h) => (h.cape != null && h.cape > (m ?? -1) ? h.cape : m), null),
+    hourly: hours.slice(nowIdx, nowIdx + 12).map(({ cape, ...h }) => h) };
 }
 async function openMeteoAll(lat, lng) {
   const ids = Object.keys(MODELS), key = `${lat},${lng}`, now = Date.now();
@@ -126,11 +128,15 @@ async function metnoSource(lat, lng) {
     const cloud = det.cloud_area_fraction ?? null;
     const uv = det.ultraviolet_index_clear_sky == null ? null : r1(det.ultraviolet_index_clear_sky * (1 - 0.75 * Math.pow((cloud ?? 0) / 100, 3.4)));
     const prob = ts.slice(0, 4).map(x => x.data?.next_1_hours?.details?.probability_of_precipitation).filter(v => v != null);
+    const symAt = i => ts[i]?.data?.next_1_hours?.summary?.symbol_code || '';
+    const locHour = t => new Date(new Date(t).getTime() - 5 * 3600e3).toISOString().slice(0, 13) + ':00';
+    const hourly = ts.slice(0, 12).map((x, i) => ({ time: locHour(x.time), precipitation: mm(i), probability: x.data?.next_1_hours?.details?.probability_of_precipitation ?? null }));
     data = { model: 'met_no', name: 'MET Norway (yr.no)', ok: true, observedAt: local.toISOString().slice(0, 16),
       temperature: det.air_temperature, cloudCover: cloud == null ? undefined : Math.round(cloud), weatherCode: code, rainNow, intensity: storm ? 4 : mmInt(rainNow),
       sun: { isDay: isDay ? 1 : 0, uvIndex: isDay ? uv : 0, radiation: null, uvMax: null, sunrise: null, sunset: null },
       rainPast3h: 0, rainNext3h: r1(mm(1) + mm(2) + mm(3)), rainNext24h: r1(ts.slice(1, 25).reduce((a, _, i) => a + mm(i + 1), 0)),
-      probNext3h: prob.length ? Math.max(...prob) : null, maxProbability24h: null, hourly: [] };
+      probNext3h: prob.length ? Math.max(...prob) : null, maxProbability24h: null, hourly,
+      thunder6h: [0, 1, 2, 3, 4, 5].some(i => /thunder/.test(symAt(i))) };
   } catch (e) { data = { model: 'met_no', name: 'MET Norway (yr.no)', ok: false, error: e.message, intensity: 0 }; }
   metnoCache = { at: Date.now(), key, data };
   return data;
@@ -166,6 +172,7 @@ async function metarSource(station) {
     const ageMin = Math.round((Date.now() - last.at) / 60000), p = parseMetar(last.raw);
     const fresh = ageMin <= 90;
     d = { ...base, ok: fresh, stale: !fresh, at: last.at.toISOString(), ageMin, raw: last.raw, intensity: fresh ? p.intensity : 0, rainNow: fresh ? INT_MM[p.intensity] : 0,
+      near: fresh && !!p.near, cb: fresh && /\b(FEW|SCT|BKN|OVC)\d{3}(CB|TCU)\b/.test(last.raw), ts: fresh && /\b(VC)?TS/.test(last.raw.replace(/^\S+\s+\S+\s+/, '')),
       detail: `${p.text} · reporte de hace ${ageMin} min`, error: fresh ? undefined : `último reporte hace ${ageMin} min` };
   } catch (e) { d = { ...base, ok: false, intensity: 0, error: e.message }; }
   metarCache = { at: Date.now(), data: d };
@@ -249,12 +256,42 @@ export function combine({ models, metar, owm, at }, extra = []) {
     weatherCode: intensity ? INT_CODE[intensity] : baseRainy ? 3 : baseCode,
     hourly: base?.hourly || [],
   };
+  if (!w.hourly?.length) w.hourly = okM.find(m => m.hourly?.length)?.hourly || [];
   w.sun = sunInfo(base?.sun || okM.find(m => m.sun?.uvIndex != null)?.sun, w.cloudCover, intensity);
   Object.assign(w, describe(w));
   if (intensity !== w.intensity) Object.assign(w, { intensity, raining: intensity > 0, condition: intensity ? INT_TXT[intensity] : w.condition });
   // Sin lluvia: de día y despejado es "Soleado"; de noche, "Noche despejada"
   if (!w.intensity && w.condition === 'Despejado' && w.sun) w.condition = w.sun.sky === 'noche' ? 'Noche despejada' : 'Soleado';
+  w.outlook = outlookOf(w, { okM, metar, need, base });
   return w;
+}
+
+// Aviso de lluvia posible (no cambia el semáforo): junta las señales de que podría llover pronto.
+// Cada señal suma puntos; con 2 o más se avisa "podría llover", con 4 o más "lluvia probable".
+function outlookOf(w, { okM, metar, need, base }) {
+  const reasons = []; let score = 0;
+  const prob = w.probNext3h ?? null;
+  if (prob != null && prob >= 35) { score += prob >= 70 ? 3 : prob >= 50 ? 2 : 1; reasons.push(`probabilidad de lluvia de ${prob} % en las próximas 3 h`); }
+  const wet = okM.filter(m => (m.rainNext3h || 0) >= MIN_MM);
+  if (wet.length) {
+    score += wet.length >= need ? 2 : 1;
+    reasons.push(`${wet.length} de ${okM.length} modelos prevén lluvia en las próximas 3 h (hasta ~${String(r1(Math.max(...wet.map(m => m.rainNext3h)))).replace('.', ',')} mm)`);
+  }
+  const cape = Math.max(-1, ...okM.map(m => m.capeMax6h ?? -1));
+  if (cape >= 1000) { score += cape >= 2000 ? 2 : 1; reasons.push(`el aire tiene energía para formar aguaceros (ambiente de tormenta${cape >= 2000 ? ' fuerte' : ''})`); }
+  if (okM.some(m => m.thunder6h)) { score += 1; reasons.push('MET Norway prevé tormenta en las próximas 6 h'); }
+  if (metar?.ok && metar.ts) { score += 2; reasons.push('el aeropuerto reporta tormenta en la zona'); }
+  else if (metar?.ok && metar.near) { score += 2; reasons.push('el aeropuerto ve lluvia en los alrededores'); }
+  else if (metar?.ok && metar.cb) { score += 1; reasons.push('el aeropuerto ve nubes de tormenta (cumulonimbos) cerca'); }
+  // ¿desde qué hora? la primera hora con probabilidad alta o lluvia prevista
+  const hrs = (base?.hourly?.length ? base.hourly : okM.find(m => m.hourly?.length)?.hourly) || [];
+  const from = hrs.slice(1, 7).find(h => (h.probability ?? 0) >= 50 || (h.precipitation ?? 0) >= MIN_MM)?.time || null;
+  const level = w.intensity > 0 ? 'lloviendo' : score >= 4 ? 'probable' : score >= 2 ? 'atencion' : 'calma';
+  const title = { lloviendo: 'Está lloviendo', probable: 'Lluvia probable en las próximas horas', atencion: 'Atención: podría llover pronto', calma: 'Sin lluvia a la vista' }[level];
+  const text = level === 'lloviendo' ? 'Revisa las calles inundadas y las vías alternas antes de salir.'
+    : level === 'calma' ? 'Ninguna fuente prevé lluvia en las próximas 3 horas.'
+    : `Ahora no llueve, pero ${level === 'probable' ? 'es probable un aguacero' : 'podría caer un aguacero corto'}${from ? ` desde las ${from.slice(11, 16)}, aproximadamente` : ''}. Lleva paraguas y evita las calles que suelen inundarse.`;
+  return { level, score, title, text, reasons, from };
 }
 
 // Índice UV según la escala de la OMS, con el consejo para la gente

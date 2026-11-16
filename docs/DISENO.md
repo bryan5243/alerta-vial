@@ -317,3 +317,6 @@ En servidores compartidos (Render y similares) Open-Meteo puede responder "demas
 - Si Open-Meteo responde 429, no se le vuelve a preguntar en 15 minutos y se sigue usando el último dato bueno (hasta 1 hora), avisando "Dato de Open-Meteo de hace X min".
 - **MET Norway (yr.no)**, otra fuente que usa Amaru, entra como un modelo más (9 en total; un tercio tiene que coincidir) y queda de respaldo con lluvia, nubosidad, temperatura y UV (cielo despejado corregido por nubosidad).
 - El aeropuerto (METAR SERO) sigue funcionando aunque fallen los pronósticos.
+
+### Aviso de lluvia posible (16-nov-2026)
+Además del semáforo, el mapa avisa cuando **podría llover pronto** (no cambia el nivel de alerta). Suma señales: probabilidad de lluvia en 3 h, cuántos modelos prevén lluvia, energía del aire para tormentas (CAPE de Open-Meteo), tormenta prevista por MET Norway y lo que ve el aeropuerto (lluvia en los alrededores, tormenta o cumulonimbos). Con 2 puntos: "Atención: podría llover pronto"; con 4: "Lluvia probable en las próximas horas", con la hora aproximada y un aviso emergente. La tarjeta del clima muestra la probabilidad de lluvia de las próximas 6 horas.
