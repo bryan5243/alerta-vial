@@ -47,11 +47,14 @@
   .weather .stat{background:var(--surface-2);border-radius:12px;padding:10px 12px}
   .weather .stat b{font-family:var(--font-display);font-size:1.25rem;display:block;letter-spacing:-.5px}
   .weather .stat span{font-size:.75rem;color:var(--muted)}
-  .srcline{padding:8px 20px 0;font-size:.76rem;color:var(--muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  .tabs{flex:none;display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:16px 20px 0;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:2}
-  .tab{flex:1 0 auto;white-space:nowrap;min-height:44px;background:none;border:0;border-bottom:2.5px solid transparent;font-weight:600;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 4px;font-size:.9rem}
-  .tab .n{background:var(--surface-2);border-radius:999px;padding:0 7px;font-size:.75rem}
+  .srcline{padding:8px 20px 0;font-size:.76rem;color:var(--muted);display:block;line-height:1.7}
+  .tabs{flex:none;display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;padding:12px 12px 0;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:2}
+  .tab{flex:1 0 auto;white-space:nowrap;min-height:44px;background:none;border:0;border-bottom:2.5px solid transparent;font-weight:600;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px 6px;font-size:.875rem;transition:color .15s,border-color .15s}
+  .tab:hover{color:var(--ink)}
+  .tab .n{background:var(--surface-2);border-radius:999px;padding:0 6px;font-size:.72rem;font-variant-numeric:tabular-nums}
   .tab[aria-selected="true"]{color:var(--ink);border-color:var(--accent)} .tab[aria-selected="true"] .n{background:var(--accent-soft);color:var(--accent-ink)}
+  @media (min-width:1181px){ .main{grid-template-columns:420px 1fr} }
+  .peek{display:none}
   .pane{padding:16px 20px 24px} .pane[hidden]{display:none}
   .sheet-bg{position:fixed;inset:0;background:rgb(15 34 56/.4);z-index:2000;display:none;align-items:flex-end;justify-content:center}
   .sheet-bg.open{display:flex}
@@ -117,8 +120,21 @@
     .map-full .legend{display:flex;left:10px;right:10px;bottom:62px;gap:8px 12px;font-size:.72rem;padding:6px 10px}
     .map-full #btn-full{background:var(--brand,#1B2B8B);color:#fff;border-color:transparent}
     .map-full .ovf-banner{bottom:128px}
+    /* La hoja de abajo se monta 16px sobre el mapa: lo que va abajo en el mapa sube esos 16px */
+    .mapwrap{--peek:16px} .map-full .mapwrap,.gps-on .mapwrap{--peek:0px}
+    .mapwrap .leaflet-bottom{bottom:var(--peek)}
+    .fab{bottom:calc(var(--peek) + 12px)} .ovf-banner{bottom:calc(var(--peek) + 64px)}
+    .map-full .fab{bottom:12px}
+    @media (max-width:400px){ .fab{bottom:calc(var(--peek) + 26px)} }
+    .peek{display:flex;position:relative;width:100%;align-items:center;justify-content:center;gap:6px;min-height:50px;padding:14px 16px 8px;border:0;background:none;cursor:pointer;color:var(--ink);font-weight:600;font-size:.84rem;line-height:16px;-webkit-tap-highlight-color:transparent;align-self:stretch;flex:none}
+    .peek-grab{position:absolute;top:6px;left:50%;width:40px;height:4px;margin-left:-20px;border-radius:2px;background:#C9D0E0}
+    .peek-t{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .peek-ic{display:grid;place-items:center;color:var(--accent);transition:transform .25s var(--ease)} .peek-ic svg{width:16px;height:16px;transform:rotate(180deg)}
+    .panel-up .peek-ic{transform:rotate(180deg)}
+    .peek:active .peek-t{opacity:.7}
+    .risk{padding-top:4px}
   }
-  @media (min-width:901px){ #btn-full{display:none} }
+  @media (min-width:901px){ #btn-full{display:none} .legend{bottom:26px} .peek{display:none} }
   @media (min-width:1181px){ .legend{max-width:calc(100% - 330px)} }
   @media (min-width:901px) and (min-height:561px){ .band-more{display:none} }
   /* Pantallas bajas (celular en horizontal, laptops pequeñas): encabezado y alerta compactos para dejar espacio al mapa */
@@ -138,7 +154,8 @@
   }
   /* Celular en horizontal: casi toda la altura para el mapa y la tarjeta de ruta abajo sin el botón Reportar encima */
   @media (max-width:900px) and (max-height:560px){
-    .main{grid-template-rows:calc(100dvh - var(--chrome,80px) - 14px) auto}
+    .main{grid-template-rows:calc(100dvh - var(--chrome,80px) - 22px) auto}
+    .peek{padding-top:12px;min-height:40px} .peek-grab{top:5px}
     .nav-card{bottom:10px;padding:10px 12px}
     .mapwrap:has(.nav-card:not([hidden])) .fab{display:none}
   }
@@ -158,6 +175,25 @@
   @media (min-width:1181px) and (max-width:1320px){
     .mapwrap:has(.nav-card:not([hidden])) .fab{width:52px;height:52px;padding:0;border-radius:50%;justify-content:center}
     .mapwrap:has(.nav-card:not([hidden])) .fab .fab-t{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  }
+  /* Celular horizontal muy bajo (iPhone SE): los botones del mapa pasan a dos columnas para no bajar hasta los créditos */
+  @media (max-width:900px) and (max-height:420px){
+    .map-actions{flex-wrap:wrap-reverse;align-content:flex-start;max-height:calc(100% - var(--peek,0px) - 34px)}
+    .nav-search{width:calc(100% - 120px)}
+  }
+  /* Tablet vertical (iPad y similares): lista a la izquierda y mapa a la derecha, sin tener que bajar */
+  @media (min-width:768px) and (max-width:900px) and (min-height:561px){
+    .shell{height:100dvh;min-height:0}
+    .main{grid-template-columns:320px 1fr;grid-template-rows:minmax(0,1fr)}
+    .mapwrap{order:0;position:relative;top:auto;z-index:auto;--peek:0px}
+    .panel{border-top:0;border-right:1px solid var(--line);border-radius:0;margin-top:0;z-index:auto}
+    .peek{display:none}
+    .legend{display:flex;left:10px;right:auto;bottom:22px;max-width:calc(100% - 84px);font-size:.72rem;gap:6px 10px;padding:6px 10px}
+    .fab{left:auto;right:10px;bottom:22px;width:52px;height:52px;padding:0;border-radius:50%;justify-content:center}
+    .fab .fab-t{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+    .ovf-banner{top:66px;bottom:auto}
+    .mapwrap:has(.nav-card:not([hidden])) .legend{display:none}
+    .nav-card{bottom:12px;right:72px}
   }
   /* Navegando: el botón GPS queda solo como ícono para que la barra GPS no lo tape */
   .gps-on .gps-btn{width:44px;padding:0!important;justify-content:center} .gps-on .gps-btn .gps-lbl{display:none}
@@ -188,6 +224,7 @@
 
   <div class="main">
     <aside class="panel" aria-label="Información de alertas">
+      <button type="button" class="peek" id="peek" aria-label="Ver calles, vías alternas y consejos"><span class="peek-grab" aria-hidden="true"></span><span class="peek-t" id="peek-t">Calles, vías alternas y consejos</span><span class="peek-ic" id="peek-ic" aria-hidden="true"></span></button>
       <div class="risk" id="risk" aria-label="Índice de riesgo de inundación"></div>
       <div class="weather" id="weather"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
       <div class="srcline" id="srcline"></div>

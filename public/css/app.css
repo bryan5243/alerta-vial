@@ -414,3 +414,33 @@ path.route-in,path.route-in-halo{animation:route-in .9s var(--ease) both}
 .ins-x{border:0;background:none;width:34px;height:34px;border-radius:10px;font-size:1.3rem;color:var(--muted);cursor:pointer} .ins-x:hover{background:var(--surface-2)}
 
 @media (max-height:560px){ .sim-head small,.sim-ctl>span,.gps-on.sim-mode .sim-opt{display:none} .sim-bar{padding:6px 10px;gap:6px} .turn{padding:8px 12px} .turn-ic{width:40px;height:40px} .turn-tx b{font-size:1.25rem} }
+
+/* ===== Pulido general (todas las pantallas) ===== */
+/* Lo que dibuja el navegador también lleva la marca: selección, cursor de texto, barras de desplazamiento */
+::selection{background:rgb(27 43 139/.18);color:inherit}
+input,textarea{caret-color:var(--accent)}
+.panel,.col,.nav-results,.sheet,.osm-list{scrollbar-width:thin;scrollbar-color:#C3CBDD transparent}
+/* números que no bailan al cambiar */
+.weather .stat b,.risk-g .val,.nav-meta,.hz-num b,.turn-tx b,.navbtn .n,.chip{font-variant-numeric:tabular-nums}
+/* respuesta al toque: todo lo que se pulsa se hunde un poco */
+button,a,.item,label.switch{-webkit-tap-highlight-color:transparent}
+.item:active{transform:scale(.99)} .tab:active,.navbtn:active,.obs-opt:active,.lvl-opt:active,.seg button:active{transform:scale(.97)}
+.tab,.navbtn,.obs-opt,.lvl-opt,.seg button{transition:transform .16s var(--ease),background .15s,color .15s,border-color .15s}
+/* en pantallas táctiles el "hover" se queda pegado después de tocar: lo apagamos */
+@media (hover:none){ .item:hover{transform:none;box-shadow:none;border-color:var(--line)} .btn:hover{box-shadow:none} }
+/* Índice de riesgo sin datos: la barra se aclara, el texto sigue legible */
+.risk-parts .rp.off{opacity:1} .risk-parts .rp.off .bar{opacity:.5}
+/* Créditos del mapa: pequeños y sin tapar nada; en el celular solo OpenStreetMap (el aviso obligatorio) */
+.leaflet-container .leaflet-control-attribution{font-size:11px;line-height:1.6;padding:0 6px;background:rgb(255 255 255/.82);border-radius:6px 0 0 0}
+@media (max-width:600px){ .leaflet-control-attribution>a[href*="leafletjs"],.leaflet-control-attribution>a[href*="leafletjs"]+span{display:none} }
+/* Filas que se desplazan de lado (pestañas, menú del admin): un desvanecido indica que hay más */
+.fade-r{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 36px),transparent)}
+.fade-l{-webkit-mask-image:linear-gradient(90deg,transparent,#000 36px);mask-image:linear-gradient(90deg,transparent,#000 36px)}
+.fade-l.fade-r{-webkit-mask-image:linear-gradient(90deg,transparent,#000 36px,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(90deg,transparent,#000 36px,#000 calc(100% - 36px),transparent)}
+/* Línea de la fuente del clima: el ícono va con el texto, no solo en su renglón */
+.srcline{display:block;line-height:1.7} .srcline>svg.i{width:15px;height:15px;vertical-align:-3px;margin-right:4px}
+/* Medidor de riesgo más chico en paneles angostos (celular pequeño, tablet con lista al lado) */
+@media (max-width:380px),(min-width:768px) and (max-width:900px) and (min-height:561px){
+  .risk{grid-template-columns:104px 1fr;gap:12px} .risk-g,.risk-g svg{width:104px;height:61px} .risk-g .val{font-size:1.35rem}
+  .risk-parts .rp{grid-template-columns:1fr minmax(44px,32%)}
+}

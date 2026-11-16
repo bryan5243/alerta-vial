@@ -2,7 +2,7 @@ import { createMap } from './map-provider.js';
 import { createGps, nearestOnLine, haversine, progressOn, isAhead } from './gps.js';
 import { createNav } from './nav.js';
 import { createWeatherFx } from './weather-fx.js';
-import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, wxTime, toast, ICON, waveSvg } from './common.js';
+import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, wxTime, toast, ICON, waveSvg, edgeFade } from './common.js';
 
 const $ = s => document.querySelector(s);
 let map, state, radarOn = false, radarFrames = [], radarTimer = null, picking = false, pickMarker = null, pickPos = null;
@@ -209,6 +209,8 @@ function render(reports) {
   $('#n-recs').textContent = recs.length;
   const rivers = state.rivers || [], zones = state.zones || [];
   $('#n-rivers').textContent = rivers.filter(r => r.status !== 'normal').length + zones.length + overflows.length;
+  const nFlood = +$('#n-streets').textContent;
+  $('#peek-t').textContent = `${nFlood ? `${nFlood} ${nFlood === 1 ? 'calle inundada' : 'calles inundadas'}` : 'Sin calles inundadas'} · ${state.routes.length} ${state.routes.length === 1 ? 'vía alterna' : 'vías alternas'}`;
   $('#list-rivers').innerHTML = (rivers.length || zones.length || overflows.length) ? [
     ...overflows.map(o => `<button class="item" data-kind="overflows" data-id="${o.id}"><span class="dot roja" style="margin-top:6px"></span>
       <div><div class="title">Desborde reportado${o.street ? ` · ${esc(o.street)}` : ''}</div><div class="meta"><span class="chip roja">Activo</span> ${esc(o.description)} · ${ago(o.createdAt)}</div></div></button>`),
@@ -316,10 +318,20 @@ const lvlRank = l => ({ normal: 0, amarilla: 1, naranja: 2, roja: 3 }[l] ?? 0);
 const empty = (icon, t, s) => `<div class="empty">${icon}<div style="font-weight:600;color:var(--ink)">${t}</div><div class="small">${s}</div></div>`;
 
 // Tabs
+const tabsFade = edgeFade($('#tabs'));
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x === t));
   document.querySelectorAll('.pane').forEach(p => p.hidden = p.id !== `pane-${t.dataset.tab}`);
+  t.scrollIntoView({ inline: 'nearest', block: 'nearest' }); tabsFade();
 }));
+// Celular: la tira de arriba de la hoja dice qué hay debajo del mapa y la abre o cierra
+$('#peek-ic').innerHTML = ICON.chevron;
+const panelUp = () => document.body.classList.toggle('panel-up', window.scrollY > 60);
+window.addEventListener('scroll', panelUp, { passive: true });
+$('#peek').addEventListener('click', () => {
+  const up = window.scrollY > 60;
+  window.scrollTo({ top: up ? 0 : Math.max(0, $('.panel').getBoundingClientRect().top + window.scrollY - Math.round(window.innerHeight * 0.3)), behavior: 'smooth' });
+});
 // Clic en lista → centrar en mapa
 document.querySelector('.panel').addEventListener('click', e => {
   const it = e.target.closest('.item[data-id]'); if (!it) return;

@@ -73,3 +73,11 @@ export const ICON = {
   wave: '<svg class="i" viewBox="0 0 24 24"><path d="M2 12c2-2 4-2 6 0s4 2 6 0 4-2 6 0M2 17c2-2 4-2 6 0s4 2 6 0 4-2 6 0M2 7c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>',
 };
 export const waveSvg = `<svg viewBox="0 0 1200 40" preserveAspectRatio="none"><path fill="#fff" d="M0 20 Q75 0 150 20 T300 20 T450 20 T600 20 T750 20 T900 20 T1050 20 T1200 20 V40 H0z"/></svg>`;
+
+// Marca con fade-l / fade-r una fila que se desplaza de lado, para que se note que hay más opciones fuera de la vista
+export function edgeFade(el) {
+  if (!el) return () => {};
+  const f = () => { const max = el.scrollWidth - el.clientWidth; el.classList.toggle('fade-r', max > 16 && el.scrollLeft < max - 16); el.classList.toggle('fade-l', max > 16 && el.scrollLeft > 2); };
+  el.addEventListener('scroll', f, { passive: true }); new ResizeObserver(f).observe(el); f();
+  return f;
+}

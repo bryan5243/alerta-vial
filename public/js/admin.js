@@ -2,7 +2,7 @@ import { createMap } from './map-provider.js';
 import { parseLayerFile, summarize, importable } from './layers.js';
 import { fetchWaterways, KIND } from './osm-rivers.js';
 import { autoDetoursFor } from './nav.js';
-import { RIVER, ZSEV, LEVELS, STATUS, PTYPE, SEV, esc, ago, fmtTime, wxTime, toast, confirmBox, ICON, waveSvg } from './common.js';
+import { RIVER, ZSEV, LEVELS, STATUS, PTYPE, SEV, esc, ago, fmtTime, wxTime, toast, confirmBox, ICON, waveSvg, edgeFade } from './common.js';
 
 const root = document.getElementById('root');
 let token = sessionStorage.getItem('av_token');
@@ -65,6 +65,7 @@ function renderShell() {
   topWeather();
   map = null;
   if (window.innerWidth <= 900) root.querySelector('.navbtn.on')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  edgeFade(root.querySelector('nav.side'));
   if (HAS_MAP[section]) initMap().then(renderSection); else renderSection();
 }
 async function initMap() {
@@ -216,7 +217,7 @@ function secPoints() {
         <div class="field"><label for="sev">Severidad</label><select id="sev">${opts(SEV, e.severity || 'alta')}</select></div></div>
         <div class="field"><label for="desc">Descripción</label><textarea id="desc" placeholder="Qué pasa y qué debe hacer la gente">${esc(e.description || '')}</textarea></div>
         <p class="small muted" id="pos" style="margin-bottom:12px">${e.lat != null ? `Ubicación: ${e.lat.toFixed(5)}, ${e.lng.toFixed(5)}` : 'Aún sin ubicación: toca el mapa.'}</p>
-        <div style="display:flex;gap:10px;align-items:center"><button class="btn">${e.id ? 'Guardar cambios' : 'Crear punto'}</button><label class="switch"><input type="checkbox" id="active" ${e.active !== false ? 'checked' : ''}> Activo ahora (visible y con aviso GPS)</label></div>
+        <div class="form-foot"><button class="btn">${e.id ? 'Guardar cambios' : 'Crear punto'}</button><label class="switch"><input type="checkbox" id="active" ${e.active !== false ? 'checked' : ''}> Activo ahora (visible y con aviso GPS)</label></div>
         <label class="switch" style="margin-top:10px"><input type="checkbox" id="auto" ${e.auto ? 'checked' : ''}> Activarlo solo cuando la alerta sea naranja o roja</label>
       </form></div>
     <div class="section-head"><h3>Puntos registrados (${db.points.length})</h3>${db.points.length ? `<span class="small muted">${db.points.filter(p => p.active).length} activos ahora${db.alert.effective === 'naranja' || db.alert.effective === 'roja' ? ` · ${db.points.filter(p => !p.active && p.auto).length} encendidos por la alerta` : ''}</span>` : ''}</div>
@@ -420,7 +421,7 @@ function secRecs() {
       <form id="f" novalidate style="margin-top:12px">
         <div class="field"><label for="text">Texto</label><textarea id="text" maxlength="300" placeholder="Ej. No intente cruzar calles con agua en movimiento.">${esc(e.text || '')}</textarea></div>
         <div class="field"><label for="level">Nivel asociado</label><select id="level">${opts(LEVELS, e.level || 'naranja')}</select><span class="hint">Se muestra con la etiqueta del nivel en el mapa público.</span></div>
-        <div style="display:flex;gap:10px;align-items:center"><button class="btn">${e.id ? 'Guardar cambios' : 'Publicar recomendación'}</button><label class="switch"><input type="checkbox" id="active" ${e.active !== false ? 'checked' : ''}> Activa</label></div>
+        <div class="form-foot"><button class="btn">${e.id ? 'Guardar cambios' : 'Publicar recomendación'}</button><label class="switch"><input type="checkbox" id="active" ${e.active !== false ? 'checked' : ''}> Activa</label></div>
       </form></div>
     <h3>Recomendaciones (${db.recommendations.length})</h3>
     <div class="list">${db.recommendations.map(r => itemRow({ ...r, name: r.text }, LEVELS[r.level], 'recommendations', r.level)).join('') || emptyBox('Sin recomendaciones todavía.')}</div>`);
