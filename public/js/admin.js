@@ -87,8 +87,9 @@ function secAlert() {
   const a = db.alert, w = db.weather, cfg = db.config.weather, lm = db.config.levelMessages || {};
   col(`
     <div class="level-band ${a.effective}" style="border-radius:16px"><div class="lvl-icon">${a.effective === 'normal' ? ICON.check : ICON.warn}</div><div><div class="lvl-label">Publicado ahora: ${LEVELS[a.effective]}</div><div class="lvl-msg">${esc(lm[a.effective] || '')}${a.message ? ` · ${esc(a.message)}` : ''} · ${w.simulated ? 'Simulación de prueba' : a.mode === 'auto' ? 'Modo automático' : 'Manual'}</div></div><div class="wave">${waveSvg}</div></div>
+    ${kpiRow()}
+    <div class="alert-grid"><div class="ag-main">
     ${obsCard(a)}
-    ${simCard(w)}
     <div class="card">
       <h3 style="margin-bottom:12px">Modo de activación</h3>
       <div class="seg" role="radiogroup"><button class="${a.mode === 'auto' ? 'on' : ''}" data-mode="auto">Automático por clima</button><button class="${a.mode === 'manual' ? 'on' : ''}" data-mode="manual">Manual</button></div>
@@ -96,7 +97,7 @@ function secAlert() {
     </div>
     <div class="card">
       <h3 style="margin-bottom:12px">Nivel manual</h3>
-      <div class="lvl-grid">${Object.entries(LEVELS).map(([k, l]) => `<button class="lvl-opt ${a.level === k ? 'on' : ''}" data-level="${k}" ${a.mode === 'auto' ? 'disabled style="opacity:.5"' : ''}><span class="dot ${k}"></span>${l.replace('Alerta ', '')}</button>`).join('')}</div>
+      <div class="lvl-grid">${Object.entries(LEVELS).map(([k, l]) => `<button class="lvl-opt ${a.level === k ? 'on' : ''}" data-level="${k}" ${a.mode === 'auto' ? 'disabled style="opacity:.5"' : ''}><span class="dot ${k}"></span>${l.replace('Alerta ', '').replace(/^./, c => c.toUpperCase())}</button>`).join('')}</div>
     </div>
     <div class="card">
       <div class="section-head"><h3>Mensaje por color de alerta</h3></div>
@@ -108,8 +109,13 @@ function secAlert() {
       <div class="field"><label for="msg">Aviso adicional (opcional)</label><textarea id="msg" maxlength="300" placeholder="Ej. Evite circular por Av. Orellana entre 14:00 y 18:00.">${esc(a.message)}</textarea><span class="hint">Se muestra debajo del mensaje del color. Déjalo vacío si no hace falta.</span></div>
       <button class="btn soft" id="save-msg">Guardar aviso</button>
     </div>
+    ${simCard(w)}
+    </div><aside class="ag-side" aria-label="Clima y riesgo">
+    ${riskCard()}
     ${sourcesCard(w)}
+    </aside></div>
   `);
+  q('.kpis [data-go]').forEach(b => b.onclick = () => root.querySelector(`.navbtn[data-s="${b.dataset.go}"]`)?.click());
   q('[data-mode]').forEach(b => b.onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { mode: b.dataset.mode } }); toast('Modo actualizado', 'ok'); refresh(); });
   q('[data-level]').forEach(b => b.onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { level: b.dataset.level } }); toast(`Nivel: ${LEVELS[b.dataset.level]}`, 'ok'); refresh(); });
   id('save-msg').onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { message: id('msg').value } }); toast('Aviso guardado', 'ok'); refresh(); };
@@ -157,6 +163,29 @@ function obsCard(a) {
 function bindObs() {
   q('[data-obs]').forEach(b => b.onclick = async () => { await api('/api/admin/observed', { method: 'PUT', body: { intensity: +b.dataset.obs, minutes: +id('obs-min').value } }); toast(`Lluvia ${OBS[b.dataset.obs - 1][1].toLowerCase()} marcada por el equipo`, 'ok'); refresh(); });
   const off = id('obs-off'); if (off) off.onclick = async () => { await api('/api/admin/observed', { method: 'PUT', body: { intensity: 0 } }); toast('Listo: el clima vuelve a las fuentes en línea', 'ok'); refresh(); };
+}
+// Resumen de un vistazo al entrar al panel: cada ficha lleva a su sección
+function kpiRow() {
+  const w = db.weather, r = db.risk, LV = { normal: 0, amarilla: 1, naranja: 2, roja: 3 }, dec = n => String(n).replace('.', ',');
+  const flooded = db.streets.filter(s => s.active && s.status !== 'despejada').length;
+  const ptsOn = db.points.filter(p => p.active || (p.auto && LV[db.alert.effective] >= 2)).length;
+  const pend = (db.reports || []).filter(x => x.status === 'pendiente').length;
+  const t = (cls, go, v, unit, label, bar) => `<button type="button" class="gl ${cls}"${go ? ` data-go="${go}"` : ''}><span class="gl-v"><b>${v}</b>${unit ? `<small>${unit}</small>` : ''}</span><span class="gl-l">${label}</span>${bar != null ? `<span class="gl-bar"><i style="width:${bar}%"></i></span>` : ''}</button>`;
+  return `<div class="kpis" aria-label="Resumen del sistema">
+    ${r ? t(`lv-${r.level}`, '', r.value, '/100', 'Riesgo', r.value) : ''}
+    ${!w.ok ? t('', '', '–', '', 'Clima sin dato') : w.intensity > 0 ? t('rain wet', '', dec(w.rainNow), 'mm/h', 'Lloviendo ahora') : t(`rain${w.probNext3h >= 30 ? ' on' : ''}`, '', w.probNext3h ?? '–', '%', 'Lluvia 3 h', w.probNext3h ?? 0)}
+    ${t(`st${flooded ? ' on' : ' ok'}`, 'streets', flooded, flooded === 1 ? 'calle' : 'calles', 'Inundadas')}
+    ${t('', 'points', ptsOn, `de ${db.points.length}`, 'Puntos activos')}
+    ${t('', 'routes', db.routes.length, '', 'Vías alternas')}
+    ${t(pend ? 'pend' : '', 'reports', pend, pend === 1 ? 'reporte' : 'reportes', 'Por revisar')}</div>`;
+}
+// De qué está hecho el índice de riesgo (0 a 100)
+function riskCard() {
+  const r = db.risk; if (!r) return '';
+  const c = { normal: 'var(--normal)', amarilla: 'var(--amarilla)', naranja: 'var(--naranja)', roja: 'var(--roja)' }[r.level];
+  return `<div class="card"><div class="section-head"><h3>Índice de riesgo</h3><span class="chip ${r.level}" style="margin-left:auto">${r.value} de 100</span></div>
+    <div class="risk-parts rp3" style="margin-top:12px">${r.parts.map(p => `<div class="rp"><span>${esc(p.label)}</span><span class="bar"><i style="width:${p.ok ? (p.value / p.max) * 100 : 0}%;background:${c}"></i></span><span class="rp-v">${p.ok ? `${p.value}/${p.max}` : 'sin dato'}</span></div>`).join('')}</div>
+    <p class="small muted" style="margin-top:10px">Suma lluvia, pronóstico, ríos, reportes y marea. Amarilla desde 30, naranja desde 50 y roja desde 70.</p></div>`;
 }
 // Qué dice cada fuente, a qué hora, y cuál decidió el semáforo
 function sourcesCard(w) {

@@ -333,3 +333,7 @@ La probabilidad salía en 0 % cuando la fuente no la publicaba (MET Norway no la
 - Arriba, tres fichas de un vistazo: **Riesgo /100**, **Lluvia 3 h %** (o mm/h si llueve) y **Calles inundadas**; cada una abre su pestaña.
 - Pestañas: Resumen (aviso de lluvia, clima, lluvia por horas, sol y UV, índice de riesgo, de dónde salen los datos) · Calles · Vías alternas · Ríos · Consejos. Si hay calles inundadas, la página abre en Calles.
 - Texto del panel nunca menor a 12 px; los avisos (toasts) no tapan el botón Reportar ni la tira de la hoja.
+
+### Panel de administración: resumen al entrar (16-nov-2026)
+- En **Alerta**, debajo del nivel publicado, seis fichas: Riesgo /100, Lluvia 3 h, Calles inundadas, Puntos activos, Vías alternas y Reportes por revisar. Las de calles, puntos, vías y reportes llevan a su sección.
+- En pantallas de 1280 px o más, el **índice de riesgo** (con cuánto aporta cada señal) y las **fuentes del clima** con la lluvia por horas quedan a la derecha de los controles; en tablet y teléfono van debajo.

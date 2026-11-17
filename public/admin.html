@@ -32,6 +32,18 @@
   .work.nomap{grid-template-columns:1fr}
   .col{overflow:auto;padding:20px 24px;display:flex;flex-direction:column;gap:16px} .col>*{flex:none}
   .work.nomap .col{max-width:860px}
+  /* Alerta: resumen de un vistazo y, en pantallas anchas, el clima y el riesgo al lado de los controles */
+  .kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+  .kpis .gl:not([data-go]){cursor:default} .kpis .gl:not([data-go]):hover{border-color:var(--line);box-shadow:none} .kpis .gl:not([data-go]):active{transform:none}
+  .kpis .gl.pend{--gl:var(--naranja);background:var(--naranja-soft);border-color:#F3C9A6}
+  .alert-grid,.ag-main,.ag-side{display:flex;flex-direction:column;gap:16px;min-width:0}
+  .rp3 .rp{grid-template-columns:minmax(0,1fr) 38% 54px!important} .rp3 .rp-v{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink);font-weight:600;white-space:nowrap}
+  @media (max-width:900px){ .kpis{grid-template-columns:repeat(3,minmax(0,1fr))} }
+  @media (max-width:380px){ .kpis{grid-template-columns:repeat(2,minmax(0,1fr))} }
+  @media (min-width:1280px){
+    .work.nomap .col:has(.alert-grid){max-width:1340px}
+    .alert-grid{display:grid;grid-template-columns:minmax(0,1fr) 400px;align-items:start}
+  }
   .mapcol{position:relative;background:#dfe8ee} #map{position:absolute;inset:0}
   .draw-tools{position:absolute;top:14px;left:14px;z-index:500;display:flex;gap:8px;flex-wrap:wrap}
   .draw-tools .btn{background:var(--surface);color:var(--ink);border-color:var(--line);box-shadow:var(--shadow-1)} .draw-tools .btn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
