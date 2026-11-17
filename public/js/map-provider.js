@@ -108,7 +108,7 @@ function leafletMap({ el, center, zoom }) {
     onClick(cb) { clickCb = cb; },
     clear() { layers.clearLayers(); },
     setCenter(c, z) { map.setView([c.lat, c.lng], z || map.getZoom()); },
-    fitBounds(coords) { if (coords.length) map.fitBounds(L.latLngBounds(coords), { padding: [40, 40], maxZoom: 16 }); },
+    fitBounds(coords, pad = {}) { if (coords.length) map.fitBounds(L.latLngBounds(coords), { paddingTopLeft: [40, (pad.top ?? 0) + 40], paddingBottomRight: [40, (pad.bottom ?? 0) + 40], maxZoom: 16 }); },
     panTo({ lat, lng }, z) { map.flyTo([lat, lng], z || Math.max(map.getZoom(), 15), { duration: .6 }); },
     setRadar(url) { if (radar) { map.removeLayer(radar); radar = null; } // RainViewer gratis solo entrega hasta zoom 7 (desde 2026): Leaflet amplía esos cuadros al acercarse.
       if (url) radar = L.tileLayer(url, { opacity: .6, zIndex: 400, maxNativeZoom: 7, maxZoom: 19, className: 'radar-tiles' }).addTo(map); },
@@ -199,7 +199,7 @@ async function googleMap({ el, center, zoom, googleKey }) {
     onClick(cb) { clickCb = cb; },
     clear() { items.forEach(i => i.setMap(null)); items = []; info.close(); },
     setCenter(c, z) { map.setCenter(c); if (z) map.setZoom(z); },
-    fitBounds(coords) { if (!coords.length) return; const b = new g.LatLngBounds(); coords.forEach(([lat, lng]) => b.extend({ lat, lng })); map.fitBounds(b, 40); },
+    fitBounds(coords, pad = {}) { if (!coords.length) return; const b = new g.LatLngBounds(); coords.forEach(([lat, lng]) => b.extend({ lat, lng })); map.fitBounds(b, { top: (pad.top ?? 0) + 40, bottom: (pad.bottom ?? 0) + 40, left: 40, right: 40 }); },
     panTo({ lat, lng }, z) { map.panTo({ lat, lng }); if (z) map.setZoom(Math.max(map.getZoom(), z)); },
     setRadar(url) {
       if (radar) { const i = map.overlayMapTypes.getArray().indexOf(radar); if (i >= 0) map.overlayMapTypes.removeAt(i); radar = null; }

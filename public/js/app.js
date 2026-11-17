@@ -164,7 +164,9 @@ async function load() {
 // Vías alternas por cercanía: con una ruta marcada o el GPS encendido solo se muestran las que
 // están en tu camino, y van apareciendo a medida que te acercas. "Ver todas" vuelve a la vista general.
 const ALT_AHEAD_M = 700, ALT_SIDE_M = 150;
-let altAll = false, altDrawn = new Set();
+// Las vías alternas NO se dibujan por defecto (llenan el mapa y confunden): salen al navegar con GPS, al elegir
+// un destino o una ruta, al tocar una en la lista, o con el botón del mapa para verlas todas.
+let altAll = false, altDrawn = new Set(); const altFocus = new Set();
 function altAnchor(r) {
   const p = state.points.find(x => x.id === r.avoids); if (p) return { lat: p.lat, lng: p.lng };
   const s = state.streets.find(x => x.id === r.avoids); const c = s ? s.coords : r.coords;
@@ -195,7 +197,9 @@ function wantedRoutes(trip, user) {
 function syncRoutes() {
   if (!map || !state) return;
   const trip = nav.trip, user = gps.user, filtering = !altAll && (trip || user);
-  const want = new Set((filtering ? wantedRoutes(trip, user) : state.routes).map(r => r.id));
+  const on = state.config.features?.routes !== false;
+  const base = !on ? [] : altAll ? state.routes : (trip || user) ? wantedRoutes(trip, user) : [];
+  const want = new Set([...base.map(r => r.id), ...(on ? [...altFocus].filter(id => state.routes.some(r => r.id === id)) : [])]);
   for (const [id, shp] of shapes.routes) if (!want.has(id)) { shp.remove(); shapes.routes.delete(id); }
   let fresh = 0;
   for (const r of state.routes) {
@@ -207,12 +211,20 @@ function syncRoutes() {
   altDrawn = filtering ? new Set([...altDrawn, ...want].filter(id => want.has(id))) : new Set();
   if (fresh && user && Date.now() - (syncRoutes.lastToast || 0) > 8000 && (syncRoutes.lastToast = Date.now())) toast(fresh === 1 ? 'Vía alterna para el próximo punto inundado de tu camino.' : `${fresh} vías alternas para lo que viene en tu camino.`, 'ok');
   // Aviso con el conteo y el botón para la vista general
-  const chip = $('#alt-chip'), total = state.routes.length;
-  chip.hidden = !(trip || user) || !total || state.config.features?.routes === false;
+  const chip = $('#alt-chip'), total = state.routes.length, btn = $('#btn-alt'), shown = altAll || altFocus.size > 0;
+  btn.hidden = !total || !on; btn.classList.toggle('on', shown); btn.setAttribute('aria-pressed', shown);
+  btn.setAttribute('aria-label', shown ? 'Ocultar vías alternas' : 'Mostrar vías alternas'); btn.title = shown ? 'Ocultar las vías alternas' : `Mostrar las ${total} vías alternas`;
+  chip.hidden = !(trip || user) || !total || !on;
   if (!chip.hidden) chip.innerHTML = altAll ? `<i></i>Vista general: ${total} vías alternas <u>Solo mi camino</u>`
     : `<i></i>${want.size ? `${want.size} ${want.size === 1 ? 'vía alterna' : 'vías alternas'} ${user ? 'adelante en tu camino' : 'en tu camino'}` : user ? 'Sin peligros adelante' : 'Ninguna vía alterna en tu camino'} <u>Ver todas</u>`;
 }
-$('#alt-chip').addEventListener('click', () => { altAll = !altAll; altDrawn = new Set(); syncRoutes(); if (altAll && state.routes.length) map.fitBounds(state.routes.flatMap(r => r.coords)); });
+$('#alt-chip').addEventListener('click', () => { altAll = !altAll; altFocus.clear(); altDrawn = new Set(); syncRoutes(); if (altAll && state.routes.length) map.fitBounds(state.routes.flatMap(r => r.coords)); });
+$('#btn-alt').innerHTML = ICON.route;
+$('#btn-alt').addEventListener('click', () => {
+  const was = altAll || altFocus.size > 0; altAll = !was; altFocus.clear(); altDrawn = new Set(); syncRoutes();
+  if (altAll && state.routes.length) map.fitBounds(state.routes.flatMap(r => r.coords));
+  toast(altAll ? `Mostrando las ${state.routes.length} vías alternas. Vuelve a tocar el botón para ocultarlas.` : 'Vías alternas ocultas. Saldrán solas cuando elijas un destino o navegues.', 'ok');
+});
 
 if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
@@ -409,7 +421,9 @@ document.querySelector('.panel').addEventListener('click', e => {
   const sh = shapes[it.dataset.kind].get(it.dataset.id); const src = state[it.dataset.kind].find(x => x.id === it.dataset.id);
   if (it.dataset.kind === 'overflows') { map.panTo({ lat: src.lat, lng: src.lng }, 16); setTimeout(() => sh?.open?.(), 500); if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
   document.querySelectorAll('.item.selected').forEach(x => x.classList.remove('selected')); it.classList.add('selected');
-  map.fitBounds(src.coords); setTimeout(() => sh?.open?.(), 400);
+  if (it.dataset.kind === 'routes' && !shapes.routes.has(it.dataset.id)) { altFocus.add(it.dataset.id); syncRoutes(); }
+  const sh2 = it.dataset.kind === 'routes' ? shapes.routes.get(it.dataset.id) : sh;
+  map.fitBounds(src.coords); setTimeout(() => sh2?.open?.(), 400);
   if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 $('#btn-fit').addEventListener('click', () => map.fitBounds([...state.streets, ...state.routes].flatMap(x => x.coords)));

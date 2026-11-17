@@ -254,7 +254,7 @@
       <div class="nav-search" role="search">
         <div class="turn" id="turn" hidden aria-live="polite"></div>
         <span class="nav-ic" id="nav-ic" aria-hidden="true"></span>
-        <input id="nav-q" type="search" placeholder="¿A dónde vas? Ruta sin zonas inundadas" autocomplete="off" aria-label="Buscar destino">
+        <input id="nav-q" type="search" placeholder="¿A dónde vas?" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" aria-label="Buscar destino">
         <button type="button" class="nav-clear" id="nav-clear" hidden aria-label="Borrar búsqueda">×</button>
         <button type="button" class="nav-plan" id="nav-plan" aria-label="Mi ruta: marcar de dónde sales y a dónde vas" title="Mi ruta: de dónde sales y a dónde vas"></button>
         <div class="nav-results" id="nav-results" hidden></div>
@@ -276,6 +276,7 @@
         <button class="btn icon" id="btn-radar" aria-label="Mostrar radar de lluvia" title="Radar de lluvia (RainViewer). Ojo: por ahora no tiene radares en Ecuador"></button>
         <button class="btn icon" id="btn-layers" aria-label="Capas del mapa" title="Capas del mapa" aria-expanded="false"></button>
         <button class="btn icon" id="btn-fit" aria-label="Ver toda la ciudad" title="Ver toda la ciudad"></button>
+        <button class="btn icon" id="btn-alt" aria-label="Mostrar vías alternas" title="Mostrar las vías alternas" aria-pressed="false" hidden></button>
         <button class="btn icon" id="btn-full" aria-label="Ampliar mapa" title="Ampliar mapa" aria-pressed="false"></button>
         <div class="layers-pop" id="layers-pop" hidden></div>
       </div>
@@ -347,9 +348,10 @@
     <div class="pl-row">
       <span class="pl-dot to" aria-hidden="true"></span>
       <div class="pl-f"><label class="lbl" for="pl-to">Hasta</label>
-        <div class="pl-to-row"><input id="pl-to" type="search" placeholder="Dirección o lugar" autocomplete="off"><button type="button" class="btn sm ghost" data-to="map">En el mapa</button></div>
+        <div class="pl-to-row"><input id="pl-to" type="search" placeholder="Calle, lugar o ciudad" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search"><button type="button" class="btn sm ghost" data-to="map">En el mapa</button></div>
         <div id="pl-res" class="pl-res"></div></div>
     </div>
+    <div id="pl-cities"></div>
     <div id="pl-places"></div>
     <div id="pl-saved"></div>
     <div class="pl-foot"><button type="button" class="btn ghost" id="pl-close">Cerrar</button><button type="button" class="btn" id="pl-go" disabled>Ver ruta segura</button></div>
