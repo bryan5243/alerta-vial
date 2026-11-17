@@ -118,7 +118,7 @@ app.get('/api/public/state', async (req, res) => {
   res.json({
     config: { city: db.config.city, center: db.config.center, zoom: db.config.zoom,
       mapProvider: db.config.mapProvider, googleMapsKey: db.config.googleMapsKey || '',
-      rainThresholdMm: db.config.weather.rainThresholdMm, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: f },
+      rainThresholdMm: db.config.weather.rainThresholdMm, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: f, noCar: noCarCfg(db) },
     alert: { ...db.alert, effective, suggested },
     weather: { ...weather, hourly: weather.hourly?.slice(0, 25) },
     risk, tide, flood,
@@ -180,7 +180,7 @@ app.get('/api/public/radar', async (req, res) => {
 app.get('/api/admin/state', auth, async (req, res) => {
   const db = load();
   const { weather, suggested, effective, risk, tide } = await computeStatus();
-  res.json({ ...db, config: { ...db.config, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: featuresCfg(db) }, alert: { ...db.alert, effective, suggested }, weather: { ...weather, hourly: weather.hourly?.slice(0, 25) }, risk, tide, reports: db.reports || [], layers: db.layers || [], rivers: db.rivers || [], zones: db.zones || [] });
+  res.json({ ...db, config: { ...db.config, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: featuresCfg(db), noCar: noCarCfg(db) }, alert: { ...db.alert, effective, suggested }, weather: { ...weather, hourly: weather.hourly?.slice(0, 25) }, risk, tide, reports: db.reports || [], layers: db.layers || [], rivers: db.rivers || [], zones: db.zones || [] });
 });
 
 app.put('/api/admin/config', auth, (req, res) => {
@@ -192,6 +192,7 @@ app.put('/api/admin/config', auth, (req, res) => {
   if (c.mapProvider) db.config.mapProvider = c.mapProvider === 'google' ? 'google' : 'leaflet';
   if (c.googleMapsKey !== undefined) db.config.googleMapsKey = String(c.googleMapsKey).trim();
   if (c.features) db.config.features = Object.fromEntries(Object.keys(DEFAULT_FEATURES).map(k => [k, c.features[k] !== false]));
+  if (c.noCar !== undefined) db.config.noCar = [...new Set((Array.isArray(c.noCar) ? c.noCar : String(c.noCar).split(/\n|,/)).map(x => String(x).trim().slice(0, 60)).filter(Boolean))].slice(0, 40);
   if (c.floodEnabled !== undefined) db.config.floodEnabled = c.floodEnabled === true;
   if (c.googleFloodKey !== undefined) db.config.googleFloodKey = String(c.googleFloodKey).trim();
   if (c.levelMessages) db.config.levelMessages = Object.fromEntries(Object.keys(DEFAULT_LEVEL_MESSAGES).map(k => [k, String(c.levelMessages[k] ?? '').trim().slice(0, 300) || DEFAULT_LEVEL_MESSAGES[k]]));
@@ -329,6 +330,8 @@ app.delete('/api/admin/reports/:id', auth, (req, res) => {
 
 // Secciones del mapa público que el equipo puede mostrar u ocultar.
 const DEFAULT_FEATURES = { streets: true, routes: true, rivers: true, points: true, recommendations: true, reports: true, gps: true, radar: true, risk: true, weather: true, layers: true };
+const DEFAULT_NOCAR = ['Malecón', 'peatonal', 'ciclovía', 'escalinata'];
+const noCarCfg = db => Array.isArray(db.config.noCar) ? db.config.noCar : DEFAULT_NOCAR;
 function featuresCfg(db) { return { ...DEFAULT_FEATURES, ...(db.config.features || {}) }; }
 function levelMsgs(db) { return { ...DEFAULT_LEVEL_MESSAGES, ...(db.config.levelMessages || {}) }; }
 function gpsCfg(db) { return { warnM: 400, dangerM: 150, voice: true, ...(db.config.gps || {}) }; }

@@ -8,6 +8,13 @@ import { fromOsrmStep, createGuide } from './guide.js';
 import { localSearch, createRemoteSearch, fmtDist, CITIES, QUICK_CITIES, TRAVEL_RADIUS_M } from './places.js';
 
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
+
+// Calles donde no pasan vehículos (malecón, peatonales…): OSRM a veces las usa porque en OpenStreetMap no están marcadas.
+// Se reconocen por el nombre que trae cada paso de la ruta (lista editable en Admin → Configuración).
+let NO_CAR = [];
+const plain = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+export const setNoCar = list => { NO_CAR = (Array.isArray(list) ? list : []).map(plain).filter(x => x.length > 2); };
+const noCarName = name => { const n = plain(name); return n && NO_CAR.some(w => n === w || n.includes(w)) ? name : null; };
 const R = 6371000, rad = d => d * Math.PI / 180, deg = r => r * 180 / Math.PI;
 
 export function offset(p, brg, m) {
@@ -61,6 +68,7 @@ async function osrm(pts, alternatives) {
   const j = await r.json();
   if (j.code && j.code !== 'Ok') throw new Error(j.code);
   return (j.routes || []).map(x => ({ coords: x.geometry.coordinates.map(([lng, lat]) => [lat, lng]), distance: x.distance, duration: x.duration,
+    noCar: (x.legs || []).flatMap(l => l.steps || []).filter(st => st.geometry?.coordinates?.length > 1 && noCarName(st.name)).map(st => ({ name: st.name, coords: st.geometry.coordinates.map(([lng, lat]) => [lat, lng]) })),
     steps: (x.legs || []).flatMap((l, i, all) => (l.steps || []).filter(st => !(st.maneuver?.type === 'arrive' && i < all.length - 1) && !(st.maneuver?.type === 'depart' && i > 0)).map(fromOsrmStep)) }));
 }
 
@@ -68,8 +76,12 @@ async function osrm(pts, alternatives) {
 export async function safeRoute(o, d, zones) {
   const base = await osrm([o, d], true);
   if (!base.length) throw new Error('Sin ruta');
-  const directHits = blockers(base[0].coords, zones);
-  const score = r => ({ ...r, blocked: blockers(r.coords, zones) });
+  // las calles sin paso de vehículos que aparezcan en cualquier ruta se tratan como zonas a evitar
+  const Z = [...zones], seen = new Set();
+  const absorb = r => { for (let q of r.noCar || []) { q = { ...q, coords: q.coords.filter(([la, ln]) => haversine({ lat: la, lng: ln }, o) > 80 && haversine({ lat: la, lng: ln }, d) > 80) }; if (q.coords.length < 2) continue; const key = `${plain(q.name)}|${q.coords[0].map(v => v.toFixed(4))}`; if (seen.has(key)) continue; seen.add(key); Z.push({ id: 'nc-' + key, name: `${q.name} (no apta para vehículos)`, kind: 'street', coords: q.coords, center: mid(q.coords), restricted: true }); } return r; };
+  base.forEach(absorb);
+  const directHits = blockers(base[0].coords, Z);
+  const score = r => ({ ...absorb(r), blocked: blockers(r.coords, Z) });
   let cands = base.map(score);
   let clean = cands.filter(c => !c.blocked.length).sort((a, b) => a.duration - b.duration)[0];
   if (clean) {
@@ -80,7 +92,7 @@ export async function safeRoute(o, d, zones) {
   }
   // Desvíos: puntos de paso a ambos lados de la zona que bloquea, cada vez más lejos.
   let vias = [], best = cands.sort((a, b) => a.blocked.length - b.blocked.length || a.duration - b.duration)[0];
-  for (let round = 0; round < 3 && best.blocked.length; round++) {
+  for (let round = 0; round < 4 && best.blocked.length; round++) {
     const z = best.blocked[0], brg = bearing(o, d);
     const tries = [];
     for (const dist of [220, 380, 600]) for (const side of [90, -90]) tries.push(offset(z.center, brg + side, dist));
@@ -90,6 +102,8 @@ export async function safeRoute(o, d, zones) {
     }));
     const ok = results.filter(Boolean);
     if (!ok.length) break;
+    // lo que se descubrió al probar los desvíos también cuenta: se vuelve a evaluar contra todas las zonas conocidas
+    ok.forEach(c => { c.blocked = blockers(c.coords, Z); });
     clean = ok.filter(c => !c.blocked.length).sort((a, b) => a.duration - b.duration)[0];
     if (clean) return { ...clean, avoided: directHits.map(x => x.name) };
     best = ok.sort((a, b) => a.blocked.length - b.blocked.length || a.duration - b.duration)[0];
@@ -260,7 +274,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
         <div class="nav-meta"><span>${fmtMin(r.duration)}</span><span>${fmtKm(r.distance)}</span><span class="nav-eta">Llegas ${clock(r.duration)}</span></div>
         ${trip.options?.length > 1 ? `<div class="nav-opts" role="radiogroup" aria-label="Rutas posibles">${trip.options.map((o, i) => `<button type="button" role="radio" aria-checked="${i === trip.sel}" class="nav-opt${i === trip.sel ? ' on' : ''}" data-opt="${i}"><b>Ruta ${i + 1}</b><small>${fmtMin(o.duration)} · ${fmtKm(o.distance)}</small></button>`).join('')}</div>` : ''}
         <div class="nav-note">${trip.direct && bad ? `Ruta directa de prueba: cruza ${esc(r.blocked.map(z => z.name).join(', '))}. El GPS avisará al acercarse y ofrecerá un desvío.` : bad ? `No hay una ruta totalmente libre: pasa por ${esc(r.blocked.map(z => z.name).join(', '))}. Extreme precaución.`
-          : r.avoided?.length ? `Ruta segura: evita ${r.avoided.length === 1 ? esc(r.avoided[0]) : `${r.avoided.length} zonas inundadas`}.` : 'Ruta libre de zonas inundadas.'}</div>
+          : r.avoided?.length ? `Ruta segura: evita ${r.avoided.length === 1 ? esc(r.avoided[0]) : `${r.avoided.length} zonas inundadas o calles cerradas`}.` : 'Ruta libre de zonas inundadas.'}</div>
         ${r.distance > 25000 ? `<div class="nav-far">${ICON.info} Viaje fuera de la ciudad: el mapa solo marca las zonas inundadas de Santa Rosa. En el camino sigue la señalización y las indicaciones de las autoridades.</div>` : ''}
         ${trip.offline ? `<div class="nav-off">${ICON.info} Sin conexión: usando tu ruta guardada.</div>` : ''}</div>
       <div class="nav-acts">${getUser() ? '' : `<button class="btn sm" id="nav-start">${sim ? ICON.play || ICON.nav : ICON.nav} ${sim ? 'Simular' : 'Iniciar'}</button>`}

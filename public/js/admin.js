@@ -1,7 +1,7 @@
 import { createMap } from './map-provider.js';
 import { parseLayerFile, summarize, importable } from './layers.js';
 import { fetchWaterways, KIND } from './osm-rivers.js';
-import { autoDetoursFor } from './nav.js';
+import { autoDetoursFor, setNoCar } from './nav.js';
 import { RIVER, ZSEV, LEVELS, STATUS, PTYPE, SEV, esc, ago, fmtTime, wxTime, toast, confirmBox, ICON, waveSvg, edgeFade, rainHours } from './common.js';
 
 const root = document.getElementById('root');
@@ -276,6 +276,7 @@ async function genAuto(points, btn) {
   for (const p of points) {
     btn.textContent = `Generando ${++i} de ${points.length}…`;
     let list = [];
+    setNoCar(db.config.noCar);
     try { list = await autoDetoursFor(p, db.points); } catch {}
     if (!list.length) none.push(p.name);
     // Un punto con vía alterna se enciende solo con alerta naranja/roja y se apaga cuando baja
@@ -575,6 +576,9 @@ function secConfig() {
     <div class="card"><h3 style="margin-bottom:6px">Qué ve la ciudadanía</h3><p class="small muted" style="margin-bottom:12px">Apaga lo que no quieras mostrar en el mapa público, para no confundir. Los datos no se borran: al volver a encender, reaparecen.</p>
       <form id="ff" novalidate><div class="feat-grid">${Object.entries(FEATURES).map(([k, [t, d]]) => `<label class="feat ${F[k] === false ? '' : 'on'}"><input type="checkbox" data-feat="${k}" ${F[k] === false ? '' : 'checked'}><span class="tg" aria-hidden="true"></span><span><b>${t}</b><small>${d}</small></span></label>`).join('')}</div>
       <button class="btn" style="margin-top:14px">Guardar lo que se muestra</button></form></div>
+    <div class="card"><h3 style="margin-bottom:6px">Calles donde no pasan vehículos</h3><p class="small muted" style="margin-bottom:12px">Malecones, peatonales, ciclovías o escalinatas. Las rutas y las vías alternas nunca pasarán por una calle cuyo nombre contenga alguna de estas palabras. Una por línea.</p>
+      <form id="fnc" novalidate><div class="field"><label for="nocar">Nombres o palabras</label><textarea id="nocar" rows="5" placeholder="Malecón">${esc((c.noCar || []).join('\n'))}</textarea></div>
+      <button class="btn">Guardar calles sin paso</button></form></div>
     <div class="card backup-card"><h3 style="margin-bottom:6px">Respaldo de datos</h3>
       <p class="small muted" style="margin-bottom:12px">Descarga todo (puntos, calles, vías alternas, ríos, zonas, capas, reportes y configuración) en un archivo. Sirve para pasar los datos de tu computadora al hosting, o para guardarlos antes de un cambio grande. En el hosting gratuito, guárdalo como <code>data/initial.json</code> para que se cargue solo cada vez que el servidor se reinicia.</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap"><button type="button" class="btn" id="bk-down">${ICON.inbox} Descargar respaldo</button><label class="btn ghost" for="bk-file" style="cursor:pointer">${ICON.layers} Restaurar desde archivo</label><input type="file" id="bk-file" accept=".json,application/json" hidden></div></div>
@@ -602,6 +606,7 @@ function secConfig() {
       <button class="btn">Guardar avisos GPS</button></form></div>`);
   setTools([]); drawMode = null; drawAll();
   q('[data-feat]').forEach(cb => cb.onchange = () => cb.closest('.feat').classList.toggle('on', cb.checked));
+  id('fnc').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { noCar: id('nocar').value } }); toast('Calles sin paso de vehículos guardadas', 'ok'); db = await api('/api/admin/state'); setNoCar(db.config.noCar); };
   id('ff').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { features: Object.fromEntries(q('[data-feat]').map(cb => [cb.dataset.feat, cb.checked])) } }); toast('Mapa público actualizado', 'ok'); db = await api('/api/admin/state'); };
   id('fon').onchange = () => { id('fkey-f').hidden = !id('fon').checked; };
   id('usemap').onclick = () => { if (!map) return; const r = map.raw; const cc = map.provider === 'google' ? { lat: r.getCenter().lat(), lng: r.getCenter().lng() } : r.getCenter(); id('clat').value = (+cc.lat).toFixed(5); id('clng').value = (+cc.lng).toFixed(5); id('zoom').value = r.getZoom(); };

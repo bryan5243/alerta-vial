@@ -1,6 +1,6 @@
 import { createMap } from './map-provider.js';
 import { createGps, nearestOnLine, haversine, progressOn, isAhead } from './gps.js';
-import { createNav } from './nav.js';
+import { createNav, setNoCar } from './nav.js';
 import { createWeatherFx } from './weather-fx.js';
 import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, wxTime, toast, ICON, waveSvg, edgeFade, dec, rainHours } from './common.js';
 
@@ -151,7 +151,7 @@ window.addEventListener('online', () => load().catch(() => {}));
 window.addEventListener('offline', () => { if (state) setOffline(JSON.parse(localStorage.getItem(CACHE_KEY) || 'null')?.at || Date.now()); });
 
 async function load() {
-  const pack = await fetchState(); state = pack.state;
+  const pack = await fetchState(); state = pack.state; setNoCar(state?.config?.noCar);
   const reports = pack.reports;
   if (!map) {
     map = await createMap({ provider: state.config.mapProvider, el: document.getElementById('map'), center: state.config.center, zoom: state.config.zoom, googleKey: state.config.googleMapsKey });
