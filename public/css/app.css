@@ -546,8 +546,8 @@ button,a,.item,label.switch{-webkit-tap-highlight-color:transparent}
 .wh-bar{position:relative;width:22px;height:46px;border-radius:7px;background:var(--wx-stat);overflow:hidden}
 .wh.now .wh-bar{background:rgb(120 140 170/.14)}
 .wh-bar i{position:absolute;left:0;right:0;bottom:0;border-radius:7px 7px 0 0;background:#B9CDE3;transition:height .6s var(--ease)}
-.wh.mid .wh-bar i{background:#6FA8DC} .wh.hi .wh-bar i{background:#1C77B8} .wh.mid .wh-p,.wh.hi .wh-p{color:#1C77B8}
-.sky-noche .wh.mid .wh-p,.sky-noche .wh.hi .wh-p{color:#9CCBF2}
+.wh.mid .wh-bar i{background:#9DBFE3} .wh.hi .wh-bar i{background:#1C77B8} .wh.hi .wh-p{color:#1C77B8}
+.sky-noche .wh.hi .wh-p{color:#9CCBF2}
 .wh-mm{font-size:.75rem;font-weight:600;color:var(--wx-ink);font-variant-numeric:tabular-nums;min-height:1.1em} .wh-mm.z{color:var(--wx-muted);font-weight:400;opacity:.6}
 .wh-t{font-size:.75rem;color:var(--wx-muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 .wh.now .wh-t{font-weight:700;color:var(--wx-ink)}
@@ -557,8 +557,8 @@ button,a,.item,label.switch{-webkit-tap-highlight-color:transparent}
 .wp-l{font-weight:600;white-space:nowrap} .wp-l small{font-weight:400;color:var(--wx-muted);font-size:.75rem;margin-left:5px}
 @media (max-width:359px){ .wp-l small{display:none} }
 .wp-bar{height:6px;border-radius:3px;background:var(--wx-stat);overflow:hidden} .wp-bar i{display:block;height:100%;border-radius:3px;background:#B9CDE3;transition:width .6s var(--ease)}
-.wp.mid .wp-bar i{background:#6FA8DC} .wp.hi .wp-bar i{background:#1C77B8}
-.wp-p{justify-content:flex-end;font-variant-numeric:tabular-nums} .wp.mid .wp-p,.wp.hi .wp-p{color:#1C77B8} .sky-noche .wp.mid .wp-p,.sky-noche .wp.hi .wp-p{color:#9CCBF2}
+.wp.mid .wp-bar i{background:#9DBFE3} .wp.hi .wp-bar i{background:#1C77B8}
+.wp-p{justify-content:flex-end;font-variant-numeric:tabular-nums} .wp.hi .wp-p{color:#1C77B8} .sky-noche .wp.hi .wp-p{color:#9CCBF2}
 .wp-mm{justify-content:flex-end;min-width:56px;color:var(--wx-muted);font-variant-numeric:tabular-nums;white-space:nowrap;font-size:.78rem}
 @media (prefers-reduced-motion:reduce){ .ol-ic i{animation:none;opacity:.7;transform:translateY(3px)} }
 

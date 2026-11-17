@@ -337,3 +337,9 @@ La probabilidad salía en 0 % cuando la fuente no la publicaba (MET Norway no la
 ### Panel de administración: resumen al entrar (16-nov-2026)
 - En **Alerta**, debajo del nivel publicado, seis fichas: Riesgo /100, Lluvia 3 h, Calles inundadas, Puntos activos, Vías alternas y Reportes por revisar. Las de calles, puntos, vías y reportes llevan a su sección.
 - En pantallas de 1280 px o más, el **índice de riesgo** (con cuánto aporta cada señal) y las **fuentes del clima** con la lluvia por horas quedan a la derecha de los controles; en tablet y teléfono van debajo.
+
+### Aviso de lluvia solo con 80 % o más (17-nov-2026)
+Pedido de EMOVTT: el aviso "Lluvia probable" salía cada hora y la lluvia no llegaba, lo que confundía a la gente.
+- `outlookOf` (server/weather.js) publica el aviso solo si en alguna de las próximas 6 horas la probabilidad llega a `NOTICE_PROB = 80`. Con menos queda en "calma" aunque haya otras señales (energía de tormenta, aeropuerto, modelos); esas señales solo explican el aviso cuando se publica. Se quitó el nivel intermedio "Podría llover".
+- La etiqueta del mapa, el aviso, la ficha "Lluvia 3 h" resaltada, el texto "Lluvia probable" y el toast usan el mismo mínimo. Las barras por hora siguen mostrando el porcentaje, pero solo desde 80 % se pintan fuerte; "Sin probabilidad alta" cuando ninguna parte del día llega a 80 %.
+- No cambia el semáforo (amarilla/naranja/roja siguen igual).

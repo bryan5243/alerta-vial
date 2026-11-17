@@ -62,7 +62,7 @@ function renderGlance(nFlood) {
   if (F.weather !== false && w?.ok) {
     const p = w.probNext3h;
     t.push((w.intensity || 0) > 0 ? `<button type="button" class="gl rain wet" data-go="sum"><span class="gl-v"><b>${dec(w.rainNow)}</b><small>mm/h</small></span><span class="gl-l">Lloviendo</span></button>`
-      : `<button type="button" class="gl rain${p >= 30 ? ' on' : ''}" data-go="sum" aria-label="Probabilidad de lluvia en las próximas 3 horas: ${p ?? 'sin dato'} %"><span class="gl-v"><b>${p ?? '–'}</b><small>%</small></span><span class="gl-l">Lluvia 3 h</span><span class="gl-bar"><i style="width:${p ?? 0}%"></i></span></button>`);
+      : `<button type="button" class="gl rain${p >= 80 ? ' on' : ''}" data-go="sum" aria-label="Probabilidad de lluvia en las próximas 3 horas: ${p ?? 'sin dato'} %"><span class="gl-v"><b>${p ?? '–'}</b><small>%</small></span><span class="gl-l">Lluvia 3 h</span><span class="gl-bar"><i style="width:${p ?? 0}%"></i></span></button>`);
   }
   if (F.streets !== false) t.push(`<button type="button" class="gl st${nFlood ? ' on' : ' ok'}" data-go="streets" aria-label="${nFlood} ${nFlood === 1 ? 'calle inundada' : 'calles inundadas'}"><span class="gl-v"><b>${nFlood}</b><small>${nFlood === 1 ? 'calle' : 'calles'}</small></span><span class="gl-l">Inundadas</span></button>`);
   el.innerHTML = t.join(''); el.hidden = !t.length;
@@ -98,7 +98,7 @@ function renderWx(w) {
   if (!w?.ok || state.config.features?.weather === false) { chip.hidden = true; return; }
   const i = w.intensity || 0, ic = skyIcon(w);
   chip.hidden = false; chip.className = `wx-chip i${i} sky-${skyOf(w)}`;
-  const extra = w.rainNow > 0 ? `<span>${dec(w.rainNow)} mm/h</span>` : w.probNext3h >= 40 ? `<span>${w.probNext3h}% en 3 h</span>` : '';
+  const extra = w.rainNow > 0 ? `<span>${dec(w.rainNow)} mm/h</span>` : w.probNext3h >= 80 ? `<span>${w.probNext3h}% en 3 h</span>` : '';
   const ol = !i && ['atencion', 'probable'].includes(w.outlook?.level) ? `<span class="ol-tag ol-${w.outlook.level}">${w.outlook.level === 'probable' ? 'Lluvia probable' : 'Podría llover'}${w.outlook.from ? ` ${w.outlook.from.slice(11, 16)}` : ''}</span>` : '';
   const uv = ol || (!i && uvOn(w) && w.sun.uvIndex >= 3 ? `<span class="uv-tag uv-${w.sun.uv.key}">UV ${dec(w.sun.uvIndex)}</span>` : '');
   // aviso una sola vez cuando la lluvia pasa a "probable"

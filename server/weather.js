@@ -318,12 +318,14 @@ export function dayParts(hourly) {
   return out.map(({ key, ...p }) => p);
 }
 
-// Aviso de lluvia posible (no cambia el semáforo): junta las señales de que podría llover pronto.
-// Cada señal suma puntos; con 2 o más se avisa "podría llover", con 4 o más "lluvia probable".
+// Aviso de lluvia probable (no cambia el semáforo). Solo se publica si en alguna de las próximas 6 horas la
+// probabilidad llega a NOTICE_PROB (80 %): con menos, el aviso se cae a "calma" aunque haya otras señales,
+// porque avisar de una lluvia que no llega confunde a la gente. Las demás señales solo explican el aviso.
+export const NOTICE_PROB = 80;
 function outlookOf(w, { okM, metar, need, base }) {
   const reasons = []; let score = 0;
-  const prob = w.probNext3h ?? null;
-  if (prob != null && prob >= 35) { score += prob >= 70 ? 3 : prob >= 50 ? 2 : 1; reasons.push(`probabilidad de lluvia de hasta ${prob} % en las próximas 3 h`); }
+  const peak = Math.max(0, ...(w.hourly || []).slice(0, 7).map(h => h.probability ?? 0));
+  if (peak >= NOTICE_PROB) { score += 3; reasons.push(`probabilidad de lluvia de ${peak} % en las próximas 6 h`); }
   const wet = okM.filter(m => (m.rainNext3h || 0) >= MIN_MM);
   if (wet.length) {
     score += wet.length >= need ? 2 : 1;
@@ -336,13 +338,13 @@ function outlookOf(w, { okM, metar, need, base }) {
   else if (metar?.ok && metar.near) { score += 2; reasons.push('el aeropuerto ve lluvia en los alrededores'); }
   else if (metar?.ok && metar.cb) { score += 1; reasons.push('el aeropuerto ve nubes de tormenta (cumulonimbos) cerca'); }
   // ¿desde qué hora? la primera hora con probabilidad alta o lluvia prevista
-  const from = (w.hourly || []).slice(1, 7).find(h => (h.probability ?? 0) >= 50 || (h.precipitation ?? 0) >= MIN_MM)?.time || null;
-  const level = w.intensity > 0 ? 'lloviendo' : score >= 4 ? 'probable' : score >= 2 ? 'atencion' : 'calma';
-  const title = { lloviendo: 'Está lloviendo', probable: 'Lluvia probable en las próximas horas', atencion: 'Atención: podría llover pronto', calma: 'Sin lluvia a la vista' }[level];
+  const from = (w.hourly || []).slice(0, 7).find(h => (h.probability ?? 0) >= NOTICE_PROB)?.time || null;
+  const level = w.intensity > 0 ? 'lloviendo' : peak >= NOTICE_PROB ? 'probable' : 'calma';
+  const title = { lloviendo: 'Está lloviendo', probable: 'Lluvia probable en las próximas horas', calma: 'Sin lluvia a la vista' }[level];
   const text = level === 'lloviendo' ? 'Revisa las calles inundadas y las vías alternas antes de salir.'
-    : level === 'calma' ? 'Ninguna fuente prevé lluvia en las próximas 3 horas.'
-    : `Ahora no llueve, pero ${level === 'probable' ? 'es probable un aguacero' : 'podría caer un aguacero corto'}${from ? ` desde las ${from.slice(11, 16)}, aproximadamente` : ''}. Lleva paraguas y evita las calles que suelen inundarse.`;
-  return { level, score, title, text, reasons, from };
+    : level === 'calma' ? `No hay una probabilidad alta de lluvia (${NOTICE_PROB} % o más) en las próximas 6 horas.`
+    : `Ahora no llueve, pero es probable un aguacero${from ? ` desde las ${from.slice(11, 16)}, aproximadamente` : ''}. Lleva paraguas y evita las calles que suelen inundarse.`;
+  return { level, score, title, text, reasons: level === 'calma' ? [] : reasons, from, peak, min: NOTICE_PROB };
 }
 
 // Índice UV según la escala de la OMS, con el consejo para la gente
@@ -389,7 +391,7 @@ export function describe(w) {
   const mmInt = w.rainNow >= 8 ? 3 : w.rainNow >= 2.5 ? 2 : w.rainNow >= MIN_MM ? 1 : 0;
   const intensity = Math.max(codeInt, mmInt);
   const condition = codeTxt || (mmInt === 3 ? 'Lluvia fuerte' : mmInt === 2 ? 'Lluvia moderada' : mmInt === 1 ? 'Lluvia leve'
-    : w.probNext3h >= 60 ? 'Lluvia probable' : (w.cloudCover ?? 0) >= 70 ? 'Nublado' : (w.cloudCover ?? 0) >= 30 ? 'Parcialmente nublado' : 'Despejado');
+    : w.probNext3h >= NOTICE_PROB ? 'Lluvia probable' : (w.cloudCover ?? 0) >= 70 ? 'Nublado' : (w.cloudCover ?? 0) >= 30 ? 'Parcialmente nublado' : 'Despejado');
   return { raining: intensity > 0, intensity, condition };
 }
 

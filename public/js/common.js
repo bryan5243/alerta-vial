@@ -84,7 +84,7 @@ export function edgeFade(el) {
 
 export const dec = n => String(n).replace('.', ',');
 // Lluvia por horas (12 h, se desliza): probabilidad arriba y milímetros abajo; y el resumen por partes del día
-const tone = p => (p >= 60 ? ' hi' : p >= 30 ? ' mid' : '');
+const tone = p => (p >= 80 ? ' hi' : p >= 50 ? ' mid' : '');
 export function rainHours(w) {
   const hrs = (w.hourly || []).slice(0, 12).filter(h => h?.time);
   if (hrs.length < 3) return '';
@@ -98,6 +98,6 @@ function partsRows(w) {
   const ps = (w.periods || []).slice(0, 4); if (!ps.length) return '';
   const hr = t => +t.slice(11, 13);
   // todo seco: una sola línea en vez de cuatro renglones iguales
-  if (ps.every(p => p.probability < 30 && p.precipitation < .5)) return `<p class="wx-dry">Sin lluvia prevista en las próximas 24 horas.</p>`;
-  return `<div class="wx-parts">${ps.map(p => `<div class="wp${tone(p.probability)}"><span class="wp-l">${p.label}<small>${hr(p.from)}–${(hr(p.to) + 1) % 24} h</small></span><span class="wp-bar"><i style="width:${Math.max(3, p.probability)}%"></i></span><b class="wp-p">${p.probability}%</b><span class="wp-mm">${p.precipitation >= .1 ? `${dec(p.precipitation)} mm` : p.probability >= 30 ? '< 0,1 mm' : '0 mm'}</span></div>`).join('')}</div>`;
+  if (ps.every(p => p.probability < 80)) return `<p class="wx-dry">Sin probabilidad alta de lluvia (80 % o más) en las próximas 24 horas.</p>`;
+  return `<div class="wx-parts">${ps.map(p => `<div class="wp${tone(p.probability)}"><span class="wp-l">${p.label}<small>${hr(p.from)}–${(hr(p.to) + 1) % 24} h</small></span><span class="wp-bar"><i style="width:${Math.max(3, p.probability)}%"></i></span><b class="wp-p">${p.probability}%</b><span class="wp-mm">${p.precipitation >= .1 ? `${dec(p.precipitation)} mm` : p.probability >= 50 ? '< 0,1 mm' : '0 mm'}</span></div>`).join('')}</div>`;
 }

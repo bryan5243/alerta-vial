@@ -173,7 +173,7 @@ function kpiRow() {
   const t = (cls, go, v, unit, label, bar) => `<button type="button" class="gl ${cls}"${go ? ` data-go="${go}"` : ''}><span class="gl-v"><b>${v}</b>${unit ? `<small>${unit}</small>` : ''}</span><span class="gl-l">${label}</span>${bar != null ? `<span class="gl-bar"><i style="width:${bar}%"></i></span>` : ''}</button>`;
   return `<div class="kpis" aria-label="Resumen del sistema">
     ${r ? t(`lv-${r.level}`, '', r.value, '/100', 'Riesgo', r.value) : ''}
-    ${!w.ok ? t('', '', '–', '', 'Clima sin dato') : w.intensity > 0 ? t('rain wet', '', dec(w.rainNow), 'mm/h', 'Lloviendo ahora') : t(`rain${w.probNext3h >= 30 ? ' on' : ''}`, '', w.probNext3h ?? '–', '%', 'Lluvia 3 h', w.probNext3h ?? 0)}
+    ${!w.ok ? t('', '', '–', '', 'Clima sin dato') : w.intensity > 0 ? t('rain wet', '', dec(w.rainNow), 'mm/h', 'Lloviendo ahora') : t(`rain${w.probNext3h >= 80 ? ' on' : ''}`, '', w.probNext3h ?? '–', '%', 'Lluvia 3 h', w.probNext3h ?? 0)}
     ${t(`st${flooded ? ' on' : ' ok'}`, 'streets', flooded, flooded === 1 ? 'calle' : 'calles', 'Inundadas')}
     ${t('', 'points', ptsOn, `de ${db.points.length}`, 'Puntos activos')}
     ${t('', 'routes', db.routes.length, '', 'Vías alternas')}
