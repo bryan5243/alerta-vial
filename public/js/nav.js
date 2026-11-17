@@ -61,12 +61,19 @@ function densify(c, step) {
   return out;
 }
 
-async function osrm(pts, alternatives) {
-  const url = `${OSRM}${pts.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(';')}?overview=full&geometries=geojson&steps=true${alternatives ? '&alternatives=3' : ''}`;
-  const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
-  if (!r.ok) throw new Error('OSRM ' + r.status);
-  const j = await r.json();
-  if (j.code && j.code !== 'Ok') throw new Error(j.code);
+// heading (opcional): rumbo del vehículo; así la ruta nueva sigue hacia donde va el auto en vez de mandarlo a dar la vuelta.
+async function osrm(pts, alternatives, heading = null) {
+  const get = async hd => {
+    const b = hd == null || isNaN(hd) ? '' : `&bearings=${[`${Math.round(((hd % 360) + 360) % 360)},70`, ...pts.slice(1).map(() => '')].join(';')}`;
+    const url = `${OSRM}${pts.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(';')}?overview=full&geometries=geojson&steps=true${alternatives ? '&alternatives=3' : ''}${b}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error('OSRM ' + r.status);
+    const j = await r.json();
+    if (j.code && j.code !== 'Ok') throw new Error(j.code);
+    return j;
+  };
+  let j;
+  try { j = await get(heading); } catch (e) { if (heading == null) throw e; j = await get(null); } // sin ese rumbo no hay calle cercana: se intenta sin él
   return (j.routes || []).map(x => ({ coords: x.geometry.coordinates.map(([lng, lat]) => [lat, lng]), distance: x.distance, duration: x.duration,
     noCar: (x.legs || []).flatMap(l => l.steps || []).filter(st => st.geometry?.coordinates?.length > 1 && noCarName(st.name)).map(st => ({ name: st.name, coords: st.geometry.coordinates.map(([lng, lat]) => [lat, lng]) })),
     steps: (x.legs || []).flatMap((l, i, all) => (l.steps || []).filter(st => !(st.maneuver?.type === 'arrive' && i < all.length - 1) && !(st.maneuver?.type === 'depart' && i > 0)).map(fromOsrmStep)) }));
@@ -74,7 +81,8 @@ async function osrm(pts, alternatives) {
 
 // Ruta de o a d que evite las zonas. Devuelve { coords, distance, duration, avoided:[nombres], blocked:[zonas aún cruzadas] }
 export async function safeRoute(o, d, zones) {
-  const base = await osrm([o, d], true);
+  const hd = o.heading ?? null; // si 'o' trae rumbo (auto en marcha), la ruta nueva respeta hacia dónde va
+  const base = await osrm([o, d], true, hd);
   if (!base.length) throw new Error('Sin ruta');
   // las calles sin paso de vehículos que aparezcan en cualquier ruta se tratan como zonas a evitar
   const Z = [...zones], seen = new Set();
@@ -98,7 +106,7 @@ export async function safeRoute(o, d, zones) {
     for (const dist of [220, 380, 600]) for (const side of [90, -90]) tries.push(offset(z.center, brg + side, dist));
     const results = await Promise.all(tries.map(async v => {
       const all = [...vias, v].sort((a, b) => haversine(o, a) - haversine(o, b));
-      try { const r = (await osrm([o, ...all, d], false))[0]; return r ? { ...score(r), vias: all } : null; } catch { return null; }
+      try { const r = (await osrm([o, ...all, d], false, hd))[0]; return r ? { ...score(r), vias: all } : null; } catch { return null; }
     }));
     const ok = results.filter(Boolean);
     if (!ok.length) break;
@@ -123,6 +131,9 @@ const LS = {
 };
 const slim = r => ({ coords: r.coords.map(([a, b]) => [+a.toFixed(6), +b.toFixed(6)]), distance: r.distance, duration: r.duration, steps: r.steps || [], avoided: r.avoided || [], blocked: (r.blocked || []).map(z => ({ name: z.name })) });
 
+// Punto de salida desde la posición del vehículo; el rumbo solo cuenta si va en movimiento (parado, el GPS no sabe hacia dónde mira).
+const startFrom = u => ({ lat: u.lat, lng: u.lng, heading: (u.speed == null || u.speed > 1.5) && u.heading != null && !isNaN(u.heading) ? u.heading : null });
+
 export function createNav({ getMap, getState, getUser, startGps, onChange = () => {}, sim = false, getDirect = () => false, getVoice = () => true }) {
   const $ = s => document.querySelector(s);
   let trip = null;      // { dest, origin, route, saved?, offline? }
@@ -136,7 +147,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
   // Indicaciones giro a giro; si el vehículo toma otra calle, se recalcula el camino desde donde está.
   const guide = createGuide({ el: $('#turn'), getVoice, onOffRoute: async user => {
     if (!trip) return;
-    const route = await safeRoute(user, trip.dest, hazardZones(getState()));
+    const route = await safeRoute(startFrom(user), trip.dest, hazardZones(getState()));
     setTrip({ ...trip, origin: { lat: user.lat, lng: user.lng, mine: true }, route, direct: false, offline: false }); draw(false); renderCard();
     toast(route.avoided?.length ? `Nueva ruta: sigue evitando ${route.avoided.length === 1 ? route.avoided[0] : `${route.avoided.length} zonas inundadas`}.` : 'Nueva ruta calculada desde donde estás.', 'ok');
   } });
@@ -360,7 +371,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     const c = hz.coords?.length ? { lat: hz.coords[Math.floor(hz.coords.length / 2)][0], lng: hz.coords[Math.floor(hz.coords.length / 2)][1] } : null;
     if (!c) return null;
     const dest = trip ? trip.dest : offset(c, bearing(user, c), 350);
-    const r = await safeRoute(user, dest, hazardZones(getState()));
+    const r = await safeRoute(startFrom(user), dest, hazardZones(getState()));
     if (r.blocked?.length) return null;
     return { id: 'auto', name: trip ? `Ruta segura a ${trip.dest.name}` : 'Desvío automático', description: r.avoided?.length ? `Evita ${r.avoided.join(', ')}.` : '', coords: r.coords, steps: r.steps, auto: true };
   }
@@ -380,7 +391,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     if (!trip || replanning || trip.direct) return;
     if (blockers(trip.route.coords, hazardZones(getState())).length && !trip.route.blocked?.length) {
       replanning = true;
-      try { const u = getUser(); const o = u || trip.origin; setTrip({ ...trip, route: await safeRoute(o, trip.dest, hazardZones(getState())), offline: false }); draw(false); renderCard(); toast('Se activó una zona inundada en tu camino: recalculamos la ruta.', 'ok'); }
+      try { const u = getUser(); const o = u ? startFrom(u) : trip.origin; setTrip({ ...trip, route: await safeRoute(o, trip.dest, hazardZones(getState())), offline: false }); draw(false); renderCard(); toast('Se activó una zona inundada en tu camino: recalculamos la ruta.', 'ok'); }
       catch { toast('Se activó una zona inundada en tu camino y no hay conexión para recalcular. Sigue las vías alternas del mapa.', 'err'); trip.route.blocked = [{ name: 'una zona recién activada' }]; renderCard(); }
       replanning = false;
     }

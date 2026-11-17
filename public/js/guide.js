@@ -85,14 +85,18 @@ export function createGuide({ el, getVoice, onOffRoute }) {
   async function update(user) {
     if (!route || !user) { el.hidden = true; return; }
     const p = progressOn(route.coords, user);
-    // ¿Fuera de la ruta? (más de 45 m, o más si el GPS es impreciso), 3 lecturas seguidas
-    const tol = Math.max(45, (user.accuracy || 0) * 1.5);
-    off = p.d > tol ? off + 1 : 0;
-    if (off >= 3 && !busy && Date.now() - lastReroute > 12000) {
+    // ¿Fuera de la ruta? Muy lejos (más de ~2,5 veces el margen) = al instante; cerca del margen = 2 lecturas seguidas
+    // (así un salto del GPS no recalcula por gusto). El margen es 35 m, o más si el GPS es impreciso.
+    const tol = Math.max(35, (user.accuracy || 0) * 1.5);
+    off = p.d > tol * 2.5 ? off + 2 : p.d > tol ? off + 1 : 0;
+    if (off >= 2 && !busy && Date.now() - lastReroute > 3000) {
       busy = true; lastReroute = Date.now(); rerouting('Tomaste otra calle: buscando el mejor camino');
       speak('Recalculando ruta');
-      try { await onOffRoute(user); } catch { rerouting('Sin conexión para recalcular. Vuelve a la línea azul.'); speak('No hay conexión para recalcular. Regrese a la ruta marcada.'); }
-      busy = false; off = 0; return;
+      let ok = false;
+      for (let t = 0; t < 2 && !ok; t++) { try { await onOffRoute(user); ok = true; } catch { /* reintenta una vez */ } }
+      if (!ok) { rerouting('Sin conexión para recalcular. Vuelve a la línea azul; lo intento de nuevo.'); speak('No hay conexión para recalcular. Regrese a la ruta marcada.'); lastReroute = Date.now() + 3000; off = 2; }
+      else off = 0;
+      busy = false; return;
     }
     if (busy) return;
     while (idx < steps.length - 1 && steps[idx].s < p.s - 8) idx++;

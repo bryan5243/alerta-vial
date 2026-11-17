@@ -355,3 +355,8 @@ Caso real: una ruta pasaba por el Malecón, que no es transitable para vehículo
 - Admin → Configuración → **Calles donde no pasan vehículos**: lista de nombres o palabras (por defecto Malecón, peatonal, ciclovía, escalinata). Se guarda en `config.noCar`.
 - `safeRoute` (public/js/nav.js) lee el nombre de cada paso de las rutas que devuelve OSRM; si coincide, ese tramo se trata como zona a evitar y se busca un desvío por otras calles. Lo mismo vale para el GPS (recálculo), el simulador y las vías alternas automáticas. Los primeros y últimos 80 m no cuentan, por si la salida o el destino están en esa calle.
 - Si no existe otro camino, la tarjeta avisa "No hay una ruta totalmente libre: pasa por … (no apta para vehículos)".
+
+### Recálculo inmediato al salirse de la ruta (17-nov-2026)
+- Si el vehículo se aleja de la ruta más de ~2,5 veces el margen (35 m, o más con GPS impreciso), se recalcula **en la siguiente lectura** del GPS; si solo supera el margen, tras 2 lecturas seguidas. Antes hacían falta 3 lecturas y 12 s entre recálculos (ahora 3 s).
+- La ruta nueva sale desde la posición del auto **y respeta su rumbo** (parámetro `bearings` de OSRM, solo si va en movimiento), para que no lo mande a dar la vuelta si puede seguir de frente. Si OSRM no encuentra calle con ese rumbo, se reintenta sin él.
+- Si no hay conexión, reintenta solo cada pocos segundos y avisa "Vuelve a la línea azul". La ruta nueva también evita zonas inundadas y las calles sin paso de vehículos.
