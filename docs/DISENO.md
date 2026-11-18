@@ -378,3 +378,8 @@ Una ruta cruzaba un punto de riesgo (cruce Av. Javier Soto y Av. Guayas). `safeR
 
 ### Sin "puntas" en las rutas (18-nov-2026)
 Al forzar un desvío con puntos de paso, a veces el punto caía al final de una calle sin salida y la ruta entraba, daba la vuelta y regresaba por el mismo camino (una punta que no va a ningún lado). `hasSpur` (public/js/nav.js) detecta ese ida y vuelta por el mismo trazo; los desvíos con punta se descartan mientras exista otro desvío sin ella. Una vuelta a la manzana (que sí es un giro real) no cuenta como punta.
+
+### Lugares solo de Santa Rosa (18-nov-2026)
+Pedido de EMOVTT: al escribir "cementerio" debe salir el de Santa Rosa, no los de otras ciudades; las demás ciudades se eligen por su nombre (Machala, Pasaje…).
+- Photon y Nominatim se consultan solo dentro de `AREA_M = 9 km` alrededor del centro (Photon con `bbox`, Nominatim con `bounded=1`), y además se descarta cualquier resultado fuera de ese radio.
+- Las ciudades salen de la lista `CITIES` (places.js), sin red, así que escribir "machala" o "pasaje" sigue funcionando.

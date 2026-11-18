@@ -243,7 +243,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
       draw(near, navigator.onLine === false ? 'off' : near.length ? '' : 'none');
     }
   }
-  const pickBtn = () => `<button type="button" class="nav-res pick" data-pick>${ICON.nav}<span><b>Elegir el destino en el mapa</b><small>Toca el lugar al que quieres ir</small></span></button><div class="nav-scope">Búsqueda en Santa Rosa y ciudades cercanas</div>`;
+  const pickBtn = () => `<button type="button" class="nav-res pick" data-pick>${ICON.nav}<span><b>Elegir el destino en el mapa</b><small>Toca el lugar al que quieres ir</small></span></button><div class="nav-scope">Lugares de Santa Rosa y ciudades cercanas</div>`;
   function bindPick(el) { el.querySelector('[data-pick]')?.addEventListener('click', () => { cancelSearch(); list.hidden = true; startPick('go'); }); }
   function startPick(target) {
     picking = target; document.body.classList.add('nav-picking'); closePlan();

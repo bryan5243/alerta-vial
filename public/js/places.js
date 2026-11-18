@@ -26,6 +26,8 @@ export const CITIES = [
 export const QUICK_CITIES = ['Machala', 'Pasaje', 'Huaquillas', 'Arenillas', 'El Guabo', 'Zaruma', 'Piñas', 'Portovelo'];
 // Hasta dónde se puede elegir un destino tocando el mapa (la región de El Oro y alrededores)
 export const TRAVEL_RADIUS_M = 260000;
+// Los lugares (cementerio, terminal, colegio…) se buscan solo en Santa Rosa; las demás ciudades salen de la lista CITIES.
+export const AREA_M = 9000;
 
 // minúsculas y sin tildes, para que "pinas" encuentre "Piñas" y "huaquillar" se acerque a "Huaquillas"
 export const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -79,7 +81,8 @@ async function getJson(url, signal) {
   return r.json();
 }
 async function photon(q, center, signal) {
-  const j = await getJson(`${PHOTON}?q=${encodeURIComponent(q)}&limit=8&lat=${center.lat}&lon=${center.lng}`, signal);
+  const dl = AREA_M / 111000, bbox = [center.lng - dl, center.lat - dl, center.lng + dl, center.lat + dl].join(',');
+  const j = await getJson(`${PHOTON}?q=${encodeURIComponent(q)}&limit=10&lat=${center.lat}&lon=${center.lng}&bbox=${bbox}`, signal);
   return (j.features || []).filter(f => !f.properties?.countrycode || f.properties.countrycode === 'EC').map(f => {
     const p = f.properties || {}, [lng, lat] = f.geometry?.coordinates || [];
     const street = [p.street, p.housenumber].filter(Boolean).join(' ');
@@ -89,8 +92,8 @@ async function photon(q, center, signal) {
   }).filter(x => x.name && Number.isFinite(x.lat));
 }
 async function nominatim(q, center, signal) {
-  const d = 0.9, vb = [center.lng - d, center.lat + d, center.lng + d, center.lat - d].join(',');
-  const j = await getJson(`${NOMINATIM}?format=jsonv2&limit=8&countrycodes=ec&accept-language=es&viewbox=${vb}&q=${encodeURIComponent(q)}`, signal);
+  const d = AREA_M / 111000, vb = [center.lng - d, center.lat + d, center.lng + d, center.lat - d].join(',');
+  const j = await getJson(`${NOMINATIM}?format=jsonv2&limit=8&countrycodes=ec&accept-language=es&bounded=1&viewbox=${vb}&q=${encodeURIComponent(q)}`, signal);
   return j.map(x => ({ name: x.name || x.display_name.split(',')[0], label: x.display_name.split(',').slice(1, 4).join(',').trim(), lat: +x.lat, lng: +x.lon, kind: 'remote' }));
 }
 
@@ -108,9 +111,8 @@ export function createRemoteSearch() {
     const l1 = limit(me, 3500);
     try { res = await photon(q, center, l1.signal); } catch (e) { if (me.signal.aborted) throw e; } finally { l1.done(); }
     if (!res.length) { const l2 = limit(me, 5000); try { res = await nominatim(q, center, l2.signal); } finally { l2.done(); } }
-    // lo más cercano a Santa Rosa primero, sin perder el orden de relevancia dentro de cada grupo
-    const near = res.filter(r => haversine(center, r) <= 25000), far = res.filter(r => haversine(center, r) > 25000);
-    const out = dedupe([...near, ...far], center);
+    // solo lugares de Santa Rosa (el servicio a veces devuelve de otras ciudades aunque se le pida el área)
+    const out = dedupe(res.filter(r => haversine(center, r) <= AREA_M), center);
     cache.set(key, out); if (cache.size > 40) cache.delete(cache.keys().next().value);
     return out;
   };
