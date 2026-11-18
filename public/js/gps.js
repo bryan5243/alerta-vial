@@ -123,7 +123,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
       if (!best || score < best.score) best = { hz, level, d, point, score };
     }
     if (best) show(best); else if (active) hide();
-    if (!best && follow) map.panTo(user, 16);
+    if (!best && follow) map.panTo(user, 18);
     $('#gps-state').textContent = best ? (best.level === 'danger' ? 'Peligro cerca' : 'Precaución adelante') : `Sin peligros a ${warnM} m`;
     $('#gps-bar').dataset.level = best ? best.level : 'ok';
     onMove(user);
@@ -293,7 +293,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
   $('#btn-gps').addEventListener('click', () => (watchId != null || simTimer ? stop() : start()));
   $('#gps-stop').addEventListener('click', stop);
   $('#gps-sim').addEventListener('click', simulate);
-  $('#gps-follow').addEventListener('click', e => { follow = !follow; e.currentTarget.classList.toggle('on', follow); if (follow && user) getMap().panTo(user, 16); });
+  $('#gps-follow').addEventListener('click', e => { follow = !follow; e.currentTarget.classList.toggle('on', follow); if (follow && user) getMap().panTo(user, 18); });
   $('#gps-voice').addEventListener('click', e => { voice = !voice; e.currentTarget.classList.toggle('on', voice); if (!voice) try { speechSynthesis.cancel(); } catch {} });
   $('#hz-ok').addEventListener('click', () => { if (active) { snoozed.set(active.hz.id, { until: Date.now() + 120000, level: active.level }); hide(); } });
 

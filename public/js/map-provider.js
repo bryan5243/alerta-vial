@@ -27,11 +27,12 @@ export async function createMap({ provider = 'leaflet', el, center, zoom, google
 
 /* ---------------- Leaflet ---------------- */
 function leafletMap({ el, center, zoom }) {
-  const map = L.map(el, { zoomControl: false, attributionControl: true }).setView([center.lat, center.lng], zoom);
+  const map = L.map(el, { zoomControl: false, attributionControl: true, zoomSnap: 1, zoomDelta: 1, wheelPxPerZoomLevel: 90 }).setView([center.lat, center.lng], zoom);
   L.control.zoom({ position: 'bottomright' }).addTo(map);
+  L.control.scale({ position: 'bottomleft', metric: true, imperial: false, maxWidth: 110 }).addTo(map); // la barra de 100 m aparece en el zoom 18
   // Mapa base: OpenStreetMap oficial (gratis, sin API key).
   const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19, maxNativeZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   }).addTo(map);
   // Aviso cuando los tiles no cargan (sin internet)
   const fb = document.createElement('div'); fb.className = 'map-fallback'; fb.textContent = 'Sin conexión al mapa base. Las capas de alerta siguen visibles.';
@@ -108,7 +109,7 @@ function leafletMap({ el, center, zoom }) {
     onClick(cb) { clickCb = cb; },
     clear() { layers.clearLayers(); },
     setCenter(c, z) { map.setView([c.lat, c.lng], z || map.getZoom()); },
-    fitBounds(coords, pad = {}) { if (coords.length) map.fitBounds(L.latLngBounds(coords), { paddingTopLeft: [40, (pad.top ?? 0) + 40], paddingBottomRight: [40, (pad.bottom ?? 0) + 40], maxZoom: 16 }); },
+    fitBounds(coords, pad = {}) { if (coords.length) map.fitBounds(L.latLngBounds(coords), { paddingTopLeft: [40, (pad.top ?? 0) + 40], paddingBottomRight: [40, (pad.bottom ?? 0) + 40], maxZoom: 18 }); },
     panTo({ lat, lng }, z) { map.flyTo([lat, lng], z || Math.max(map.getZoom(), 15), { duration: .6 }); },
     setRadar(url) { if (radar) { map.removeLayer(radar); radar = null; } // RainViewer gratis solo entrega hasta zoom 7 (desde 2026): Leaflet amplía esos cuadros al acercarse.
       if (url) radar = L.tileLayer(url, { opacity: .6, zIndex: 400, maxNativeZoom: 7, maxZoom: 19, className: 'radar-tiles' }).addTo(map); },

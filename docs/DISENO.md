@@ -360,3 +360,8 @@ Caso real: una ruta pasaba por el Malecón, que no es transitable para vehículo
 - Si el vehículo se aleja de la ruta más de ~2,5 veces el margen (35 m, o más con GPS impreciso), se recalcula **en la siguiente lectura** del GPS; si solo supera el margen, tras 2 lecturas seguidas. Antes hacían falta 3 lecturas y 12 s entre recálculos (ahora 3 s).
 - La ruta nueva sale desde la posición del auto **y respeta su rumbo** (parámetro `bearings` de OSRM, solo si va en movimiento), para que no lo mande a dar la vuelta si puede seguir de frente. Si OSRM no encuentra calle con ese rumbo, se reintenta sin él.
 - Si no hay conexión, reintenta solo cada pocos segundos y avisa "Vuelve a la línea azul". La ruta nueva también evita zonas inundadas y las calles sin paso de vehículos.
+
+### Mapa sin deformarse: zoom en pasos enteros (18-nov-2026)
+- El mapa de OpenStreetMap usa solo niveles de zoom enteros (`zoomSnap: 1`): con zoom fraccionario los cuadros del mapa se estiran y las calles se ven borrosas. Los cuadros nativos llegan hasta el nivel 19.
+- Al seguir el GPS o ir a un punto, el zoom es 18 (la barra de escala marca 100 m). Los encuadres automáticos de rutas se detienen en 18.
+- Se añadió la barra de escala en metros abajo a la izquierda.

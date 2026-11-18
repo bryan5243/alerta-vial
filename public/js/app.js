@@ -369,7 +369,7 @@ function renderOverflowBanner(ovf, rivers) {
 $('#ovf').addEventListener('click', () => {
   const pts = [...(state.overflows || []).map(o => [o.lat, o.lng]), ...(state.rivers || []).filter(r => r.status === 'desbordado').flatMap(r => r.coords)];
   if (!pts.length) return;
-  if (pts.length === 1) { map.panTo({ lat: pts[0][0], lng: pts[0][1] }, 16); setTimeout(() => [...shapes.overflows.values()][0]?.open?.(), 500); }
+  if (pts.length === 1) { map.panTo({ lat: pts[0][0], lng: pts[0][1] }, 18); setTimeout(() => [...shapes.overflows.values()][0]?.open?.(), 500); }
   else map.fitBounds(pts);
 });
 function renderRisk(r) {
@@ -419,7 +419,7 @@ $('#peek').addEventListener('click', () => {
 document.querySelector('.panel').addEventListener('click', e => {
   const it = e.target.closest('.item[data-id]'); if (!it) return;
   const sh = shapes[it.dataset.kind].get(it.dataset.id); const src = state[it.dataset.kind].find(x => x.id === it.dataset.id);
-  if (it.dataset.kind === 'overflows') { map.panTo({ lat: src.lat, lng: src.lng }, 16); setTimeout(() => sh?.open?.(), 500); if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+  if (it.dataset.kind === 'overflows') { map.panTo({ lat: src.lat, lng: src.lng }, 18); setTimeout(() => sh?.open?.(), 500); if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
   document.querySelectorAll('.item.selected').forEach(x => x.classList.remove('selected')); it.classList.add('selected');
   if (it.dataset.kind === 'routes' && !shapes.routes.has(it.dataset.id)) { altFocus.add(it.dataset.id); syncRoutes(); }
   const sh2 = it.dataset.kind === 'routes' ? shapes.routes.get(it.dataset.id) : sh;
