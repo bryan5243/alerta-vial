@@ -103,20 +103,28 @@ export async function safeRoute(o, d, zones) {
   }
   // Desvíos: puntos de paso a ambos lados de la zona que bloquea, cada vez más lejos.
   let vias = [], best = cands.sort((a, b) => a.blocked.length - b.blocked.length || a.duration - b.duration)[0];
-  for (let round = 0; round < 4 && best.blocked.length; round++) {
-    const z = best.blocked[0], brg = bearing(o, d);
-    const tries = [];
-    for (const dist of [220, 380, 600]) for (const side of [90, -90]) tries.push(offset(z.center, brg + side, dist));
+  const tryVias = async tries => {
     const results = await Promise.all(tries.map(async v => {
-      const all = [...vias, v].sort((a, b) => haversine(o, a) - haversine(o, b));
+      const all = [...vias, v].sort((x, y) => haversine(o, x) - haversine(o, y));
       try { const r = (await osrm([o, ...all, d], false, hd))[0]; return r ? { ...score(r), vias: all } : null; } catch { return null; }
     }));
     const ok = results.filter(Boolean);
-    if (!ok.length) break;
     // lo que se descubrió al probar los desvíos también cuenta: se vuelve a evaluar contra todas las zonas conocidas
     ok.forEach(c => { c.blocked = blockers(c.coords, Z); });
-    clean = ok.filter(c => !c.blocked.length).sort((a, b) => a.duration - b.duration)[0];
+    return ok;
+  };
+  for (let round = 0; round < 4 && best.blocked.length; round++) {
+    const z = best.blocked[0], brg = bearing(o, d);
+    // 1.º a los dos lados de la zona (lo habitual); si ninguno sirve, en las 8 direcciones y a más distancias
+    let ok = await tryVias([220, 380, 600].flatMap(dist => [90, -90].map(side => offset(z.center, brg + side, dist))));
+    clean = ok.filter(c => !c.blocked.length).sort((a, b) => cost(a) - cost(b))[0];
+    if (!clean) {
+      const more = await tryVias([160, 300, 500].flatMap(dist => [0, 45, 135, 180, 225, 315].map(a => offset(z.center, brg + a, dist))));
+      ok = [...ok, ...more];
+      clean = ok.filter(c => !c.blocked.length).sort((a, b) => cost(a) - cost(b))[0];
+    }
     if (clean) return { ...clean, avoided: directHits.map(x => x.name) };
+    if (!ok.length) break;
     best = ok.sort((a, b) => a.blocked.length - b.blocked.length || a.duration - b.duration)[0];
     vias = best.vias;
   }

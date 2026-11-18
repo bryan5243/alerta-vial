@@ -372,3 +372,6 @@ Caso real: una ruta pasaba por el Malecón, que no es transitable para vehículo
 
 ### Rutas con menos giros (18-nov-2026)
 Una ruta zigzagueaba por calles chicas cuando existía una avenida larga de doble sentido. Entre las rutas libres de zonas inundadas que devuelve OSRM, ahora se elige la de menor costo = duración + 25 s por cada giro, así una avenida recta gana a un zigzag que ahorra solo unos segundos. Si OSRM solo devuelve una ruta, esa es la que se usa: en ese caso la causa son los datos de OpenStreetMap.
+
+### Desvíos alrededor de un punto de riesgo: más intentos (18-nov-2026)
+Una ruta cruzaba un punto de riesgo (cruce Av. Javier Soto y Av. Guayas). `safeRoute` probaba 6 puntos de paso a los dos lados del punto; ahora, si ninguno da una ruta libre, prueba otros 18 en seis direcciones más y a 160, 300 y 500 m, hasta 4 rondas. Como las rutas las calcula OSRM, los desvíos siguen respetando el sentido de cada calle. Si de verdad todos los caminos pasan por el punto, la tarjeta dice "No hay una ruta totalmente libre… Extreme precaución".
