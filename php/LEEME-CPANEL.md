@@ -35,3 +35,11 @@ Sube los archivos nuevos **sin tocar** la carpeta `data` ni `config.php`. Antes 
 - Todo sale de la rama `php-cpanel`. `php/build.sh` arma la carpeta `php/dist-cpanel` (y el zip) con `public/` + `php/api` + `php/.htaccess` + `php/config.php`.
 - La lógica del clima (`php/api/lib/weather.php`) es un port línea a línea de `server/weather.js`; con los mismos datos de entrada produce los mismos resultados (se comparó contra la versión Node).
 - Prueba local: `php/build.sh`, poner una contraseña en `php/dist-cpanel/config.php` y `php -S 127.0.0.1:3000 -t php/dist-cpanel php/dev-router.php`.
+
+
+## Instalar en una subcarpeta (ej. https://emovttsr.gob.ec/alertavial/)
+
+El zip se genera ya preparado para la subcarpeta `/alertavial`. Sube su contenido a `public_html/alertavial/`
+(incluido el archivo oculto `.htaccess`), edita `config.php` y cambia `AV_ADMIN_PASSWORD`. El panel queda en
+`/alertavial/admin`. Si usas otro nombre de carpeta, regenera con `./build.sh /nombre`; para un dominio o
+subdominio propio, `./build.sh` sin argumento.
