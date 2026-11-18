@@ -62,6 +62,22 @@ function densify(c, step) {
 }
 
 // heading (opcional): rumbo del vehículo; así la ruta nueva sigue hacia donde va el auto en vez de mandarlo a dar la vuelta.
+// ¿La ruta entra a un tramo y vuelve por el mismo camino (una "punta" que no va a ningún lado)?
+// Pasa cuando un punto de paso cae al final de una calle sin salida: la ruta llega, da la vuelta y regresa.
+export function hasSpur(coords) {
+  const c = densify(coords, 10), P = i => ({ lat: c[i][0], lng: c[i][1] });
+  for (let k = 8; k < c.length; k++) {
+    for (let j = Math.max(0, k - 60); j <= k - 8; j++) {
+      if (haversine(P(j), P(k)) > 9) continue;
+      const m = Math.floor((j + k) / 2), out = c.slice(j, m + 1);
+      let back = true;
+      for (let t = m; t <= k && back; t++) back = nearestOnLine(P(t), out).d < 10;
+      if (back) return true;
+    }
+  }
+  return false;
+}
+
 async function osrm(pts, alternatives, heading = null) {
   const get = async hd => {
     const b = hd == null || isNaN(hd) ? '' : `&bearings=${[`${Math.round(((hd % 360) + 360) % 360)},70`, ...pts.slice(1).map(() => '')].join(';')}`;
@@ -108,7 +124,9 @@ export async function safeRoute(o, d, zones) {
       const all = [...vias, v].sort((x, y) => haversine(o, x) - haversine(o, y));
       try { const r = (await osrm([o, ...all, d], false, hd))[0]; return r ? { ...score(r), vias: all } : null; } catch { return null; }
     }));
-    const ok = results.filter(Boolean);
+    let ok = results.filter(Boolean);
+    const noSpur = ok.filter(c => !hasSpur(c.coords)); // un desvío que llega a una calle sin salida y regresa no sirve
+    if (noSpur.length) ok = noSpur;
     // lo que se descubrió al probar los desvíos también cuenta: se vuelve a evaluar contra todas las zonas conocidas
     ok.forEach(c => { c.blocked = blockers(c.coords, Z); });
     return ok;

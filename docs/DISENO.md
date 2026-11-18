@@ -375,3 +375,6 @@ Una ruta zigzagueaba por calles chicas cuando existía una avenida larga de dobl
 
 ### Desvíos alrededor de un punto de riesgo: más intentos (18-nov-2026)
 Una ruta cruzaba un punto de riesgo (cruce Av. Javier Soto y Av. Guayas). `safeRoute` probaba 6 puntos de paso a los dos lados del punto; ahora, si ninguno da una ruta libre, prueba otros 18 en seis direcciones más y a 160, 300 y 500 m, hasta 4 rondas. Como las rutas las calcula OSRM, los desvíos siguen respetando el sentido de cada calle. Si de verdad todos los caminos pasan por el punto, la tarjeta dice "No hay una ruta totalmente libre… Extreme precaución".
+
+### Sin "puntas" en las rutas (18-nov-2026)
+Al forzar un desvío con puntos de paso, a veces el punto caía al final de una calle sin salida y la ruta entraba, daba la vuelta y regresaba por el mismo camino (una punta que no va a ningún lado). `hasSpur` (public/js/nav.js) detecta ese ida y vuelta por el mismo trazo; los desvíos con punta se descartan mientras exista otro desvío sin ella. Una vuelta a la manzana (que sí es un giro real) no cuenta como punta.
