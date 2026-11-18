@@ -369,3 +369,6 @@ Caso real: una ruta pasaba por el Malecón, que no es transitable para vehículo
 ### Mapa más nítido, como openstreetmap.org (18-nov-2026)
 - `detectRetina`: en pantallas de alta densidad (teléfonos) se piden los cuadros del nivel siguiente, así las calles y sus nombres salen nítidos y pequeños, como en el sitio de OpenStreetMap, sin acercar tanto.
 - El mapa abre al menos en zoom 16 (antes 15), donde ya se leen los nombres de las calles.
+
+### Rutas con menos giros (18-nov-2026)
+Una ruta zigzagueaba por calles chicas cuando existía una avenida larga de doble sentido. Entre las rutas libres de zonas inundadas que devuelve OSRM, ahora se elige la de menor costo = duración + 25 s por cada giro, así una avenida recta gana a un zigzag que ahorra solo unos segundos. Si OSRM solo devuelve una ruta, esa es la que se usa: en ese caso la causa son los datos de OpenStreetMap.

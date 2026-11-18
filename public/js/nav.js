@@ -90,8 +90,11 @@ export async function safeRoute(o, d, zones) {
   base.forEach(absorb);
   const directHits = blockers(base[0].coords, Z);
   const score = r => ({ ...absorb(r), blocked: blockers(r.coords, Z) });
+  // A igual de rápida, se prefiere la ruta con menos giros (una avenida larga antes que zigzaguear por calles chicas): cada giro cuenta como 25 s extra.
+  const turns = r => (r.steps || []).filter(t => t.icon && t.icon !== 'straight' && t.type !== 'arrive' && t.type !== 'depart').length;
+  const cost = r => r.duration + 25 * turns(r);
   let cands = base.map(score);
-  let clean = cands.filter(c => !c.blocked.length).sort((a, b) => a.duration - b.duration)[0];
+  let clean = cands.filter(c => !c.blocked.length).sort((a, b) => cost(a) - cost(b))[0];
   if (clean) {
     // otras rutas libres de zonas inundadas (otro camino), para que la persona escoja
     const alts = cands.filter(c => c !== clean && !c.blocked.length).sort((a, b) => a.duration - b.duration)
