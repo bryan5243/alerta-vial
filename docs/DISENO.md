@@ -383,3 +383,6 @@ Al forzar un desvío con puntos de paso, a veces el punto caía al final de una 
 Pedido de EMOVTT: al escribir "cementerio" debe salir el de Santa Rosa, no los de otras ciudades; las demás ciudades se eligen por su nombre (Machala, Pasaje…).
 - Photon y Nominatim se consultan solo dentro de `AREA_M = 9 km` alrededor del centro (Photon con `bbox`, Nominatim con `bounded=1`), y además se descarta cualquier resultado fuera de ese radio.
 - Las ciudades salen de la lista `CITIES` (places.js), sin red, así que escribir "machala" o "pasaje" sigue funcionando.
+
+### Hasta 3 rutas para escoger, también al esquivar un peligro (18-nov-2026)
+Antes, cuando la ruta tenía que esquivar un punto de riesgo, solo se ofrecía una. Ahora `safeRoute` devuelve la mejor más hasta 2 alternativas distintas (que no compartan más del 85 % del trazo), libres de zonas inundadas, de calles sin paso de vehículos y sin puntas. Si OSRM no ofrece suficientes, se piden pasando por un punto a un lado del camino (a 30 %, 50 % y 70 % del trayecto). La tarjeta muestra los botones Ruta 1, 2 y 3. En el teléfono la barra de escala se oculta mientras la tarjeta de ruta está abierta.

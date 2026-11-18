@@ -110,13 +110,23 @@ export async function safeRoute(o, d, zones) {
   const turns = r => (r.steps || []).filter(t => t.icon && t.icon !== 'straight' && t.type !== 'arrive' && t.type !== 'depart').length;
   const cost = r => r.duration + 25 * turns(r);
   let cands = base.map(score);
+  // Rutas alternativas: hasta 2 más, distintas de la elegida, también libres de zonas inundadas y sin puntas.
+  // Si OSRM no ofrece suficientes, se piden pasando por un punto a un lado del camino (a 30 %, 50 % y 70 % del trayecto).
+  const sameRoute = (a, b) => { const pts = a.coords.filter((_, i) => i % 4 === 0); return pts.filter(q => nearestOnLine({ lat: q[0], lng: q[1] }, b.coords).d < 40).length / pts.length > .85; };
+  const finish = async (main, pool, avoided) => {
+    const alts = [];
+    const take = list => { for (const c of list.sort((a, b) => cost(a) - cost(b))) { if (alts.length >= 2) break; if (c === main || c.blocked.length || hasSpur(c.coords)) continue; if ([main, ...alts].some(x => sameRoute(c, x) || sameRoute(x, c))) continue; alts.push(c); } };
+    take(pool.slice());
+    if (alts.length < 2 && !main.blocked.length) {
+      const n = main.coords.length, tries = [];
+      for (const f of [.3, .5, .7]) { const i = Math.max(0, Math.min(n - 2, Math.floor(n * f))), a = { lat: main.coords[i][0], lng: main.coords[i][1] }, b = { lat: main.coords[i + 1][0], lng: main.coords[i + 1][1] }, br = bearing(a, b); for (const side of [90, -90]) tries.push(offset(a, br + side, 350)); }
+      const res = await Promise.all(tries.map(async v => { try { const r = (await osrm([o, v, d], false, hd))[0]; return r ? score(r) : null; } catch { return null; } }));
+      take(res.filter(Boolean));
+    }
+    return { ...main, avoided, alts };
+  };
   let clean = cands.filter(c => !c.blocked.length).sort((a, b) => cost(a) - cost(b))[0];
-  if (clean) {
-    // otras rutas libres de zonas inundadas (otro camino), para que la persona escoja
-    const alts = cands.filter(c => c !== clean && !c.blocked.length).sort((a, b) => a.duration - b.duration)
-      .filter((c, i, arr) => arr.findIndex(o => Math.abs(o.distance - c.distance) < 150 && Math.abs(o.duration - c.duration) < 90) === i && !(Math.abs(c.distance - clean.distance) < 150 && Math.abs(c.duration - clean.duration) < 90)).slice(0, 2);
-    return { ...clean, avoided: directHits.map(z => z.name), alts };
-  }
+  if (clean) return finish(clean, cands, directHits.map(z => z.name));
   // Desvíos: puntos de paso a ambos lados de la zona que bloquea, cada vez más lejos.
   let vias = [], best = cands.sort((a, b) => a.blocked.length - b.blocked.length || a.duration - b.duration)[0];
   const tryVias = async tries => {
@@ -141,7 +151,7 @@ export async function safeRoute(o, d, zones) {
       ok = [...ok, ...more];
       clean = ok.filter(c => !c.blocked.length).sort((a, b) => cost(a) - cost(b))[0];
     }
-    if (clean) return { ...clean, avoided: directHits.map(x => x.name) };
+    if (clean) return finish(clean, ok, directHits.map(x => x.name));
     if (!ok.length) break;
     best = ok.sort((a, b) => a.blocked.length - b.blocked.length || a.duration - b.duration)[0];
     vias = best.vias;
