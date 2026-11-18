@@ -154,7 +154,7 @@ async function load() {
   const pack = await fetchState(); state = pack.state; setNoCar(state?.config?.noCar);
   const reports = pack.reports;
   if (!map) {
-    map = await createMap({ provider: state.config.mapProvider, el: document.getElementById('map'), center: state.config.center, zoom: state.config.zoom, googleKey: state.config.googleMapsKey });
+    map = await createMap({ provider: state.config.mapProvider, el: document.getElementById('map'), center: state.config.center, zoom: Math.max(+state.config.zoom || 0, 16), googleKey: state.config.googleMapsKey });
     map.onClick(onMapClick);
   }
   render(reports);

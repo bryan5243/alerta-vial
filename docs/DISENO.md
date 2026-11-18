@@ -365,3 +365,7 @@ Caso real: una ruta pasaba por el Malecón, que no es transitable para vehículo
 - El mapa de OpenStreetMap usa solo niveles de zoom enteros (`zoomSnap: 1`): con zoom fraccionario los cuadros del mapa se estiran y las calles se ven borrosas. Los cuadros nativos llegan hasta el nivel 19.
 - Al seguir el GPS o ir a un punto, el zoom es 18 (la barra de escala marca 100 m). Los encuadres automáticos de rutas se detienen en 18.
 - Se añadió la barra de escala en metros abajo a la izquierda.
+
+### Mapa más nítido, como openstreetmap.org (18-nov-2026)
+- `detectRetina`: en pantallas de alta densidad (teléfonos) se piden los cuadros del nivel siguiente, así las calles y sus nombres salen nítidos y pequeños, como en el sitio de OpenStreetMap, sin acercar tanto.
+- El mapa abre al menos en zoom 16 (antes 15), donde ya se leen los nombres de las calles.
