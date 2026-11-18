@@ -1,0 +1,286 @@
+<?php
+// AlertaVial · API en PHP (equivalente a server/index.js). Todas las rutas /api/... llegan aquí por .htaccess.
+declare(strict_types=0);
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE & ~E_WARNING);
+require dirname(__DIR__) . '/config.php';
+require __DIR__ . '/lib/http.php'; require __DIR__ . '/lib/db.php'; require __DIR__ . '/lib/weather.php'; require __DIR__ . '/lib/flood.php';
+date_default_timezone_set('UTC');
+
+const DEFAULT_LEVEL_MESSAGES = [
+  'normal' => 'Vías operando con normalidad. Circule con precaución y respete la señalización.',
+  'amarilla' => 'Lluvia prevista en la ciudad. Planifique su ruta, evite zonas bajas y manténgase informado.',
+  'naranja' => 'Hay calles inundadas. Evite los sectores marcados en rojo y use las vías alternas en azul.',
+  'roja' => 'Riesgo alto de inundación. No circule por las zonas señaladas, aléjese de ríos y canales y siga las indicaciones de EMOVTT y la SGR.'];
+const DEFAULT_FEATURES = ['streets' => true, 'routes' => true, 'rivers' => true, 'points' => true, 'recommendations' => true, 'reports' => true, 'gps' => true, 'radar' => true, 'risk' => true, 'weather' => true, 'layers' => true];
+const DEFAULT_NOCAR = ['Malecón', 'peatonal', 'ciclovía', 'escalinata'];
+const LV = ['normal' => 0, 'amarilla' => 1, 'naranja' => 2, 'roja' => 3];
+const COLLECTIONS = [
+  'points' => ['pt', ['name', 'lat', 'lng', 'type', 'severity', 'description', 'active', 'auto', 'source']],
+  'streets' => ['st', ['name', 'coords', 'status', 'depthCm', 'note', 'active']],
+  'routes' => ['rt', ['name', 'coords', 'from', 'to', 'description', 'avoids', 'active', 'auto']],
+  'recommendations' => ['rc', ['text', 'level', 'active']],
+  'rivers' => ['rv', ['name', 'coords', 'status', 'note', 'active', 'source', 'kind']],
+  'zones' => ['zn', ['name', 'coords', 'severity', 'riverId', 'note', 'depthCm', 'active']],
+  'layers' => ['ly', ['name', 'color', 'geojson', 'kind', 'source', 'active']]];
+
+function out($data, int $code = 200): void { http_response_code($code); header('Content-Type: application/json; charset=utf-8'); header('Cache-Control: no-store'); echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE); exit; }
+function fail(int $code, string $msg): void { out(['error' => $msg], $code); }
+function body(): array { static $b = null; if ($b === null) { $j = json_decode((string)file_get_contents('php://input'), true); $b = is_array($j) ? $j : []; } return $b; }
+function bearer(): string {
+  $h = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+  if (!$h && function_exists('getallheaders')) foreach (getallheaders() as $k => $v) if (strtolower($k) === 'authorization') $h = $v;
+  return trim(preg_replace('/^Bearer\s+/i', '', $h));
+}
+function auth(): void { $t = bearer(); $s = sessions_load(); if ($t && isset($s[$t])) return; fail(401, 'Necesitas iniciar sesión como administrador.'); }
+function s_val($v, int $max) { return mb_substr((string)$v, 0, $max); }
+function is_num($v): bool { return is_int($v) || is_float($v); }
+function now_iso(): string { return gmdate('Y-m-d\TH:i:s') . '.' . sprintf('%03d', (int)(fmod(microtime(true), 1) * 1000)) . 'Z'; }
+function features_cfg(array $db): array { return array_merge(DEFAULT_FEATURES, $db['config']['features'] ?? []); }
+function level_msgs(array $db): array { return array_merge(DEFAULT_LEVEL_MESSAGES, $db['config']['levelMessages'] ?? []); }
+function gps_cfg(array $db): array { return array_merge(['warnM' => 400, 'dangerM' => 150, 'voice' => true], $db['config']['gps'] ?? []); }
+function nocar_cfg(array $db): array { return is_array($db['config']['noCar'] ?? null) ? $db['config']['noCar'] : DEFAULT_NOCAR; }
+function max_level(string $a, string $b): string { return LV[$a] >= LV[$b] ? $a : $b; }
+
+// ---------- Simulador de lluvia (vive en un archivo temporal; se apaga solo al terminar el tiempo) ----------
+function sim_on(): ?array { $s = cache_get('sim'); if ($s && ($s['until'] ?? 0) > now_ms()) return $s; return null; }
+function simulated_weather(?array $real): array {
+  $s = sim_on();
+  $w = ['ok' => true, 'source' => 'Simulación de prueba', 'simulated' => true, 'simUntil' => gmdate('c', (int)($s['until'] / 1000)), 'observedAt' => gmdate('c'),
+    'temperature' => $real['temperature'] ?? 26, 'rainNow' => $s['rainNow'], 'rainPast3h' => $s['rainPast3h'], 'rainNext3h' => $s['rainNext3h'], 'rainNext24h' => $s['rainNext3h'] * 2,
+    'probNext3h' => $s['probNext3h'], 'maxProbability24h' => $s['probNext3h'], 'cloudCover' => ($s['rainNow'] > 0 || $s['weatherCode']) ? 95 : 40, 'weatherCode' => $s['weatherCode'], 'hourly' => []];
+  if (!empty($real['sun'])) $w['sun'] = array_merge($real['sun'], ['sky' => ($s['rainNow'] > 0 || $s['weatherCode'] >= 50) ? 'lluvia' : $real['sun']['sky']]);
+  $w['hourly'] = $real['hourly'] ?? [];
+  if ($s['rainNow'] > 0 && $w['hourly']) $w['hourly'] = array_merge([raining_now($w['hourly'][0], $s['rainNow'])], array_slice($w['hourly'], 1));
+  $w['periods'] = day_parts($w['hourly']);
+  $w['outlook'] = $s['rainNow'] > 0 ? ['level' => 'lloviendo', 'title' => 'Está lloviendo', 'text' => 'Revisa las calles inundadas y las vías alternas antes de salir.', 'reasons' => []] : ($real['outlook'] ?? null);
+  return array_merge($w, describe($w));
+}
+function compute_status(): array {
+  $db = db_load(); $cfg = $db['config']['weather'];
+  $weather = get_weather(array_merge($cfg, ['metarStation' => $cfg['metarStation'] ?? 'SERO', 'owmKey' => AV_OWM_KEY ?: ($cfg['owmKey'] ?? '')]), local_sources($db['alert']['observed'] ?? null, $db['reports'] ?? []));
+  $tide = get_tide($cfg);
+  $flood = ($db['config']['floodEnabled'] ?? false) === true ? get_flood(array_merge($db['config']['center'], ['apiKey' => getenv('GOOGLE_FLOOD_KEY') ?: ($db['config']['googleFloodKey'] ?? '')])) : ['ok' => false, 'disabled' => true, 'gauges' => []];
+  if (sim_on()) $weather = simulated_weather($weather);
+  $risk = risk_index($weather, $cfg, $flood, $db['reports'] ?? [], $tide, array_values(array_filter($db['rivers'] ?? [], fn($r) => ($r['active'] ?? true) !== false)));
+  $suggested = max_level(level_from_weather($weather, $cfg), $risk['level']);
+  $effective = ($db['alert']['mode'] === 'manual' && !sim_on()) ? $db['alert']['level'] : $suggested;
+  sync_auto_points($effective);
+  return compact('weather', 'suggested', 'effective', 'risk', 'tide', 'flood');
+}
+// Puntos automáticos: se encienden solos con naranja/roja y se apagan cuando el semáforo baja de naranja
+function sync_auto_points(string $effective): void {
+  $db = db_load(); $prev = $db['alert']['lastEffective'] ?? null;
+  if ($prev === $effective) return;
+  db_lock(); $db = &db();
+  if ($prev && LV[$prev] >= 2 && LV[$effective] < 2) foreach ($db['points'] as &$p) if (!empty($p['auto']) && !empty($p['active'])) $p['active'] = false;
+  $db['alert']['lastEffective'] = $effective; db_save();
+}
+function weather_out(array $w): array { $w['hourly'] = array_slice($w['hourly'] ?? [], 0, 25); return $w; }
+
+// ---------- Enrutador ----------
+$method = $_SERVER['REQUEST_METHOD'];
+$path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$i = strpos($path, '/api/'); $route = trim($i === false ? $path : substr($path, $i + 5), '/');
+$seg = $route === '' ? [] : explode('/', $route);
+if ($method === 'OPTIONS') { http_response_code(204); exit; }
+
+try {
+  if ($route === 'login' && $method === 'POST') {
+    $b = body();
+    if (AV_ADMIN_PASSWORD === 'CAMBIAR-ESTA-CLAVE') fail(403, 'Falta elegir la contraseña del administrador: edita config.php en el hosting y cambia AV_ADMIN_PASSWORD.');
+    if (hash_equals(AV_ADMIN_USER, (string)($b['user'] ?? '')) && hash_equals(AV_ADMIN_PASSWORD, (string)($b['password'] ?? ''))) {
+      $t = bin2hex(random_bytes(24)); $s = sessions_load(); $s[$t] = ['user' => AV_ADMIN_USER, 'at' => now_ms()]; sessions_save($s);
+      out(['token' => $t, 'user' => AV_ADMIN_USER]);
+    }
+    usleep(400000); fail(401, 'Usuario o contraseña incorrectos. Revisa e intenta de nuevo.');
+  }
+  if ($route === 'logout' && $method === 'POST') { auth(); $s = sessions_load(); unset($s[bearer()]); sessions_save($s); out(['ok' => true]); }
+
+  // ----- Pública -----
+  if ($route === 'public/state' && $method === 'GET') {
+    $st = compute_status(); $db = db_load(); $f = features_cfg($db); $effective = $st['effective'];
+    $on = fn($k, $list) => !empty($f[$k]) ? array_values($list) : [];
+    $pointOn = fn($p) => !empty($p['active']) || (!empty($p['auto']) && LV[$effective] >= 2);
+    $routeOn = function ($r) use ($db, $pointOn, $f) {
+      if (empty($r['active'])) return false;
+      foreach ($db['points'] as $p) if ($p['id'] === ($r['avoids'] ?? null)) return $pointOn($p) && $f['points'];
+      foreach ($db['streets'] as $s) if ($s['id'] === ($r['avoids'] ?? null)) return !empty($s['active']) && ($s['status'] ?? '') !== 'despejada' && $f['streets'];
+      return true;
+    };
+    $act = fn($x) => ($x['active'] ?? true) !== false;
+    out(['config' => ['city' => $db['config']['city'], 'center' => $db['config']['center'], 'zoom' => $db['config']['zoom'], 'mapProvider' => $db['config']['mapProvider'], 'googleMapsKey' => $db['config']['googleMapsKey'] ?? '',
+        'rainThresholdMm' => $db['config']['weather']['rainThresholdMm'], 'gps' => gps_cfg($db), 'levelMessages' => level_msgs($db), 'features' => $f, 'noCar' => nocar_cfg($db)],
+      'alert' => array_merge($db['alert'], ['effective' => $effective, 'suggested' => $st['suggested']]),
+      'weather' => weather_out($st['weather']), 'risk' => $st['risk'], 'tide' => $st['tide'], 'flood' => $st['flood'],
+      'layers' => $on('layers', array_filter($db['layers'] ?? [], $act)), 'rivers' => $on('rivers', array_filter($db['rivers'] ?? [], $act)), 'zones' => $on('rivers', array_filter($db['zones'] ?? [], $act)),
+      'points' => $on('points', array_map(fn($p) => array_merge($p, ['active' => true]), array_filter($db['points'], $pointOn))),
+      'streets' => $on('streets', array_filter($db['streets'], fn($s) => !empty($s['active']))), 'routes' => $on('routes', array_filter($db['routes'], $routeOn)),
+      'recommendations' => $on('recommendations', array_filter($db['recommendations'], fn($r) => !empty($r['active'])))]);
+  }
+  if ($route === 'public/reports' && $method === 'POST') {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '0'; $lim = cache_get('rl_' . md5($ip)) ?: ['t' => []];
+    $recent = array_values(array_filter($lim['t'], fn($t) => now_ms() - $t < 600000));
+    if (count($recent) >= 5) fail(429, 'Has enviado muchos reportes seguidos. Espera unos minutos.');
+    if (empty(features_cfg(db_load())['reports'])) fail(403, 'Los reportes ciudadanos están desactivados por ahora.');
+    $b = body();
+    if (!is_num($b['lat'] ?? null) || !is_num($b['lng'] ?? null)) fail(400, 'Toca el mapa para indicar el lugar del reporte.');
+    if (mb_strlen(trim((string)($b['description'] ?? ''))) < 5) fail(400, 'Describe brevemente qué está pasando (mínimo 5 letras).');
+    db_lock(); $db = &db();
+    $r = ['id' => next_id('rep'), 'lat' => $b['lat'], 'lng' => $b['lng'], 'street' => s_val($b['street'] ?? '', 120), 'description' => s_val($b['description'], 400),
+      'level' => in_array($b['level'] ?? '', ['leve', 'moderado', 'grave'], true) ? $b['level'] : 'moderado', 'type' => ($b['type'] ?? '') === 'desborde' ? 'desborde' : 'inundacion', 'status' => 'pendiente', 'createdAt' => now_iso()];
+    $db['reports'][] = $r; db_save(); cache_put('rl_' . md5($ip), ['t' => array_merge($recent, [now_ms()])]);
+    out($r, 201);
+  }
+  if ($route === 'public/reports' && $method === 'GET') {
+    $db = db_load(); $f = features_cfg($db);
+    out(array_values(array_filter($db['reports'] ?? [], fn($r) => $r['status'] === 'verificado' && (($r['type'] ?? '') === 'desborde' ? $f['rivers'] : $f['reports']))));
+  }
+  if ($route === 'public/radar' && $method === 'GET') {
+    $c = cache_get('radar'); if ($c && now_ms() - $c['at'] < 300000) out($c['data']);
+    try {
+      $j = http_json(http_one(['url' => 'https://api.rainviewer.com/public/weather-maps.json', 'timeout' => 8]));
+      $past = $j['radar']['past'] ?? [];
+      $data = ['ok' => true, 'frames' => array_map(fn($f) => ['time' => $f['time'], 'url' => $j['host'] . $f['path'] . '/256/{z}/{x}/{y}/2/1_1.png'], array_slice($past, -6))];
+    } catch (Throwable $e) { $data = ['ok' => false, 'error' => $e->getMessage(), 'frames' => []]; }
+    cache_put('radar', ['at' => now_ms(), 'data' => $data]); out($data);
+  }
+
+  // ----- Administración -----
+  if ($seg && $seg[0] === 'admin') { auth(); admin_routes($method, array_slice($seg, 1)); }
+  fail(404, 'Ruta no encontrada.');
+} catch (Throwable $e) { error_log('AlertaVial: ' . $e->getMessage()); fail(500, 'Ocurrió un error inesperado en el servidor.'); }
+
+function pick(array $obj, array $fields): array { $o = []; foreach ($fields as $f) if (array_key_exists($f, $obj)) $o[$f] = $obj[$f]; return $o; }
+function validate_item(string $name, array $it): ?string {
+  $empty = fn($k) => !isset($it[$k]) || $it[$k] === '' || $it[$k] === null;
+  $cnt = fn($k) => is_array($it[$k] ?? null) ? count($it[$k]) : 0;
+  if ($name === 'points') { if ($empty('name')) return 'Escribe un nombre para el punto crítico.'; if (!is_num($it['lat'] ?? null) || !is_num($it['lng'] ?? null)) return 'Haz clic en el mapa para ubicar el punto.'; }
+  if ($name === 'streets' || $name === 'routes') { if ($empty('name')) return 'Escribe el nombre de la calle o ruta.'; if ($cnt('coords') < 2) return 'Dibuja al menos dos puntos sobre el mapa.'; }
+  if ($name === 'rivers') { if ($empty('name')) return 'Escribe el nombre del río o canal.'; if ($cnt('coords') < 2) return 'Dibuja el cauce con al menos dos puntos sobre el mapa.'; }
+  if ($name === 'zones') { if ($empty('name')) return 'Escribe un nombre para la zona de desborde.'; if ($cnt('coords') < 3) return 'Marca al menos tres puntos para cerrar el área de desborde.'; }
+  if ($name === 'recommendations' && $empty('text')) return 'Escribe el texto de la recomendación.';
+  if ($name === 'layers') {
+    if ($empty('name')) return 'Escribe un nombre para la capa.';
+    $g = $it['geojson'] ?? null;
+    if (!is_array($g) || ($g['type'] ?? '') !== 'FeatureCollection' || !is_array($g['features'] ?? null)) return 'El archivo no tiene un formato de capa válido (GeoJSON FeatureCollection).';
+    if (!count($g['features'])) return 'La capa no tiene elementos.';
+  }
+  return null;
+}
+
+function admin_routes(string $method, array $seg): void {
+  $r = implode('/', $seg); $b = body();
+  if ($r === 'state' && $method === 'GET') {
+    $st = compute_status(); $db = db_load();
+    out(array_merge($db, ['config' => array_merge($db['config'], ['gps' => gps_cfg($db), 'levelMessages' => level_msgs($db), 'features' => features_cfg($db), 'noCar' => nocar_cfg($db)]),
+      'alert' => array_merge($db['alert'], ['effective' => $st['effective'], 'suggested' => $st['suggested']]), 'weather' => weather_out($st['weather']), 'risk' => $st['risk'], 'tide' => $st['tide'],
+      'reports' => $db['reports'] ?? [], 'layers' => $db['layers'] ?? [], 'rivers' => $db['rivers'] ?? [], 'zones' => $db['zones'] ?? []]));
+  }
+  if ($r === 'config' && $method === 'PUT') {
+    db_lock(); $db = &db(); $c = $b;
+    if (!empty($c['city'])) $db['config']['city'] = s_val($c['city'], 80);
+    if (!empty($c['center'])) $db['config']['center'] = ['lat' => (float)$c['center']['lat'], 'lng' => (float)$c['center']['lng']];
+    if (!empty($c['zoom'])) $db['config']['zoom'] = (int)$c['zoom'];
+    if (!empty($c['mapProvider'])) $db['config']['mapProvider'] = $c['mapProvider'] === 'google' ? 'google' : 'leaflet';
+    if (array_key_exists('googleMapsKey', $c)) $db['config']['googleMapsKey'] = trim((string)$c['googleMapsKey']);
+    if (!empty($c['features']) && is_array($c['features'])) { $f = []; foreach (DEFAULT_FEATURES as $k => $_) $f[$k] = ($c['features'][$k] ?? true) !== false; $db['config']['features'] = $f; }
+    if (array_key_exists('noCar', $c)) {
+      $list = is_array($c['noCar']) ? $c['noCar'] : preg_split('/\n|,/', (string)$c['noCar']);
+      $db['config']['noCar'] = array_slice(array_values(array_unique(array_filter(array_map(fn($x) => s_val(trim((string)$x), 60), $list), fn($x) => $x !== ''))), 0, 40);
+    }
+    if (array_key_exists('floodEnabled', $c)) $db['config']['floodEnabled'] = $c['floodEnabled'] === true;
+    if (array_key_exists('googleFloodKey', $c)) $db['config']['googleFloodKey'] = trim((string)$c['googleFloodKey']);
+    if (!empty($c['levelMessages'])) { $m = []; foreach (DEFAULT_LEVEL_MESSAGES as $k => $d) { $v = s_val(trim((string)($c['levelMessages'][$k] ?? '')), 300); $m[$k] = $v !== '' ? $v : $d; } $db['config']['levelMessages'] = $m; }
+    if (!empty($c['gps'])) $db['config']['gps'] = ['warnM' => max(50, (int)($c['gps']['warnM'] ?? 0) ?: 400), 'dangerM' => max(20, (int)($c['gps']['dangerM'] ?? 0) ?: 150), 'voice' => ($c['gps']['voice'] ?? true) !== false];
+    if (!empty($c['weather']) && is_array($c['weather'])) {
+      $o = $db['config']['weather']; $w = $c['weather'];
+      $db['config']['weather'] = array_merge($o, $w, ['lat' => (float)($w['lat'] ?? $o['lat']), 'lng' => (float)($w['lng'] ?? $o['lng']),
+        'rainThresholdMm' => (float)($w['rainThresholdMm'] ?? $o['rainThresholdMm']), 'rainThresholdMm3h' => (float)($w['rainThresholdMm3h'] ?? $o['rainThresholdMm3h']),
+        'metarStation' => substr(preg_replace('/[^A-Z0-9]/', '', strtoupper(trim((string)($w['metarStation'] ?? $o['metarStation'] ?? 'SERO')))), 0, 4),
+        'owmKey' => s_val(trim((string)($w['owmKey'] ?? $o['owmKey'] ?? '')), 64)]);
+    }
+    db_save(); out($db['config']);
+  }
+  if ($r === 'backup' && $method === 'GET') {
+    $db = db_load(); header('Content-Type: application/json'); header('Content-Disposition: attachment; filename="alertavial-respaldo-' . gmdate('Y-m-d-H-i') . '.json"');
+    echo json_encode($db, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT); exit;
+  }
+  if ($r === 'restore' && $method === 'POST') {
+    $ok = isset($b['config'], $b['alert']); foreach (['points', 'streets', 'routes', 'recommendations'] as $k) $ok = $ok && is_array($b[$k] ?? null);
+    if (!$ok) fail(400, 'El archivo no es un respaldo de AlertaVial.');
+    db_reset($b); @unlink(data_dir() . '/cache/sim.json');
+    $counts = []; foreach (['points', 'streets', 'routes', 'rivers', 'zones', 'layers', 'reports'] as $k) $counts[$k] = count($b[$k] ?? []);
+    out(['ok' => true, 'counts' => $counts]);
+  }
+  if ($r === 'observed' && $method === 'PUT') {
+    db_lock(); $db = &db(); $i = (int)round((float)($b['intensity'] ?? 0));
+    if (!$i) unset($db['alert']['observed']);
+    else $db['alert']['observed'] = ['intensity' => max(1, min(4, $i)), 'at' => now_iso(), 'until' => gmdate('Y-m-d\TH:i:s', time() + (int)max(15, min(720, (float)($b['minutes'] ?? 0) ?: 120)) * 60) . '.000Z'];
+    db_save(); out($db['alert']['observed'] ?? ['intensity' => 0]);
+  }
+  if ($r === 'simulation' && $method === 'GET') out(sim_on() ?: ['active' => false]);
+  if ($r === 'simulation' && $method === 'PUT') {
+    if (empty($b['active'])) { @unlink(data_dir() . '/cache/sim.json'); out(['active' => false]); }
+    $n = fn($v, $max) => max(0, min($max, (float)$v));
+    $s = ['active' => true, 'preset' => s_val($b['preset'] ?? 'manual', 30), 'rainNow' => $n($b['rainNow'] ?? 0, 200), 'rainPast3h' => $n($b['rainPast3h'] ?? 0, 500), 'rainNext3h' => $n($b['rainNext3h'] ?? 0, 500),
+      'probNext3h' => $n($b['probNext3h'] ?? 0, 100), 'weatherCode' => (int)round($n($b['weatherCode'] ?? 0, 99)), 'until' => now_ms() + (int)max(1, min(240, (float)($b['minutes'] ?? 0) ?: 30)) * 60000];
+    cache_put('sim', $s); out($s);
+  }
+  if ($r === 'alert' && $method === 'PUT') {
+    db_lock(); $db = &db();
+    if (!empty($b['mode'])) $db['alert']['mode'] = $b['mode'] === 'manual' ? 'manual' : 'auto';
+    if (!empty($b['level']) && isset(LV[$b['level']])) $db['alert']['level'] = $b['level'];
+    if (array_key_exists('message', $b)) $db['alert']['message'] = s_val($b['message'], 300);
+    $db['alert']['updatedAt'] = now_iso(); db_save(); out($db['alert']);
+  }
+  // Reportes ciudadanos
+  if ($seg && $seg[0] === 'reports' && count($seg) === 2) {
+    db_lock(); $db = &db(); $id = $seg[1];
+    if ($method === 'PUT') {
+      foreach ($db['reports'] as &$rep) if ($rep['id'] === $id) {
+        if (in_array($b['status'] ?? '', ['pendiente', 'verificado', 'descartado', 'retirado'], true)) $rep['status'] = $b['status'];
+        $rep['reviewedAt'] = now_iso(); if ($rep['status'] === 'retirado') $rep['clearedAt'] = $rep['reviewedAt'];
+        db_save(); out($rep);
+      }
+      fail(404, 'No se encontró el reporte.');
+    }
+    if ($method === 'DELETE') { $db['reports'] = array_values(array_filter($db['reports'] ?? [], fn($x) => $x['id'] !== $id)); db_save(); out(['ok' => true]); }
+  }
+  // CRUD genérico
+  $name = $seg[0] ?? '';
+  if (isset(COLLECTIONS[$name])) {
+    [$prefix, $fields] = COLLECTIONS[$name];
+    if (count($seg) === 2 && $seg[1] === 'bulk' && $method === 'PUT') {
+      db_lock(); $db = &db(); $db[$name] ??= []; $n = 0;
+      foreach ($db[$name] as &$it) {
+        if (is_array($b['ids'] ?? null) && !in_array($it['id'], $b['ids'], true)) continue;
+        if (is_bool($b['active'] ?? null)) $it['active'] = $b['active'];
+        if ($name === 'points' && is_bool($b['auto'] ?? null)) $it['auto'] = $b['auto'];
+        $it['updatedAt'] = now_iso(); $n++;
+      }
+      db_save(); out(['ok' => true, 'updated' => $n]);
+    }
+    if (count($seg) === 1 && $method === 'POST') {
+      db_lock(); $db = &db(); $db[$name] ??= [];
+      $it = pick($b, $fields); $err = validate_item($name, $it); if ($err) fail(400, $err);
+      $it['id'] = next_id($prefix); $it['active'] = ($it['active'] ?? true) !== false; $it['createdAt'] = now_iso();
+      $db[$name][] = $it; db_save(); out($it, 201);
+    }
+    if (count($seg) === 2 && $method === 'PUT') {
+      db_lock(); $db = &db(); $db[$name] ??= [];
+      foreach ($db[$name] as $i => $x) if ($x['id'] === $seg[1]) {
+        $merged = array_merge($x, pick($b, $fields), ['updatedAt' => now_iso()]);
+        $err = validate_item($name, $merged); if ($err) fail(400, $err);
+        $db[$name][$i] = $merged; db_save(); out($merged);
+      }
+      fail(404, 'No se encontró el elemento.');
+    }
+    if (count($seg) === 2 && $method === 'DELETE') {
+      db_lock(); $db = &db(); $db[$name] ??= []; $before = count($db[$name]);
+      $db[$name] = array_values(array_filter($db[$name], fn($x) => $x['id'] !== $seg[1]));
+      if (count($db[$name]) === $before) fail(404, 'No se encontró el elemento.');
+      db_save(); out(['ok' => true]);
+    }
+  }
+  fail(404, 'Ruta no encontrada.');
+}

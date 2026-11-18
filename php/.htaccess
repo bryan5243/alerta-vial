@@ -1,0 +1,17 @@
+# AlertaVial (PHP) · reglas de Apache para cPanel
+Options -Indexes
+AddType application/manifest+json .webmanifest
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json image/svg+xml
+</IfModule>
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # Algunos hostings no pasan el encabezado Authorization a PHP: se lo pasamos nosotros
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+  # Carpeta de datos y archivos internos: nunca se sirven
+  RewriteRule ^(data|api/lib)/ - [F,L]
+  # La API en PHP
+  RewriteRule ^api/(.*)$ api/index.php [L,QSA]
+  # Panel de administración
+  RewriteRule ^admin/?$ admin.html [L]
+</IfModule>
