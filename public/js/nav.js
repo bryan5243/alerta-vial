@@ -244,7 +244,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     };
     draw(near, 'load');
     try {
-      const far = await new Promise((ok, ko) => { timer = setTimeout(() => remote(q, center).then(ok, ko), 150); });
+      const far = await new Promise((ok, ko) => { timer = setTimeout(() => remote(q, center).then(ok, ko), 90); });
       if (my !== seq) return;
       const rows = [...near, ...far.filter(f => !near.some(n => n.name === f.name && Math.abs(n.lat - f.lat) < .03))].slice(0, 9);
       draw(rows, rows.length ? '' : 'none');
@@ -401,7 +401,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     plTimer = setTimeout(async () => {
       try { const far = await planRemote(q, center); if (my !== plSeq) return; const rows = [...near, ...far.filter(f => !near.some(n => n.name === f.name && Math.abs(n.lat - f.lat) < .03))]; draw(rows, rows.length ? '' : 'none'); }
       catch { if (my === plSeq) draw(near, navigator.onLine === false ? 'off' : near.length ? '' : 'none'); }
-    }, 150);
+    }, 90);
   });
   $('#pl-go').addEventListener('click', () => { if (!planTo) return; closePlan(); input.value = planTo.name; $('#nav-clear').hidden = false; go(planTo); });
 

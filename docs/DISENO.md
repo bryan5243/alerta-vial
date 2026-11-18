@@ -386,3 +386,8 @@ Pedido de EMOVTT: al escribir "cementerio" debe salir el de Santa Rosa, no los d
 
 ### Hasta 3 rutas para escoger, también al esquivar un peligro (18-nov-2026)
 Antes, cuando la ruta tenía que esquivar un punto de riesgo, solo se ofrecía una. Ahora `safeRoute` devuelve la mejor más hasta 2 alternativas distintas (que no compartan más del 85 % del trazo), libres de zonas inundadas, de calles sin paso de vehículos y sin puntas. Si OSRM no ofrece suficientes, se piden pasando por un punto a un lado del camino (a 30 %, 50 % y 70 % del trayecto). La tarjeta muestra los botones Ruta 1, 2 y 3. En el teléfono la barra de escala se oculta mientras la tarjeta de ruta está abierta.
+
+### Buscador más rápido (18-nov-2026)
+- Espera de 90 ms (antes 150) después de la última letra.
+- Photon y Nominatim ya no van uno detrás del otro: Photon sale al instante y, si en 0,6 s no responde o no trae lugares, Nominatim sale a la vez; gana el primero con resultados (antes había que esperar hasta 3,5 s a que Photon fallara). Tiempos máximos: Photon 3 s, Nominatim 4,5 s.
+- Los resultados locales (ciudades, puntos y calles del mapa) siguen apareciendo al instante, sin red.

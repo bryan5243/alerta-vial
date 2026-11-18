@@ -100,6 +100,15 @@ async function nominatim(q, center, signal) {
 // Cada consulta tiene su propio tiempo límite y se corta si el usuario sigue escribiendo
 const limit = (master, ms) => { const c = new AbortController(), t = setTimeout(() => c.abort(), ms); master.signal.addEventListener('abort', () => c.abort()); return { signal: c.signal, done: () => clearTimeout(t) }; };
 
+// Devuelve el primer resultado con lugares; si ninguno trae, la lista vacía; si todos fallan, el error (o la cancelación).
+async function firstWithResults(promises, me) {
+  return new Promise((ok, ko) => {
+    let left = promises.length, lastErr = null;
+    const end = () => { if (--left) return; lastErr ? ko(lastErr) : ok([]); };
+    for (const p of promises) p.then(r => { if (r.length) ok(r); else end(); }, e => { lastErr = lastErr || e; end(); });
+  });
+}
+
 // Búsqueda con red: se cancela sola si el usuario sigue escribiendo, y recuerda lo ya buscado
 export function createRemoteSearch() {
   let master = null; const cache = new Map();
@@ -107,10 +116,13 @@ export function createRemoteSearch() {
     const q = raw.trim(), key = norm(q);
     if (cache.has(key)) return cache.get(key);
     master?.abort(); const me = (master = new AbortController());
+    // Photon responde primero casi siempre; si tarda más de 0,6 s se lanza Nominatim a la vez y gana el primero que traiga resultados.
+    const l1 = limit(me, 3000), l2 = limit(me, 4500);
+    let finished = false;
+    const run = (fn, sig, delay) => new Promise((ok, ko) => setTimeout(() => (finished || me.signal.aborted ? ok([]) : fn(q, center, sig).then(ok, ko)), delay));
     let res = [];
-    const l1 = limit(me, 3500);
-    try { res = await photon(q, center, l1.signal); } catch (e) { if (me.signal.aborted) throw e; } finally { l1.done(); }
-    if (!res.length) { const l2 = limit(me, 5000); try { res = await nominatim(q, center, l2.signal); } finally { l2.done(); } }
+    try { res = await firstWithResults([run(photon, l1.signal, 0), run(nominatim, l2.signal, 600)], me); } finally { finished = true; l1.done(); l2.done(); }
+    if (me.signal.aborted) throw new DOMException('abort', 'AbortError');
     // solo lugares de Santa Rosa (el servicio a veces devuelve de otras ciudades aunque se le pida el área)
     const out = dedupe(res.filter(r => haversine(center, r) <= AREA_M), center);
     cache.set(key, out); if (cache.size > 40) cache.delete(cache.keys().next().value);
