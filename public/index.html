@@ -319,7 +319,7 @@
   html.app-nav .shell{height:var(--app-h,100dvh);min-height:0;overflow:hidden}
   html.app-nav .main{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr)}
   html.app-nav .mapwrap{order:0;position:relative;top:auto;z-index:auto;--peek:var(--tb)}
-  html.app-nav .map-full .mapwrap,html.app-nav .gps-on .mapwrap{--peek:0px}
+  html.app-nav .map-full .mapwrap,html.app-nav .gps-on .mapwrap{--peek:0px;position:fixed;inset:0;top:0;height:var(--app-h,100dvh);z-index:1300}
   html.app-nav .panel{position:fixed;left:0;right:0;bottom:0;margin:0;z-index:1100;display:flex;flex-direction:column;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
     background:var(--surface);border:0;border-top:1px solid var(--line);border-radius:0;max-height:calc(var(--app-h,100dvh) - var(--chrome,116px) - 8px)}
   html.app-nav.sheet-open .panel{height:calc(var(--app-h,100dvh)*.6);border-radius:22px 22px 0 0;border-top:0;box-shadow:0 -10px 36px rgb(15 34 56/.22);animation:sheet-up .3s cubic-bezier(.2,.8,.2,1)}
