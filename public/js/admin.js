@@ -579,6 +579,8 @@ function secConfig() {
     <div class="card"><h3 style="margin-bottom:6px">Calles donde no pasan vehículos</h3><p class="small muted" style="margin-bottom:12px">Malecones, peatonales, ciclovías o escalinatas. Las rutas y las vías alternas nunca pasarán por una calle cuyo nombre contenga alguna de estas palabras. Una por línea.</p>
       <form id="fnc" novalidate><div class="field"><label for="nocar">Nombres o palabras</label><textarea id="nocar" rows="5" placeholder="Malecón">${esc((c.noCar || []).join('\n'))}</textarea></div>
       <button class="btn">Guardar calles sin paso</button></form></div>
+    <div class="card"><h3 style="margin-bottom:6px">Actualizar el mapa</h3><p class="small muted" style="margin-bottom:12px">Borra los cuadros del mapa de OpenStreetMap y los archivos guardados en este equipo, y vuelve a descargarlos. Úsalo si el mapa se ve borroso, desactualizado o con calles que no coinciden. Los datos de la ciudad no se borran.</p>
+      <button type="button" class="btn" id="map-refresh">Actualizar mapa de OpenStreetMap</button></div>
     <div class="card backup-card"><h3 style="margin-bottom:6px">Respaldo de datos</h3>
       <p class="small muted" style="margin-bottom:12px">Descarga todo (puntos, calles, vías alternas, ríos, zonas, capas, reportes y configuración) en un archivo. Sirve para pasar los datos de tu computadora al hosting, o para guardarlos antes de un cambio grande. En el hosting gratuito, guárdalo como <code>data/initial.json</code> para que se cargue solo cada vez que el servidor se reinicia.</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap"><button type="button" class="btn" id="bk-down">${ICON.inbox} Descargar respaldo</button><label class="btn ghost" for="bk-file" style="cursor:pointer">${ICON.layers} Restaurar desde archivo</label><input type="file" id="bk-file" accept=".json,application/json" hidden></div></div>
@@ -606,6 +608,10 @@ function secConfig() {
       <button class="btn">Guardar avisos GPS</button></form></div>`);
   setTools([]); drawMode = null; drawAll();
   q('[data-feat]').forEach(cb => cb.onchange = () => cb.closest('.feat').classList.toggle('on', cb.checked));
+  id('map-refresh').onclick = async e => { const b = e.currentTarget; b.disabled = true; b.textContent = 'Actualizando…';
+    try { if ('caches' in window) for (const k of await caches.keys()) await caches.delete(k);
+      if (navigator.serviceWorker) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); } catch {}
+    toast('Mapa actualizado: se descargará de nuevo', 'ok'); setTimeout(() => { location.href = '/?mapa=' + Date.now(); }, 900); };
   id('fnc').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { noCar: id('nocar').value } }); toast('Calles sin paso de vehículos guardadas', 'ok'); db = await api('/api/admin/state'); setNoCar(db.config.noCar); };
   id('ff').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { features: Object.fromEntries(q('[data-feat]').map(cb => [cb.dataset.feat, cb.checked])) } }); toast('Mapa público actualizado', 'ok'); db = await api('/api/admin/state'); };
   id('fon').onchange = () => { id('fkey-f').hidden = !id('fon').checked; };
