@@ -90,6 +90,14 @@ function renderGlance(nFlood) {
 const goTab = id => { const t = document.querySelector(`.tab[data-tab="${id}"]`); if (!t || t.hidden) return; t.click();
   if (window.innerWidth <= 900 && !matchMedia('(min-width:768px) and (min-height:561px)').matches) window.scrollTo({ top: Math.max(0, $('.panel').getBoundingClientRect().top + window.scrollY - Math.round(window.innerHeight * .3)), behavior: 'smooth' }); };
 $('#glance').addEventListener('click', e => { const b = e.target.closest('[data-go]'); if (b) goTab(b.dataset.go); });
+// Sensación térmica, humedad y viento
+function feelCard(w) {
+  if (w.apparent == null) return '';
+  const h = w.heat;
+  return `<div class="wx-feel${h ? ` hf-${h.key}` : ''}"><div class="wf-h"><span class="wf-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0z"/><path d="M12 9v7"/></svg></span><b>Sensación térmica</b><span class="wf-v">${Math.round(w.apparent)}<small>°C</small></span></div>
+    <div class="wf-m">${h ? `<span class="wf-tag">${esc(h.label)}</span>` : ''}${w.humidity != null ? `<span>Humedad <b>${w.humidity} %</b></span>` : ''}${w.wind != null ? `<span>Viento <b>${w.wind} km/h</b></span>` : ''}${w.temperature != null ? `<span>Aire <b>${Math.round(w.temperature)}°C</b></span>` : ''}</div>
+    ${h?.advice ? `<p>${esc(h.advice)}</p>` : ''}</div>`;
+}
 // Probabilidad estimada de tormenta eléctrica (próximas 6 h)
 function thunderCard(w) {
   const t = w.thunder; if (!t) return '';
@@ -115,13 +123,13 @@ function weatherCard(w) {
     </div>` : '';
   return `<div class="wx-card sky-${sky}">
     <div class="wx-now"><span class="wx-big">${WX_IC[skyIcon(w)]}</span>
-      <div class="wx-now-t"><b>${esc(w.condition || 'Clima')}</b><small>${w.temperature != null ? `${Math.round(w.temperature)}°C · ` : ''}dato de las ${wxTime(w.observedAt)}</small></div>${uvBadge}</div>
+      <div class="wx-now-t"><b>${esc(w.condition || 'Clima')}</b><small>${w.temperature != null ? `${Math.round(w.temperature)}°C${w.apparent != null ? ` · sensación ${Math.round(w.apparent)}°C` : ''} · ` : ''}dato de las ${wxTime(w.observedAt)}</small></div>${uvBadge}</div>
     <div class="wx-auto${w.raining ? ' on' : ''}" role="status"><i aria-hidden="true"></i><b>${w.raining ? 'Lloviendo ahora' : 'No está lloviendo'}</b><small>detección automática${w.models?.length ? ` · ${w.models.filter(m => m.ok).length} fuentes` : ''}</small></div>
     <div class="wx-stats">
       <div class="stat${w.raining ? ' rain' : ''}"><b>${dec(w.rainNow)}<small> mm/h</small></b><span>Lluvia ahora</span></div>
       <div class="stat"><b>${dec(w.rainPast3h)}<small> mm</small></b><span>Últimas 3 h</span></div>
       <div class="stat"><b>${dec(w.rainNext3h)}<small> mm</small></b><span>Próximas 3 h</span></div>
-    </div>${rainHours(w)}${thunderCard(w)}${sunRow}</div>`;
+    </div>${rainHours(w)}${feelCard(w)}${thunderCard(w)}${sunRow}</div>`;
 }
 function renderWx(w) {
   const chip = $('#wx-chip'); wxFx.set(w); applySky(w);

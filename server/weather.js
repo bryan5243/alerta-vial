@@ -39,7 +39,7 @@ let om = { at: 0, key: '', models: null, goodAt: 0, good: null, blockedUntil: 0,
 function omQuery(lat, lng, models) {
   const url = new URL('https://api.open-meteo.com/v1/forecast');
   url.search = new URLSearchParams({ latitude: lat, longitude: lng,
-    current: 'precipitation,rain,showers,temperature_2m,weather_code,cloud_cover,is_day,uv_index,shortwave_radiation',
+    current: 'precipitation,rain,showers,temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_gusts_10m,weather_code,cloud_cover,is_day,uv_index,shortwave_radiation',
     daily: 'uv_index_max,sunrise,sunset', hourly: 'precipitation,precipitation_probability,cape,weather_code',
     past_hours: 3, forecast_hours: 24, timezone: 'America/Guayaquil', ...(models ? { models } : {}) });
   return url;
@@ -65,7 +65,7 @@ function omParse(model, j, sfx) {
   // Sol: si es de día, índice UV (OMS), radiación solar en W/m² y horas de salida y puesta del sol
   const sun = useCur ? { isDay: cur.is_day ?? null, uvIndex: cur.uv_index ?? null, radiation: cur.shortwave_radiation ?? null,
     uvMax: g(D, 'uv_index_max')?.[0] ?? null, sunrise: g(D, 'sunrise')?.[0] ?? null, sunset: g(D, 'sunset')?.[0] ?? null } : null;
-  return { model, name: MODELS[model], ok: true, observedAt: cur.time, temperature: useCur ? cur.temperature_2m : undefined, cloudCover: useCur ? cur.cloud_cover : undefined, sun,
+  return { model, name: MODELS[model], ok: true, observedAt: cur.time, temperature: useCur ? cur.temperature_2m : undefined, apparent: useCur ? cur.apparent_temperature : undefined, humidity: useCur ? cur.relative_humidity_2m : undefined, wind: useCur ? cur.wind_speed_10m : undefined, gust: useCur ? cur.wind_gusts_10m : undefined, cloudCover: useCur ? cur.cloud_cover : undefined, sun,
     weatherCode: code, rainNow, intensity: storm ? 4 : mmInt(rainNow),
     rainPast3h: sum(hours.slice(Math.max(0, nowIdx - 3), nowIdx + 1)), rainNext3h: sum(hours.slice(nowIdx + 1, nowIdx + 4)),
     rainNext24h: sum(hours.slice(nowIdx + 1, nowIdx + 25)),
@@ -134,7 +134,7 @@ async function metnoSource(lat, lng) {
     const hourly = ts.slice(0, 25).filter(x => x.data?.next_1_hours).map(x => ({ time: locHour(x.time), precipitation: x.data.next_1_hours.details?.precipitation_amount ?? 0,
       probability: x.data.next_1_hours.details?.probability_of_precipitation ?? null, thunder: /thunder/.test(x.data.next_1_hours.summary?.symbol_code || '') || undefined }));
     data = { model: 'met_no', name: 'MET Norway (yr.no)', ok: true, observedAt: local.toISOString().slice(0, 16),
-      temperature: det.air_temperature, cloudCover: cloud == null ? undefined : Math.round(cloud), weatherCode: code, rainNow, intensity: storm ? 4 : mmInt(rainNow),
+      temperature: det.air_temperature, humidity: det.relative_humidity, wind: det.wind_speed == null ? undefined : r1(det.wind_speed * 3.6), apparent: apparentTemp(det.air_temperature, det.relative_humidity, det.wind_speed), cloudCover: cloud == null ? undefined : Math.round(cloud), weatherCode: code, rainNow, intensity: storm ? 4 : mmInt(rainNow),
       sun: { isDay: isDay ? 1 : 0, uvIndex: isDay ? uv : 0, radiation: null, uvMax: null, sunrise: null, sunset: null },
       rainPast3h: 0, rainNext3h: r1(mm(1) + mm(2) + mm(3)), rainNext24h: r1(ts.slice(1, 25).reduce((a, _, i) => a + mm(i + 1), 0)),
       probNext3h: prob.length ? Math.max(...prob) : null, maxProbability24h: null, hourly,
@@ -267,6 +267,12 @@ export function combine({ models, metar, owm, at }, extra = []) {
     w.probEstimated = w.hourly.slice(0, 4).every(h => h.estimated);
   }
   w.periods = dayParts(w.hourly);
+  { // sensación térmica, humedad y viento (del mejor modelo; si falta, de otro o calculada)
+    const pk = k => base?.[k] ?? okM.find(m => m[k] != null)?.[k];
+    w.humidity = pk('humidity') == null ? undefined : Math.round(pk('humidity')); w.wind = pk('wind') == null ? undefined : Math.round(pk('wind')); w.gust = pk('gust') == null ? undefined : Math.round(pk('gust'));
+    w.apparent = pk('apparent') ?? apparentTemp(w.temperature, w.humidity, (w.wind || 0) / 3.6);
+    w.heat = heatInfo(w.apparent);
+  }
   w.sun = sunInfo(base?.sun || okM.find(m => m.sun?.uvIndex != null)?.sun, w.cloudCover, intensity);
   Object.assign(w, describe(w));
   if (intensity !== w.intensity) Object.assign(w, { intensity, raining: intensity > 0, condition: intensity ? INT_TXT[intensity] : w.condition });
@@ -375,6 +381,24 @@ function thunderOf(w, { okM, metar }) {
     baja: 'Hay poca probabilidad de tormenta eléctrica, pero conviene revisar el clima si vas a salir.',
     nula: 'No se espera tormenta eléctrica en las próximas 6 horas.' }[level];
   return { prob: p, level, label, text, reasons: level === 'nula' ? [] : reasons, now, models: { votes, of: n }, cape: cape >= 0 ? Math.round(cape) : null };
+}
+
+
+// Sensación térmica (temperatura aparente, fórmula de Steadman: suma la humedad y resta el viento). t en °C, rh en %, ws en m/s.
+export function apparentTemp(t, rh, ws) {
+  if (t == null || rh == null) return undefined;
+  const e = rh / 100 * 6.105 * Math.exp(17.27 * t / (237.7 + t));
+  return r1(t + 0.33 * e - 0.70 * (ws || 0) - 4);
+}
+// Nivel de calor según la sensación térmica y consejo para la gente
+export function heatInfo(app) {
+  if (app == null) return null;
+  const L = [[41, 'peligro', 'Calor peligroso', 'Evita el sol y el esfuerzo; hidrátate y busca lugares frescos. Riesgo de golpe de calor.'],
+    [32, 'extremo', 'Muy caluroso', 'Toma agua seguido, descansa a la sombra y evita actividad intensa al mediodía.'],
+    [27, 'caluroso', 'Caluroso', 'Hidrátate y usa ropa ligera. Cuida a niños y adultos mayores.'],
+    [18, 'agradable', 'Agradable', ''], [-99, 'fresco', 'Fresco', 'Lleva una prenda de abrigo.']];
+  const [, key, label, advice] = L.find(x => app >= x[0]);
+  return { key, label, advice };
 }
 
 // Índice UV según la escala de la OMS, con el consejo para la gente
