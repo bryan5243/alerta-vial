@@ -56,22 +56,24 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
     wrap.style.setProperty('--me', `${dv.northUp ? dv.hdg : 0}deg`);
     wrap.classList.toggle('drive-flat', dv.tilt === 0); wrap.classList.toggle('drive-north', dv.northUp);
   };
-  // Bucle de animación (60 fps): la cámara persigue al vehículo con suavizado, así el movimiento es fluido aunque el GPS avise cada 0,5–1 s
+  // Bucle de animación (60 fps): la cámara persigue al vehículo con suavizado. Solo se desplaza el panel (panBy, barato);
+  // el zoom usa la animación nativa de Leaflet (GPU) y la cámara espera a que termine.
   const dvLoop = (t) => {
     if (!dv.active) return;
     dv.raf = requestAnimationFrame(dvLoop);
     const dt = Math.min(.1, dv.last ? (t - dv.last) / 1000 : .016); dv.last = t;
     if (dv.ext) return;
-    const kp = 1 - Math.exp(-dt / .32), kr = 1 - Math.exp(-dt / .28), kz = 1 - Math.exp(-dt / .35);
+    const kp = 1 - Math.exp(-dt / .3), kr = 1 - Math.exp(-dt / .25);
     dv.lat += (dv.tLat - dv.lat) * kp; dv.lng += (dv.tLng - dv.lng) * kp;
     const h0 = dv.hdg; if (dv.tHdg != null) dv.hdg += (dv.tHdg - dv.hdg) * kr;
     dv.lean += ((Math.max(-14, Math.min(14, (dv.hdg - h0) / Math.max(dt, .001) * .35)) * (dv.speed > 2 ? 1 : 0)) - dv.lean) * (1 - Math.exp(-dt / .2));
-    dv.z += (dv.tZ - dv.z) * kz; if (Math.abs(dv.tZ - dv.z) < .003) dv.z = dv.tZ;
     dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars(); wrap.style.setProperty('--lean', dv.lean.toFixed(2) + 'deg');
-    dv.inLoop = true; map.setView([dv.lat, dv.lng], dv.z, { animate: false }); dv.inLoop = false;
+    if (dv.tZ !== map.getZoom()) { dv.ext = true; map.setZoom(dv.tZ); return; }
+    const p = map.latLngToContainerPoint([dv.lat, dv.lng]), c = map.getSize().divideBy(2), d = p.subtract(c);
+    if (Math.abs(d.x) > .2 || Math.abs(d.y) > .2) map.panBy(d, { animate: false });
   };
-  map.on('zoomstart', () => { if (dv.active && !dv.inLoop) dv.ext = true; });
-  map.on('zoomend', () => { if (dv.active && dv.ext) { dv.ext = false; dv.z = dv.tZ = map.getZoom(); dv.manualUntil = Date.now() + 25000; } });
+  map.on('zoomstart', () => { if (dv.active) dv.ext = true; });
+  map.on('zoomend', () => { if (!dv.active) return; dv.ext = false; if (Date.now() <= dv.manualUntil || dv.tZ === map.getZoom()) dv.tZ = map.getZoom(); });
   const drive = {
     get active() { return dv.active; }, get tilt() { return dv.tilt; }, get northUp() { return dv.northUp; },
     start(u) {
@@ -83,7 +85,7 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
       map.invalidateSize({ animate: false });
       const z0 = Math.max(map.getZoom(), 17);
       map.setView([c.lat ?? c[0], c.lng ?? c[1]], z0, { animate: false });
-      dv.lat = dv.tLat = c.lat ?? c[0]; dv.lng = dv.tLng = c.lng ?? c[1]; dv.z = dv.tZ = z0; dv.ext = false; dv.lean = 0; dv.last = 0;
+      dv.lat = dv.tLat = c.lat ?? c[0]; dv.lng = dv.tLng = c.lng ?? c[1]; dv.tZ = z0; dv.ext = false; dv.lean = 0; dv.last = 0;
       dv.raf = requestAnimationFrame(dvLoop);
     },
     stop() {
@@ -103,9 +105,9 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
       dv.pt = { lat: u.lat, lng: u.lng, t: now };
       const v = (sp ?? 0) * 3.6; dv.speed = v;
       wrap.classList.toggle('drive-moving', v > 2);
-      if (Date.now() > dv.manualUntil) dv.tZ = v > 70 ? 16 : v > 45 ? 17 : 18;
+      if (Date.now() > dv.manualUntil && !dv.ext) dv.tZ = v > 70 ? 16 : v > 45 ? 17 : 18;
     },
-    zoom(dz) { dv.manualUntil = Date.now() + 25000; dv.tZ = Math.max(13, Math.min(19, dv.tZ + dz)); },
+    zoom(dz) { dv.manualUntil = Date.now() + 25000; dv.tZ = Math.max(13, Math.min(19, Math.round(map.getZoom()) + dz)); },
     toggleTilt() { dv.tilt = dv.tilt ? 0 : 55; dvVars(); return dv.tilt; },
     toggleNorth() { dv.northUp = !dv.northUp; dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars(); return dv.northUp; },
   };

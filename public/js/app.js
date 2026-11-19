@@ -238,7 +238,12 @@ $('#btn-alt').addEventListener('click', () => {
   toast(altAll ? `Mostrando las ${state.routes.length} vías alternas. Vuelve a tocar el botón para ocultarlas.` : 'Vías alternas ocultas. Saldrán solas cuando elijas un destino o navegues.', 'ok');
 });
 
-if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/sw.js').catch(() => {});
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  // si ya había una versión instalada y llega una nueva, recarga una vez (así no queda CSS/JS viejo hasta salir y entrar)
+  const had = !!navigator.serviceWorker.controller; let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !reloaded && !document.body.classList.contains('gps-on')) { reloaded = true; location.reload(); } });
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
 
 // Instalar como app (PWA): Android/Chrome/Edge muestran el botón Instalar; en iPhone se explica "Agregar a inicio".
 (() => {

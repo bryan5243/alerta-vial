@@ -139,8 +139,8 @@
   .pin-w{width:30px;height:30px}
   .drive-horizon,.drive-me,.drive-ctl,.drive-attr{display:none}
   .mapwrap.drive{background:linear-gradient(#bcd3e6,#e7eef4 45%);overflow:clip;contain:paint}
-  .mapwrap.drive #map{inset:auto;left:50%;top:64%;width:250%;height:290%;transform-origin:50% 50%;
-    transform:translate(-50%,-50%) perspective(820px) rotateX(var(--tilt,55deg)) rotateZ(var(--rot,0deg));transition:transform .6s linear}
+  .mapwrap.drive #map{inset:auto;left:50%;top:64%;width:210%;height:240%;transform-origin:50% 50%;will-change:transform;
+    transform:translate(-50%,-50%) perspective(820px) rotateX(var(--tilt,55deg)) rotateZ(var(--rot,0deg))}
   .mapwrap.drive.drive-flat #map{top:60%}
   .mapwrap.drive .leaflet-control-container,.mapwrap.drive .me,.mapwrap.drive .map-fallback{display:none}
   .mapwrap.drive .leaflet-marker-icon .pin-w{transform:rotate(calc(var(--rot,0deg) * -1)) scaleY(var(--unsq,1.7));transform-origin:50% 100%}
