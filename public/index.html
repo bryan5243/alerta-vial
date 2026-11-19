@@ -143,25 +143,34 @@
     transform:translate(-50%,-50%) perspective(820px) rotateX(var(--tilt,55deg)) rotateZ(var(--rot,0deg));transition:transform .6s linear}
   .mapwrap.drive.drive-flat #map{top:60%}
   .mapwrap.drive .leaflet-control-container,.mapwrap.drive .me,.mapwrap.drive .map-fallback{display:none}
-  .mapwrap.drive .leaflet-marker-icon .pin-w{transform:rotate(calc(var(--rot,0deg) * -1)) scaleY(var(--unsq,1.7));transform-origin:50% 100%;transition:transform .6s linear}
+  .mapwrap.drive .leaflet-marker-icon .pin-w{transform:rotate(calc(var(--rot,0deg) * -1)) scaleY(var(--unsq,1.7));transform-origin:50% 100%}
   .mapwrap.drive.drive-flat .leaflet-marker-icon .pin-w{transform:rotate(calc(var(--rot,0deg) * -1))}
   .mapwrap.drive .drive-horizon{display:block;position:absolute;left:0;right:0;top:0;height:34%;z-index:430;pointer-events:none;background:linear-gradient(#bcd3e6 0%,rgb(188 211 230/.85) 35%,rgb(231 238 244/0) 100%)}
   .mapwrap.drive.drive-flat .drive-horizon{display:none}
-  .mapwrap.drive .drive-me{display:block;position:absolute;left:50%;top:64%;width:40px;height:80px;margin:-52px 0 0 -20px;z-index:640;pointer-events:none;transform:rotate(var(--me,0deg));transition:transform .6s linear;filter:drop-shadow(0 4px 6px rgb(0 0 0/.35))}
+  .mapwrap.drive .drive-me{display:block;position:absolute;left:50%;top:64%;width:48px;height:152px;margin:-105px 0 0 -24px;z-index:640;pointer-events:none;transform:rotate(var(--me,0deg));filter:drop-shadow(0 4px 6px rgb(0 0 0/.35))}
   .mapwrap.drive.drive-flat .drive-me{top:60%}
   .drive-me svg{width:100%;height:100%;overflow:visible}
   .drive-me .body{fill:#F5A623;stroke:#fff;stroke-width:3;stroke-linejoin:round}
   .drive-me .roof{fill:#1B2B8B}
   .drive-me .gl{fill:#9fd0ee;stroke:#1B2B8B;stroke-width:1.5}
   .drive-me .w{fill:#1b1b1b;stroke:none}
+  .drive-me svg{rotate:var(--lean,0deg);transform-origin:50% 60%}
+  .drive-me .beam{fill:url(#beamG);stroke:none;opacity:.0;transition:opacity .4s}
+  .mapwrap.drive-moving .drive-me .beam{opacity:.9;animation:beam 1.6s ease-in-out infinite}
+  .mapwrap.drive-moving .drive-me svg{animation:carbob .5s ease-in-out infinite alternate}
+  .drive-me .ring{position:absolute;left:50%;top:62%;width:76px;height:76px;margin:-38px 0 0 -38px;border-radius:50%;border:3px solid rgb(245 166 35/.7);animation:carping 1.8s ease-out infinite;z-index:-1}
+  .drive-me .tail{fill:#ff3b30;stroke:none;opacity:.55}
+  @keyframes carbob{from{transform:translateY(0) scale(1)}to{transform:translateY(-1.6px) scale(1.025)}}
+  @keyframes beam{0%,100%{opacity:.75}50%{opacity:1}}
+  @keyframes carping{from{transform:scale(.55);opacity:.9}to{transform:scale(1.5);opacity:0}}
   .mapwrap.drive .drive-ctl{display:flex;position:absolute;right:10px;top:calc(50% - 20px);flex-direction:column;gap:8px;z-index:660}
   .mapwrap.drive .drive-ctl[hidden]{display:none}
   .drive-ctl .btn{width:44px;height:44px;min-height:44px;padding:0;background:var(--surface);color:var(--ink);border-color:var(--line);box-shadow:var(--shadow-1);justify-content:center}
-  .drive-ctl .dc-needle{width:30px;height:30px;transform:rotate(var(--rot,0deg));transition:transform .6s linear}
+  .drive-ctl .dc-needle{width:30px;height:30px;transform:rotate(var(--rot,0deg))}
   .drive-ctl #drive-tilt b{font-size:.8rem}
   .mapwrap.drive .drive-attr{display:block;position:absolute;left:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 4px);z-index:660;font-size:.66rem;color:#33475b;background:rgb(255 255 255/.75);padding:1px 6px;border-radius:6px}
   .mapwrap.drive .nav-picking{cursor:default}
-  @media (prefers-reduced-motion:reduce){ .mapwrap.drive #map,.drive-me,.drive-ctl .dc-needle{transition-duration:.01s} }
+  @media (prefers-reduced-motion:reduce){ .drive-me svg,.drive-me .ring,.drive-me .beam{animation:none!important} .mapwrap.drive #map,.drive-me,.drive-ctl .dc-needle{transition-duration:.01s} }
   /* Foto del reporte y campana de avisos (todas las pantallas) */
   .req{color:#C62E2E;font-weight:700;font-size:.8em;text-transform:uppercase;letter-spacing:.04em;margin-left:4px}
   .photo{border:2px dashed #8FA3BC;border-radius:16px;background:rgb(27 43 139/.04);overflow:hidden;transition:border-color .2s}
@@ -318,7 +327,7 @@
     <div class="mapwrap">
       <div id="map" role="application" aria-label="Mapa de calles inundadas"></div>
       <div class="drive-horizon" aria-hidden="true"></div>
-      <div class="drive-me" id="drive-me" aria-hidden="true"><svg viewBox="0 0 60 120"><ellipse cx="30" cy="66" rx="29" ry="50" fill="#000" opacity=".18" stroke="none"/><rect x="3" y="22" width="9" height="20" rx="4" class="w"/><rect x="48" y="22" width="9" height="20" rx="4" class="w"/><rect x="3" y="82" width="9" height="20" rx="4" class="w"/><rect x="48" y="82" width="9" height="20" rx="4" class="w"/><path class="body" d="M30 4c14 0 22 10 23 26l2 64c0 14-8 22-25 22S5 108 5 94l2-64C8 14 16 4 30 4z"/><path class="gl" d="M14 38c4-5 28-5 32 0l3 14H11z"/><path class="gl" d="M12 88h36l-3 14c-6 3-24 3-30 0z"/><rect class="roof" x="14" y="55" width="32" height="30" rx="7"/><circle cx="16" cy="9" r="4" fill="#FFE27A" stroke="#fff" stroke-width="1.5"/><circle cx="44" cy="9" r="4" fill="#FFE27A" stroke="#fff" stroke-width="1.5"/><path d="M30 14l-6 10h12z" fill="#fff" stroke="none"/></svg></div>
+      <div class="drive-me" id="drive-me" aria-hidden="true"><span class="ring"></span><svg viewBox="0 -70 60 190"><defs><linearGradient id="beamG" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#FFF3B0" stop-opacity=".85"/><stop offset="1" stop-color="#FFF3B0" stop-opacity="0"/></linearGradient></defs><path class="beam" d="M12 6 L-8 -66 L68 -66 L48 6z"/><ellipse cx="30" cy="66" rx="29" ry="50" fill="#000" opacity=".18" stroke="none"/><rect x="3" y="22" width="9" height="20" rx="4" class="w"/><rect x="48" y="22" width="9" height="20" rx="4" class="w"/><rect x="3" y="82" width="9" height="20" rx="4" class="w"/><rect x="48" y="82" width="9" height="20" rx="4" class="w"/><path class="body" d="M30 4c14 0 22 10 23 26l2 64c0 14-8 22-25 22S5 108 5 94l2-64C8 14 16 4 30 4z"/><path class="gl" d="M14 38c4-5 28-5 32 0l3 14H11z"/><path class="gl" d="M12 88h36l-3 14c-6 3-24 3-30 0z"/><rect class="roof" x="14" y="55" width="32" height="30" rx="7"/><rect class="tail" x="8" y="108" width="12" height="5" rx="2"/><rect class="tail" x="40" y="108" width="12" height="5" rx="2"/><circle cx="16" cy="9" r="4" fill="#FFE27A" stroke="#fff" stroke-width="1.5"/><circle cx="44" cy="9" r="4" fill="#FFE27A" stroke="#fff" stroke-width="1.5"/><path d="M30 14l-6 10h12z" fill="#fff" stroke="none"/></svg></div>
       <div class="drive-ctl" id="drive-ctl" hidden>
         <button class="btn icon" id="drive-compass" aria-label="Brújula: tocar para fijar el norte arriba" title="Brújula · tocar: norte arriba / rumbo arriba"><svg viewBox="0 0 40 40" class="dc-needle"><circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".35"/><path d="M20 5l6 15h-12z" fill="#C62E2E"/><path d="M20 35l-6-15h12z" fill="currentColor" opacity=".55"/></svg></button>
         <button class="btn icon" id="drive-tilt" aria-label="Cambiar inclinación 3D / 2D" title="Inclinación 3D / 2D"><b>2D</b></button>
