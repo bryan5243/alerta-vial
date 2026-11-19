@@ -145,7 +145,7 @@
   .mapwrap.drive .leaflet-control-container,.mapwrap.drive .me,.mapwrap.drive .map-fallback{display:none}
   .mapwrap.drive .leaflet-marker-icon .pin-w{transform:rotate(calc(var(--rot,0deg) * -1)) scaleY(var(--unsq,1.7));transform-origin:50% 100%}
   .mapwrap.drive.drive-flat .leaflet-marker-icon .pin-w{transform:rotate(calc(var(--rot,0deg) * -1))}
-  .mapwrap.drive .drive-horizon{display:block;position:absolute;left:0;right:0;top:0;height:34%;z-index:430;pointer-events:none;background:linear-gradient(#bcd3e6 0%,rgb(188 211 230/.85) 35%,rgb(231 238 244/0) 100%)}
+  .mapwrap.drive .drive-horizon{display:block;position:absolute;left:0;right:0;top:0;height:44%;z-index:430;pointer-events:none;background:linear-gradient(#bcd3e6 0%,#bcd3e6 18%,rgb(200 220 236/.9) 40%,rgb(214 228 240/.55) 70%,rgb(231 238 244/0) 100%)}
   .mapwrap.drive.drive-flat .drive-horizon{display:none}
   .mapwrap.drive .drive-me{display:block;position:absolute;left:50%;top:64%;width:30px;height:95px;margin:-66px 0 0 -15px;z-index:640;pointer-events:none;transform:rotate(var(--me,0deg));filter:drop-shadow(0 4px 6px rgb(0 0 0/.35))}
   .mapwrap.drive.drive-flat .drive-me{top:60%}
@@ -188,15 +188,18 @@
   body.drive-on .gps-bar .gps-eta b{color:#0F7B4F;font-size:1.6rem}
   .gps-eta{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 10px;line-height:1.15} .gps-eta[hidden]{display:none}
   .gps-eta b{font-family:var(--font-display);font-size:1.6rem;font-weight:700;color:#0F7B4F;font-variant-numeric:tabular-nums} .gps-eta span{font-size:.9rem;color:var(--muted)}
-  body.drive-on .sim-bar{position:fixed;left:10px;right:10px;bottom:calc(104px + env(safe-area-inset-bottom,0px));margin:0;padding:6px 8px;border-radius:16px;border-left:0;flex-direction:row;align-items:center;gap:6px}
+  body.drive-on .sim-bar{position:fixed;left:10px;right:10px;bottom:calc(150px + env(safe-area-inset-bottom,0px));margin:0;padding:6px 8px;border-radius:16px;border-left:0;flex-direction:row;align-items:center;gap:6px}
   body.drive-on .sim-head,body.drive-on .sim-opt,body.drive-on .sim-ctl>span,body.drive-on #sim-reset{display:none} body.drive-on .sim-ctl .btn{white-space:nowrap;font-size:.8rem} body.drive-on .sim-ctl{flex-wrap:nowrap;gap:6px;width:100%} body.drive-on .sim-ctl .btn{min-height:36px;padding:0 10px}
-  body.drive-on .mapwrap.drive .drive-ctl{top:auto;bottom:calc(112px + env(safe-area-inset-bottom,0px))} body.drive-on.sim-mode .mapwrap.drive .drive-ctl{bottom:calc(164px + env(safe-area-inset-bottom,0px))}
+  body.drive-on .mapwrap.drive .drive-ctl{top:auto;bottom:calc(158px + env(safe-area-inset-bottom,0px))} body.drive-on.sim-mode .mapwrap.drive .drive-ctl{bottom:calc(210px + env(safe-area-inset-bottom,0px))}
   body.drive-on .drive-ctl .btn{border-radius:50%;box-shadow:0 2px 10px rgb(15 34 56/.22);border:0}
-  body.drive-on .mapwrap.drive .drive-attr{bottom:calc(env(safe-area-inset-bottom,0px) + 100px)}
+  body.drive-on .mapwrap.drive .drive-attr{bottom:calc(env(safe-area-inset-bottom,0px) + 146px)}
   /* ruta resaltada como en Google Maps: línea gruesa con borde oscuro */
   body.drive-on path.casing-route.nav{stroke:#0E1F6B!important;stroke-width:17px!important;stroke-opacity:1!important}
   body.drive-on path.base-route.nav{stroke:#3B6BFF!important;stroke-width:12px!important;filter:none}
-  body.drive-on path.flow-route.nav{stroke:#fff!important;stroke-width:3px!important;stroke-dasharray:3 24}
+  body.drive-on .leaflet-overlay-pane path{filter:none!important}
+  body.drive-on path.flow-river,body.drive-on path.zone,body.drive-on .ovf .rip,body.drive-on .ovf .drop,body.drive-on .ovf .pool{animation:none!important}
+  body.drive-on path.flow-route:not(.nav){animation:none!important}
+  body.drive-on path.flow-route.nav{animation-duration:2s!important;stroke:#fff!important;stroke-width:3px!important;stroke-dasharray:3 24}
   @media (prefers-reduced-motion:reduce){ .drive-me svg,.drive-me .ring,.drive-me .beam{animation:none!important} .mapwrap.drive #map,.drive-me,.drive-ctl .dc-needle{transition-duration:.01s} }
   /* Foto del reporte y campana de avisos (todas las pantallas) */
   .req{color:#C62E2E;font-weight:700;font-size:.8em;text-transform:uppercase;letter-spacing:.04em;margin-left:4px}

@@ -49,12 +49,14 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
   /* ---- Vista de conducción 3D (como Google Maps): el mapa se inclina, gira según el rumbo y sigue al vehículo ---- */
   const wrap = el.parentElement;
   const dv = { active: false, tilt: 45, northUp: false, hdg: 0, rot: 0, manualUntil: 0, zoomBase: 18 };
+  const meEl = document.getElementById('drive-me'), ctlEl = document.getElementById('drive-ctl');
+  let lastPinRot = null, lastTilt = null;
+  // El mapa se gira por transform directo (barato); las variables que heredan los marcadores se actualizan solo si cambian lo suficiente
   const dvVars = () => {
-    const k = Math.cos(dv.tilt * Math.PI / 180);
-    wrap.style.setProperty('--rot', `${dv.rot}deg`); wrap.style.setProperty('--tilt', `${dv.tilt}deg`);
-    wrap.style.setProperty('--unsq', String(+(1 / Math.max(.3, k)).toFixed(3)));
-    wrap.style.setProperty('--me', `${dv.northUp ? dv.hdg : 0}deg`);
-    wrap.classList.toggle('drive-flat', dv.tilt === 0); wrap.classList.toggle('drive-north', dv.northUp);
+    el.style.transform = `translate(-50%,-50%) perspective(820px) rotateX(${dv.tilt}deg) rotateZ(${dv.rot.toFixed(2)}deg)`;
+    if (lastPinRot == null || Math.abs(dv.rot - lastPinRot) >= 1.5) { lastPinRot = dv.rot; wrap.style.setProperty('--rot', `${dv.rot.toFixed(1)}deg`); ctlEl?.style.setProperty('--rot', `${dv.rot.toFixed(1)}deg`); }
+    if (lastTilt !== dv.tilt) { lastTilt = dv.tilt; const k = Math.cos(dv.tilt * Math.PI / 180); wrap.style.setProperty('--tilt', `${dv.tilt}deg`); wrap.style.setProperty('--unsq', String(+(1 / Math.max(.3, k)).toFixed(3))); wrap.classList.toggle('drive-flat', dv.tilt === 0); }
+    meEl?.style.setProperty('--me', `${dv.northUp ? dv.hdg.toFixed(1) : 0}deg`); wrap.classList.toggle('drive-north', dv.northUp);
   };
   // Bucle de animación (60 fps): la cámara persigue al vehículo con suavizado. Solo se desplaza el panel (panBy, barato);
   // el zoom usa la animación nativa de Leaflet (GPU) y la cámara espera a que termine.
@@ -67,7 +69,7 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
     dv.lat += (dv.tLat - dv.lat) * kp; dv.lng += (dv.tLng - dv.lng) * kp;
     const h0 = dv.hdg; if (dv.tHdg != null) dv.hdg += (dv.tHdg - dv.hdg) * kr;
     dv.lean += ((Math.max(-14, Math.min(14, (dv.hdg - h0) / Math.max(dt, .001) * .35)) * (dv.speed > 2 ? 1 : 0)) - dv.lean) * (1 - Math.exp(-dt / .2));
-    dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars(); wrap.style.setProperty('--lean', dv.lean.toFixed(2) + 'deg');
+    dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars(); meEl?.style.setProperty('--lean', dv.lean.toFixed(1) + 'deg');
     if (dv.tZ !== map.getZoom()) { dv.ext = true; map.setZoom(dv.tZ); return; }
     const p = map.latLngToContainerPoint([dv.lat, dv.lng]), c = map.getSize().divideBy(2), d = p.subtract(c);
     if (Math.abs(d.x) > .2 || Math.abs(d.y) > .2) map.panBy(d, { animate: false });
@@ -91,7 +93,7 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
     stop() {
       if (!dv.active) return; dv.active = false; cancelAnimationFrame(dv.raf);
       wrap.classList.remove('drive', 'drive-flat', 'drive-north', 'drive-moving'); document.body.classList.remove('drive-on');
-      ['--rot', '--tilt', '--unsq', '--me', '--lean'].forEach(k => wrap.style.removeProperty(k));
+      ['--rot', '--tilt', '--unsq'].forEach(k => wrap.style.removeProperty(k)); el.style.transform = ''; lastPinRot = lastTilt = null; ['--rot'].forEach(k => ctlEl?.style.removeProperty(k)); ['--me', '--lean'].forEach(k => meEl?.style.removeProperty(k));
       map.options.touchZoom = true; map.options.scrollWheelZoom = true; map.options.doubleClickZoom = true;
       map.dragging.enable(); map.touchZoom.disable(); map.touchZoom.enable(); map.scrollWheelZoom.disable(); map.scrollWheelZoom.enable();
       const c = map.getCenter(); map.invalidateSize({ animate: false }); map.setView(c, Math.min(map.getZoom(), 18), { animate: false });
