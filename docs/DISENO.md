@@ -391,3 +391,8 @@ Antes, cuando la ruta tenía que esquivar un punto de riesgo, solo se ofrecía u
 - Espera de 90 ms (antes 150) después de la última letra.
 - Photon y Nominatim ya no van uno detrás del otro: Photon sale al instante y, si en 0,6 s no responde o no trae lugares, Nominatim sale a la vez; gana el primero con resultados (antes había que esperar hasta 3,5 s a que Photon fallara). Tiempos máximos: Photon 3 s, Nominatim 4,5 s.
 - Los resultados locales (ciudades, puntos y calles del mapa) siguen apareciendo al instante, sin red.
+
+
+## Reportes con foto y avisos de lluvia
+- **Foto obligatoria** en los reportes ciudadanos: se reduce en el teléfono (1280 px, JPEG) y el servidor la guarda en `data/photos/` (junto a la base). Se ve en el panel de revisión y en el mapa cuando el reporte se verifica. Un reporte sin foto se rechaza.
+- **Avisos push** (campana en el mapa): el servidor revisa el clima cada 5 min y avisa cuando se aproxima lluvia, hay tormenta, empieza a llover o sube el color de la alerta (máx. uno del mismo tipo cada 2 h). Claves VAPID y suscripciones en `db.push`. Admin → Configuración → "Avisos en el teléfono" envía una prueba. Requiere HTTPS (Render lo da) e iPhone con la app en la pantalla de inicio.

@@ -112,6 +112,10 @@
     .fab{left:10px;bottom:12px;padding:10px 14px;border-radius:999px;font-size:.9rem;gap:6px}
     .fab .fab-ic svg{width:18px;height:18px;display:block}
     @media (max-width:420px){ .fab .fab-t{font-size:.85rem} }
+    .photo-pick{display:flex;align-items:center;justify-content:center;gap:10px;min-height:88px;border:2px dashed var(--line,#C9D3DF);border-radius:14px;padding:10px;cursor:pointer;text-align:center;color:var(--muted,#5A6B7D);font-weight:600;overflow:hidden}
+    .photo-pick img{max-width:100%;max-height:180px;border-radius:10px;display:block}
+    .photo-pick.bad{border-color:#C62E2E}
+    #btn-push[aria-pressed=true]{background:var(--brand,#1B2B8B);color:#fff;border-color:transparent}
     #btn-full{display:inline-flex}
     .map-full .mapwrap{position:fixed;inset:0;height:100dvh;z-index:1300;top:0}
     .map-full .legend{display:flex;left:10px;right:10px;bottom:62px;gap:8px 12px;font-size:.72rem;padding:6px 10px}
@@ -277,6 +281,7 @@
         <button class="btn icon" id="btn-layers" aria-label="Capas del mapa" title="Capas del mapa" aria-expanded="false"></button>
         <button class="btn icon" id="btn-fit" aria-label="Ver toda la ciudad" title="Ver toda la ciudad"></button>
         <button class="btn icon" id="btn-alt" aria-label="Mostrar vías alternas" title="Mostrar las vías alternas" aria-pressed="false" hidden></button>
+        <button class="btn icon" id="btn-push" aria-label="Activar avisos de lluvia" title="Avisos de lluvia y tormenta en tu teléfono" aria-pressed="false" hidden></button>
         <button class="btn icon" id="btn-full" aria-label="Ampliar mapa" title="Ampliar mapa" aria-pressed="false"></button>
         <div class="layers-pop" id="layers-pop" hidden></div>
       </div>
@@ -330,6 +335,9 @@
     <div class="field"><label for="r-level">Qué tan grave es</label>
       <select id="r-level"><option value="leve">Leve · charcos, se puede pasar</option><option value="moderado" selected>Moderado · agua a media llanta</option><option value="grave">Grave · no se puede pasar</option></select></div>
     <div class="field"><label for="r-desc">Qué está pasando</label><textarea id="r-desc" maxlength="400" placeholder="Ej. El agua cubre la vereda frente al parque y el bus no pasa."></textarea><span class="err" id="r-err"></span></div>
+    <div class="field"><span class="lbl">Fotografía <b style="color:var(--roja,#C62E2E)">(obligatoria)</b></span>
+      <label class="photo-pick" for="r-photo" id="r-photo-box"><img id="r-photo-prev" alt="" hidden><span id="r-photo-txt">Toma o elige una foto del lugar</span></label>
+      <input id="r-photo" type="file" accept="image/*" capture="environment" hidden><span class="err" id="r-photo-err"></span></div>
     <p class="small muted" id="r-coords" style="margin-bottom:14px"></p>
     <div style="display:flex;gap:10px;justify-content:flex-end"><button type="button" class="btn ghost" id="r-cancel">Cancelar</button><button type="submit" class="btn">Enviar reporte</button></div>
   </form>

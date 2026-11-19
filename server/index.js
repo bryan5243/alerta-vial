@@ -7,6 +7,9 @@ import { load, save, nextId, reset } from './db.js';
 import { getWeather, getTide, levelFromWeather, riskIndex, describe, localSources, dayParts, rainingNow } from './weather.js';
 import { getFloodForecast } from './flood.js';
 import { seedIfEmpty } from './seed.js';
+import fs from 'node:fs';
+import { DB_PATH } from './db.js';
+import * as push from './push.js';
 
 // Mensaje que ve la ciudadanía según el color de alerta (editable desde el panel).
 const DEFAULT_LEVEL_MESSAGES = {
@@ -133,6 +136,21 @@ app.get('/api/public/state', async (req, res) => {
 });
 
 // Reportes ciudadanos (comunidad). Entran como "pendientes" y el admin los revisa.
+// Fotos de los reportes: se guardan como archivos junto a la base de datos.
+const PHOTOS = path.join(path.dirname(DB_PATH), 'photos');
+function parsePhoto(d) {
+  const m = typeof d === 'string' && /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(d);
+  if (!m) return null;
+  const buf = Buffer.from(m[1], 'base64');
+  if (buf.length < 1000 || buf.length > 2 * 1024 * 1024 || buf[0] !== 0xFF || buf[1] !== 0xD8) return null;
+  return buf;
+}
+app.get('/photos/:name', (req, res) => {
+  if (!/^rep_[a-z0-9]+\.jpg$/.test(req.params.name)) return res.status(404).end();
+  const f = path.join(PHOTOS, req.params.name);
+  if (!fs.existsSync(f)) return res.status(404).end();
+  res.set('Cache-Control', 'public, max-age=86400').type('image/jpeg').sendFile(f);
+});
 const reportLimiter = new Map();
 app.post('/api/public/reports', (req, res) => {
   const ip = req.ip;
@@ -141,6 +159,8 @@ app.post('/api/public/reports', (req, res) => {
   if (!featuresCfg(load()).reports) return res.status(403).json({ error: 'Los reportes ciudadanos están desactivados por ahora.' });
   const { lat, lng, description, level, street, type } = req.body || {};
   if (typeof lat !== 'number' || typeof lng !== 'number') return res.status(400).json({ error: 'Toca el mapa para indicar el lugar del reporte.' });
+  const photo = parsePhoto(req.body?.photo);
+  if (!photo) return res.status(400).json({ error: 'Adjunta una fotografía del lugar: es obligatoria para comprobar el reporte.' });
   if (!description || description.trim().length < 5) return res.status(400).json({ error: 'Describe brevemente qué está pasando (mínimo 5 letras).' });
   const db = load();
   db.reports ||= [];
@@ -148,6 +168,9 @@ app.post('/api/public/reports', (req, res) => {
     description: String(description).slice(0, 400), level: ['leve', 'moderado', 'grave'].includes(level) ? level : 'moderado',
     type: type === 'desborde' ? 'desborde' : 'inundacion',
     status: 'pendiente', createdAt: new Date().toISOString() };
+  report.photo = `/photos/${report.id}.jpg`;
+  fs.mkdirSync(PHOTOS, { recursive: true });
+  fs.writeFileSync(path.join(PHOTOS, `${report.id}.jpg`), photo);
   db.reports.push(report);
   save();
   reportLimiter.set(ip, [...recent, Date.now()]);
@@ -180,7 +203,7 @@ app.get('/api/public/radar', async (req, res) => {
 app.get('/api/admin/state', auth, async (req, res) => {
   const db = load();
   const { weather, suggested, effective, risk, tide } = await computeStatus();
-  res.json({ ...db, config: { ...db.config, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: featuresCfg(db), noCar: noCarCfg(db) }, alert: { ...db.alert, effective, suggested }, weather: { ...weather, hourly: weather.hourly?.slice(0, 25) }, risk, tide, reports: db.reports || [], layers: db.layers || [], rivers: db.rivers || [], zones: db.zones || [] });
+  res.json({ ...db, push: undefined, pushCount: push.subCount(), config: { ...db.config, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: featuresCfg(db), noCar: noCarCfg(db) }, alert: { ...db.alert, effective, suggested }, weather: { ...weather, hourly: weather.hourly?.slice(0, 25) }, risk, tide, reports: db.reports || [], layers: db.layers || [], rivers: db.rivers || [], zones: db.zones || [] });
 });
 
 app.put('/api/admin/config', auth, (req, res) => {
@@ -324,6 +347,7 @@ app.put('/api/admin/reports/:id', auth, (req, res) => {
 app.delete('/api/admin/reports/:id', auth, (req, res) => {
   const db = load();
   db.reports = (db.reports || []).filter(x => x.id !== req.params.id);
+  if (/^rep_[a-z0-9]+$/.test(req.params.id)) fs.rm(path.join(PHOTOS, `${req.params.id}.jpg`), { force: true }, () => {});
   save();
   res.json({ ok: true });
 });
@@ -365,6 +389,22 @@ function validate(name, item) {
   }
   return null;
 }
+
+// ---------- Notificaciones push ----------
+app.get('/api/public/push-key', (req, res) => res.json({ key: push.publicKey() }));
+app.post('/api/public/push-subscribe', (req, res) => push.addSub(req.body?.subscription) ? res.json({ ok: true }) : res.status(400).json({ error: 'Suscripción no válida.' }));
+app.post('/api/public/push-unsubscribe', (req, res) => { push.removeSub(String(req.body?.endpoint || '')); res.json({ ok: true }); });
+app.post('/api/admin/push/test', auth, async (req, res) => {
+  const r = await push.sendAll({ title: 'Prueba de avisos · AlertaVial', body: 'Si ves esto, las notificaciones funcionan en este teléfono.', tag: 'prueba' });
+  res.json(r);
+});
+async function pushTick() {
+  try {
+    const st = await computeStatus(); const db = load();
+    await push.checkAndNotify(st, { levelMessage: levelMsgs(db)[st.effective], simulated: !!simOn() });
+  } catch (e) { console.error('Avisos push:', e.message); }
+}
+setTimeout(pushTick, 20000); setInterval(pushTick, 5 * 60 * 1000);
 
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'admin.html')));
 app.use((err, req, res, next) => { console.error(err); res.status(500).json({ error: 'Ocurrió un error inesperado en el servidor.' }); });

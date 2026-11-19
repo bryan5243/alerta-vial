@@ -335,7 +335,7 @@ function render(reports) {
   for (const o of overflows) shapes.overflows.set(o.id, map.addOverflow({ lat: o.lat, lng: o.lng, iconSvg: ICON.wave,
     popup: `<b>Desborde de río</b><br>${esc(o.street || '')}<br>${esc(o.description)}<br><span style="color:#5A6B7D">Reportado ${ago(o.createdAt)} · verificado por EMOVTT</span>` }));
   renderOverflowBanner(overflows, rivers.filter(r => r.status === 'desbordado'));
-  for (const r of reports.filter(r => r.type !== 'desborde')) map.addMarker({ lat: r.lat, lng: r.lng, cls: 'report', icon: 'report', popup: `<b>Reporte ciudadano verificado</b><br>${esc(r.street)} · ${esc(r.level)}<br>${esc(r.description)}<br><span style="color:#5A6B7D">${ago(r.createdAt)}</span>` });
+  for (const r of reports.filter(r => r.type !== 'desborde')) map.addMarker({ lat: r.lat, lng: r.lng, cls: 'report', icon: 'report', popup: `<b>Reporte ciudadano verificado</b>${r.photo ? `<br><img src="${esc(r.photo)}" alt="Foto del reporte" style="width:100%;max-width:220px;border-radius:8px;margin:6px 0">` : ''}<br>${esc(r.street)} · ${esc(r.level)}<br>${esc(r.description)}<br><span style="color:#5A6B7D">${ago(r.createdAt)}</span>` });
   if (radarOn) applyRadar();
 }
 // Secciones que el equipo apagó en Admin → Configuración desaparecen del mapa público.
@@ -455,17 +455,55 @@ document.querySelectorAll('[data-rtype]').forEach(btn => btn.addEventListener('c
   $('#r-title').textContent = rType === 'desborde' ? 'Reportar desborde de río' : 'Reportar calle inundada';
   $('#r-desc').placeholder = rType === 'desborde' ? 'Ej. El río se salió por la margen derecha y el agua llega a las casas.' : 'Ej. El agua cubre la vereda frente al parque y el bus no pasa.';
 }));
-const closeSheet = () => { $('#sheet-bg').classList.remove('open'); if (pickMarker) { pickMarker.remove(); pickMarker = null; } };
+const closeSheet = () => { clearPhoto(); $('#sheet-bg').classList.remove('open'); if (pickMarker) { pickMarker.remove(); pickMarker = null; } };
 $('#r-cancel').addEventListener('click', closeSheet);
 $('#sheet-bg').addEventListener('click', e => { if (e.target === e.currentTarget) closeSheet(); });
+// Foto del reporte: se reduce en el teléfono (máx. 1280 px, JPEG) para que suba rápido con datos móviles.
+let photoData = null;
+function clearPhoto() { photoData = null; const i = $('#r-photo'); if (i) i.value = ''; $('#r-photo-prev').hidden = true; $('#r-photo-txt').hidden = false; $('#r-photo-err').textContent = ''; $('#r-photo-box').classList.remove('bad'); }
+$('#r-photo').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' });
+    const k = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    photoData = c.toDataURL('image/jpeg', 0.72);
+    $('#r-photo-prev').src = photoData; $('#r-photo-prev').hidden = false; $('#r-photo-txt').hidden = true;
+    $('#r-photo-err').textContent = ''; $('#r-photo-box').classList.remove('bad');
+  } catch { photoData = null; $('#r-photo-err').textContent = 'No se pudo leer esa imagen. Prueba con otra foto.'; }
+});
 $('#report-form').addEventListener('submit', async e => {
   e.preventDefault(); $('#r-err').textContent = '';
-  const body = { ...pickPos, type: rType, street: $('#r-street').value, level: $('#r-level').value, description: $('#r-desc').value };
+  if (!photoData) { $('#r-photo-err').textContent = 'Agrega una fotografía: es obligatoria para comprobar el reporte.'; $('#r-photo-box').classList.add('bad'); return; }
+  const body = { ...pickPos, type: rType, street: $('#r-street').value, level: $('#r-level').value, description: $('#r-desc').value, photo: photoData };
   const r = await fetch('/api/public/reports', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const j = await r.json();
   if (!r.ok) { $('#r-err').textContent = j.error; return; }
-  closeSheet(); e.target.reset(); toast('Gracias. Tu reporte fue enviado y será revisado.', 'ok');
+  closeSheet(); e.target.reset(); clearPhoto(); toast('Gracias. Tu reporte fue enviado y será revisado.', 'ok');
 });
 
 load().catch(err => { console.error(err); toast('No se pudo cargar la información. Reintenta en unos segundos.', 'err'); });
 setInterval(() => load().catch(() => {}), 60000);
+
+// Avisos de lluvia y tormenta (notificaciones push)
+const pushBtn = $('#btn-push');
+const pushOk = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && window.isSecureContext;
+const b64 = k => Uint8Array.from(atob(k.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+async function pushSub() { const reg = await navigator.serviceWorker.ready; return reg.pushManager.getSubscription(); }
+async function pushRefresh() { const on = !!(await pushSub().catch(() => null)) && Notification.permission === 'granted'; pushBtn.setAttribute('aria-pressed', on); pushBtn.title = on ? 'Avisos activados (toca para desactivar)' : 'Activar avisos de lluvia y tormenta'; }
+if (pushOk) {
+  pushBtn.hidden = false; pushBtn.innerHTML = ICON.bell || ICON.info; pushRefresh();
+  pushBtn.addEventListener('click', async () => {
+    try {
+      const cur = await pushSub();
+      if (cur) { await fetch('/api/public/push-unsubscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ endpoint: cur.endpoint }) }); await cur.unsubscribe(); toast('Avisos desactivados', 'ok'); return pushRefresh(); }
+      if (await Notification.requestPermission() !== 'granted') return toast('Permite las notificaciones en tu navegador para recibir avisos.', 'err');
+      const { key } = await (await fetch('/api/public/push-key')).json();
+      const sub = await (await navigator.serviceWorker.ready).pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(key) });
+      const r = await fetch('/api/public/push-subscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subscription: sub.toJSON() }) });
+      if (!r.ok) throw new Error('subscribe');
+      toast('Listo: te avisaremos si hay tormenta o se acerca lluvia.', 'ok'); pushRefresh();
+    } catch { toast('No se pudieron activar los avisos en este navegador.', 'err'); }
+  });
+}

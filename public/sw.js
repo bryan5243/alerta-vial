@@ -2,7 +2,7 @@
 // - La página, estilos y scripts se guardan al instalar y se actualizan cada vez que hay red.
 // - Los cuadros del mapa (OpenStreetMap) que ya viste quedan guardados para verlos sin conexión.
 // - Los datos (calles, zonas, vías alternas) los guarda la propia página en el teléfono.
-const VER = 'av-shell-v28', TILES = 'av-tiles-v2', MAX_TILES = 1500;
+const VER = 'av-shell-v29', TILES = 'av-tiles-v2', MAX_TILES = 1500;
 const SHELL = ['/', '/css/app.css', '/js/app.js', '/js/common.js', '/js/gps.js', '/js/nav.js', '/js/map-provider.js', '/js/weather-fx.js', '/js/guide.js',
   '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css', '/img/emovtt-logo.png', '/img/emovtt-logo-blanco.png', '/manifest.webmanifest', '/img/icons/icon-192.png'];
 
@@ -49,3 +49,14 @@ async function trim(cache) {
   if (trimming) return; trimming = true;
   try { const ks = await cache.keys(); for (let i = 0; i < ks.length - MAX_TILES; i++) await cache.delete(ks[i]); } finally { trimming = false; }
 }
+
+// Avisos push: lluvia que se aproxima, tormenta o cambio de alerta.
+self.addEventListener('push', e => {
+  let d = {}; try { d = e.data.json(); } catch {}
+  e.waitUntil(self.registration.showNotification(d.title || 'AlertaVial', { body: d.body || '', tag: d.tag || 'alertavial', renotify: true,
+    icon: '/img/icons/icon-192.png', badge: '/img/icons/icon-192.png', data: { url: d.url || '/' } }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => { const c = cs.find(x => 'focus' in x); return c ? c.focus() : self.clients.openWindow(e.notification.data?.url || '/'); }));
+});

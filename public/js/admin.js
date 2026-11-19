@@ -468,7 +468,7 @@ function secReports() {
   col(`<p class="small muted">Reportes enviados por la ciudadanía desde el mapa público. Los <b>verificados</b> aparecen en el mapa; los pendientes y descartados no. Un <b>desborde verificado</b> queda animado en el mapa público hasta que pulses <b>Retirar</b>.</p>
     ${act.length ? `<div class="card" style="border-color:#1E88E5;background:#EEF6FE"><b>${act.length} desborde${act.length > 1 ? 's' : ''} activo${act.length > 1 ? 's' : ''} en el mapa público.</b> <span class="small muted">Retíralo cuando el agua haya bajado.</span></div>` : ''}
     <div class="list">${reps.length ? reps.map(r => `<div class="item" data-focus="${r.id}" style="cursor:pointer"><span class="dot ${r.level}" style="margin-top:6px"></span>
-      <div style="flex:1"><div class="title">${r.type === 'desborde' ? `<span class="chip roja">Desborde de río</span> ` : ''}${esc(r.street || 'Sin calle indicada')} <span class="chip ${chip(r.status)}">${r.status}</span></div><div class="meta">${esc(r.description)}</div><div class="meta">${r.level} · ${ago(r.createdAt)} · ${fmtTime(r.createdAt)}</div>
+      <div style="flex:1"><div class="title">${r.type === 'desborde' ? `<span class="chip roja">Desborde de río</span> ` : ''}${esc(r.street || 'Sin calle indicada')} <span class="chip ${chip(r.status)}">${r.status}</span></div><div class="meta">${esc(r.description)}</div>${r.photo ? `<a href="${esc(r.photo)}" target="_blank" rel="noopener"><img src="${esc(r.photo)}" alt="Foto del reporte" loading="lazy" style="display:block;margin-top:8px;width:100%;max-width:240px;border-radius:10px;border:1px solid var(--line,#DDE3EA)"></a>` : '<div class="meta" style="color:var(--naranja)">Sin fotografía</div>'}<div class="meta">${r.level} · ${ago(r.createdAt)} · ${fmtTime(r.createdAt)}</div>
         <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
           ${r.status !== 'verificado' ? `<button class="btn soft sm" data-rs="verificado" data-id="${r.id}">${ICON.check} Verificar y publicar</button>` : ''}
           ${r.status === 'verificado' ? `<button class="btn soft sm" data-rs="retirado" data-id="${r.id}">${ICON.check} Retirar (el agua bajó)</button>` : ''}
@@ -579,6 +579,8 @@ function secConfig() {
     <div class="card"><h3 style="margin-bottom:6px">Calles donde no pasan vehículos</h3><p class="small muted" style="margin-bottom:12px">Malecones, peatonales, ciclovías o escalinatas. Las rutas y las vías alternas nunca pasarán por una calle cuyo nombre contenga alguna de estas palabras. Una por línea.</p>
       <form id="fnc" novalidate><div class="field"><label for="nocar">Nombres o palabras</label><textarea id="nocar" rows="5" placeholder="Malecón">${esc((c.noCar || []).join('\n'))}</textarea></div>
       <button class="btn">Guardar calles sin paso</button></form></div>
+    <div class="card"><h3 style="margin-bottom:6px">Avisos en el teléfono</h3><p class="small muted" style="margin-bottom:12px">La ciudadanía puede activar avisos con la campana del mapa. Reciben una notificación cuando se aproxima lluvia, hay tormenta o sube el color de la alerta. Teléfonos suscritos: <b>${db.pushCount || 0}</b>. En iPhone funciona si la app se agrega a la pantalla de inicio.</p>
+      <button type="button" class="btn ghost" id="push-test">Enviar notificación de prueba</button></div>
     <div class="card"><h3 style="margin-bottom:6px">Actualizar el mapa</h3><p class="small muted" style="margin-bottom:12px">Borra los cuadros del mapa de OpenStreetMap y los archivos guardados en este equipo, y vuelve a descargarlos. Úsalo si el mapa se ve borroso, desactualizado o con calles que no coinciden. Los datos de la ciudad no se borran.</p>
       <button type="button" class="btn" id="map-refresh">Actualizar mapa de OpenStreetMap</button></div>
     <div class="card backup-card"><h3 style="margin-bottom:6px">Respaldo de datos</h3>
@@ -608,6 +610,7 @@ function secConfig() {
       <button class="btn">Guardar avisos GPS</button></form></div>`);
   setTools([]); drawMode = null; drawAll();
   q('[data-feat]').forEach(cb => cb.onchange = () => cb.closest('.feat').classList.toggle('on', cb.checked));
+  id('push-test').onclick = async e => { const b = e.currentTarget; b.disabled = true; try { const r = await api('/api/admin/push/test', { method: 'POST' }); toast(r.total ? `Enviada a ${r.sent} de ${r.total} teléfonos` : 'Aún no hay teléfonos suscritos', r.sent ? 'ok' : 'err'); } catch {} b.disabled = false; };
   id('map-refresh').onclick = async e => { const b = e.currentTarget; b.disabled = true; b.textContent = 'Actualizando…';
     try { if ('caches' in window) for (const k of await caches.keys()) await caches.delete(k);
       if (navigator.serviceWorker) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); } catch {}
