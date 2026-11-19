@@ -581,7 +581,7 @@ function secConfig() {
       <button class="btn">Guardar calles sin paso</button></form></div>
     <div class="card"><h3 style="margin-bottom:6px">Avisos en el teléfono</h3><p class="small muted" style="margin-bottom:12px">La ciudadanía puede activar avisos con la campana del mapa. Reciben una notificación cuando se aproxima lluvia, hay tormenta o sube el color de la alerta. Teléfonos suscritos: <b>${db.pushCount || 0}</b>. En iPhone funciona si la app se agrega a la pantalla de inicio.</p>
       <button type="button" class="btn ghost" id="push-test">Enviar notificación de prueba</button></div>
-    <div class="card"><h3 style="margin-bottom:6px">Actualizar el mapa</h3><p class="small muted" style="margin-bottom:12px">Borra los cuadros del mapa de OpenStreetMap y los archivos guardados en este equipo, y vuelve a descargarlos. Úsalo si el mapa se ve borroso, desactualizado o con calles que no coinciden. Los datos de la ciudad no se borran.</p>
+    <div class="card"><h3 style="margin-bottom:6px">Actualizar el mapa</h3><p class="small muted" style="margin-bottom:12px">Borra los cuadros del mapa de OpenStreetMap y los archivos guardados en este equipo, y vuelve a descargarlos. Úsalo si el mapa se ve borroso, desactualizado o con calles que no coinciden. Al pulsarlo, <b>todos los teléfonos</b> que abran el mapa después renuevan sus archivos solos (una sola vez). Los datos de la ciudad no se borran.</p>
       <button type="button" class="btn" id="map-refresh">Actualizar mapa de OpenStreetMap</button></div>
     <div class="card backup-card"><h3 style="margin-bottom:6px">Respaldo de datos</h3>
       <p class="small muted" style="margin-bottom:12px">Descarga todo (puntos, calles, vías alternas, ríos, zonas, capas, reportes y configuración) en un archivo. Sirve para pasar los datos de tu computadora al hosting, o para guardarlos antes de un cambio grande. En el hosting gratuito, guárdalo como <code>data/initial.json</code> para que se cargue solo cada vez que el servidor se reinicia.</p>
@@ -612,6 +612,7 @@ function secConfig() {
   q('[data-feat]').forEach(cb => cb.onchange = () => cb.closest('.feat').classList.toggle('on', cb.checked));
   id('push-test').onclick = async e => { const b = e.currentTarget; b.disabled = true; try { const r = await api('/api/admin/push/test', { method: 'POST' }); toast(r.total ? `Enviada a ${r.sent} de ${r.total} teléfonos` : 'Aún no hay teléfonos suscritos', r.sent ? 'ok' : 'err'); } catch {} b.disabled = false; };
   id('map-refresh').onclick = async e => { const b = e.currentTarget; b.disabled = true; b.textContent = 'Actualizando…';
+    try { await api('/api/admin/map-refresh', { method: 'POST' }); } catch {}
     try { if ('caches' in window) for (const k of await caches.keys()) await caches.delete(k);
       if (navigator.serviceWorker) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); } catch {}
     toast('Mapa actualizado: se descargará de nuevo', 'ok'); setTimeout(() => { location.href = '/?mapa=' + Date.now(); }, 900); };

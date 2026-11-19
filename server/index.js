@@ -122,7 +122,7 @@ app.get('/api/public/state', async (req, res) => {
   res.json({
     config: { city: db.config.city, center: db.config.center, zoom: db.config.zoom,
       mapProvider: db.config.mapProvider, googleMapsKey: db.config.googleMapsKey || '',
-      rainThresholdMm: db.config.weather.rainThresholdMm, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: f, noCar: noCarCfg(db) },
+      mapVersion: db.config.mapVersion || 0, rainThresholdMm: db.config.weather.rainThresholdMm, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: f, noCar: noCarCfg(db) },
     alert: { ...db.alert, effective, suggested },
     weather: { ...weather, hourly: weather.hourly?.slice(0, 25) },
     risk, tide, flood,
@@ -207,6 +207,8 @@ app.get('/api/admin/state', auth, async (req, res) => {
   res.json({ ...db, push: undefined, pushCount: push.subCount(), config: { ...db.config, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: featuresCfg(db), noCar: noCarCfg(db) }, alert: { ...db.alert, effective, suggested }, weather: { ...weather, hourly: weather.hourly?.slice(0, 25) }, risk, tide, reports: db.reports || [], layers: db.layers || [], rivers: db.rivers || [], zones: db.zones || [] });
 });
 
+// "Actualizar mapa": sube un número de versión; todos los teléfonos que abren el mapa lo notan y renuevan sus archivos y cuadros guardados.
+app.post('/api/admin/map-refresh', auth, (req, res) => { const db = load(); db.config.mapVersion = Date.now(); save(); res.json({ ok: true, mapVersion: db.config.mapVersion }); });
 app.put('/api/admin/config', auth, (req, res) => {
   const db = load();
   const c = req.body || {};

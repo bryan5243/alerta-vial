@@ -151,8 +151,19 @@ function setOffline(at) {
 window.addEventListener('online', () => load().catch(() => {}));
 window.addEventListener('offline', () => { if (state) setOffline(JSON.parse(localStorage.getItem(CACHE_KEY) || 'null')?.at || Date.now()); });
 
+// Si el equipo pulsó "Actualizar mapa" en el admin, este teléfono renueva sus archivos y cuadros guardados (una sola vez).
+async function checkMapVersion(v) {
+  v = +v || 0; let mine = null; try { mine = localStorage.getItem('av_map_ver'); } catch {}
+  if (mine === null) { try { localStorage.setItem('av_map_ver', String(v)); } catch {} return; } // primera visita: ya está al día
+  if (+mine === v) return;
+  try { localStorage.setItem('av_map_ver', String(v)); } catch {}
+  try { if ('caches' in window) for (const k of await caches.keys()) await caches.delete(k);
+    if (navigator.serviceWorker) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); } catch {}
+  location.reload();
+}
 async function load() {
   const pack = await fetchState(); state = pack.state; setNoCar(state?.config?.noCar);
+  if (!document.body.classList.contains('is-offline')) checkMapVersion(state?.config?.mapVersion);
   const reports = pack.reports;
   if (!map) {
     map = await createMap({ provider: state.config.mapProvider, el: document.getElementById('map'), center: state.config.center, zoom: Math.max(+state.config.zoom || 0, 16), googleKey: state.config.googleMapsKey });
