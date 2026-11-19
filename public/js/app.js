@@ -27,6 +27,12 @@ chromeObs.observe(document.querySelector('header.top')); chromeObs.observe($('#b
 new ResizeObserver(() => map?.invalidate()).observe(document.getElementById('map'));
 // Alto real de la pantalla: en iPhone (sobre todo como acceso directo) 100dvh queda desactualizado al girar, volver de otra app o cambiar la barra,
 // y hacía falta cerrar y abrir. Se vuelve a medir en cada cambio y se reacomoda el mapa.
+// Respaldo: si el teléfono llegó a ampliar la página al escribir, al salir del campo se devuelve el zoom a 1
+(() => {
+  const m = document.querySelector('meta[name="viewport"]'); if (!m) return; const base = m.content;
+  const reset = () => { m.content = `${base}, maximum-scale=1`; setTimeout(() => { m.content = base; }, 350); };
+  document.addEventListener('focusout', e => { if (e.target.matches?.('input,select,textarea')) setTimeout(reset, 120); });
+})();
 let vpT = 0;
 const syncViewport = () => {
   const root = document.documentElement;

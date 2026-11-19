@@ -311,6 +311,8 @@
     header.top{padding-top:calc(env(safe-area-inset-top, 0px) + 12px)}
   }
   html{background:#14206B}
+  /* iPhone amplía la página al tocar un campo con letra menor de 16 px y no la devuelve: por eso había que "pellizcar hacia atrás". Con 16 px no amplía. */
+  @media (pointer:coarse){ input,select,textarea{font-size:16px!important} }
   /* ===== Móvil: barra de pestañas inferior con iconos (como una app nativa). La hoja con el contenido sube al tocar una pestaña ===== */
   .tab .t-ic,.tab-map{display:none}
   html.app-nav{--tb:calc(62px + env(safe-area-inset-bottom,0px))}
