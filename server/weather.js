@@ -244,7 +244,9 @@ async function radarSource(lat, lng) {
     if (!res.ok) throw new Error(`respondió con error ${res.status}`);
     const img = decodePng(Buffer.from(await res.arrayBuffer()));
     const at = (x, y) => img.at(Math.max(0, Math.min(255, x)), Math.max(0, Math.min(255, y)));
-    const mmHere = dbzToMm(radarDbz(at(px, py))), here = mmInt(mmHere);
+    // "Sobre la ciudad" = el píxel y sus vecinos (≈3,6 km): un aguacero es pequeño y la ciudad ocupa varios píxeles
+    let mmHere = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) mmHere = Math.max(mmHere, dbzToMm(radarDbz(at(px + dx, py + dy))));
+    const here = mmInt(mmHere);
     let nearest = 0; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) nearest = Math.max(nearest, radarIntensity(at(px + dx, py + dy)));
     const fresh = ageMin <= 25;
     d = { ...base, ok: fresh, at: new Date(fr.time * 1000).toISOString(), intensity: fresh ? here : 0, rainNow: fresh ? mmHere : 0, near: fresh && nearest > 0,
@@ -298,7 +300,7 @@ export function combine({ models, metar, owm, radar, at }, extra = []) {
   const okM = models.filter(m => m.ok), base = okM.find(m => m.model === 'best_match') || okM.find(m => m.model === 'met_no') || okM[0];
   // Como Amaru: las señales tienen que coincidir. Un modelo solo no basta: hace falta que al menos
   // un tercio de los modelos (3 de 9) vean lluvia medible. Y si el mejor modelo dice cielo casi despejado, los modelos no cuentan.
-  const need = 2; // dos fuentes independientes que coincidan (antes un tercio de los modelos: dejaba pasar aguaceros locales)
+  const need = okM.length >= 2 ? 2 : 1; // dos modelos que coincidan; si Open-Meteo no responde y solo queda uno, ese uno basta
   const kth = arr => { const v = arr.slice().sort((x, y) => y - x); return v.length >= need ? v[need - 1] : 0; };
   const clear = (base?.cloudCover ?? 100) < 50;
   const raining = okM.filter(m => m.intensity > 0);
