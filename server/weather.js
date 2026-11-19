@@ -1,6 +1,7 @@
 // Clima de varias fuentes, porque un solo pronóstico no ve los aguaceros locales de la costa:
 //  · Open-Meteo con 8 modelos meteorológicos (una sola consulta) + MET Norway (yr.no): pronósticos; un tercio tiene que coincidir
 //  · Estación del aeropuerto de Santa Rosa (METAR SERO, NOAA): observación real, cuando el aeropuerto reporta
+//  · Radar de lluvia de RainViewer: ve los aguaceros locales sobre la ciudad
 //  · OpenWeatherMap (opcional, con API key gratuita)
 //  · Lo que marca el equipo en el panel ("Está lloviendo ahora") y los reportes ciudadanos recientes
 // Para el semáforo gana la fuente que vea la lluvia más fuerte (peor caso).
@@ -181,6 +182,74 @@ async function metarSource(station) {
   return d;
 }
 
+
+// Radar de lluvia (RainViewer): ve los aguaceros locales que los modelos de 11 km no ven.
+// Se baja el cuadro de radar más reciente y se mira el píxel sobre la ciudad (a zoom 7 un píxel ≈ 1,2 km).
+import zlib from 'node:zlib';
+let radarCache = { at: 0, key: '', data: null };
+export function decodePng(buf) {
+  if (buf.length < 33 || buf.readUInt32BE(0) !== 0x89504e47) throw new Error('imagen de radar no válida');
+  let o = 8, w = 0, h = 0, bd = 0, ct = 0, il = 0, plte = null, trns = null; const idat = [];
+  while (o + 8 <= buf.length) {
+    const len = buf.readUInt32BE(o), type = buf.toString('latin1', o + 4, o + 8), d = buf.subarray(o + 8, o + 8 + len);
+    if (type === 'IHDR') { w = d.readUInt32BE(0); h = d.readUInt32BE(4); bd = d[8]; ct = d[9]; il = d[12]; }
+    else if (type === 'PLTE') plte = d; else if (type === 'tRNS') trns = d; else if (type === 'IDAT') idat.push(d); else if (type === 'IEND') break;
+    o += 12 + len;
+  }
+  if (bd !== 8 || il !== 0 || ![2, 3, 6].includes(ct)) throw new Error('formato de radar no soportado');
+  const bpp = ct === 6 ? 4 : ct === 2 ? 3 : 1, raw = zlib.inflateSync(Buffer.concat(idat)), stride = w * bpp, px = Buffer.alloc(h * stride);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)], src = y * (stride + 1) + 1, dst = y * stride;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? px[dst + x - bpp] : 0, b = y ? px[dst - stride + x] : 0, c = x >= bpp && y ? px[dst - stride + x - bpp] : 0, v = raw[src + x];
+      px[dst + x] = (f === 0 ? v : f === 1 ? v + a : f === 2 ? v + b : f === 3 ? v + ((a + b) >> 1)
+        : (() => { const pp = a + b - c, pa = Math.abs(pp - a), pb = Math.abs(pp - b), pc = Math.abs(pp - c); return v + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c); })()) & 255;
+    }
+  }
+  return { w, h, at(x, y) {
+    if (ct === 6) { const i = y * stride + x * 4; return [px[i], px[i + 1], px[i + 2], px[i + 3]]; }
+    if (ct === 2) { const i = y * stride + x * 3; return [px[i], px[i + 1], px[i + 2], 255]; }
+    const k = px[y * stride + x]; return [plte[k * 3], plte[k * 3 + 1], plte[k * 3 + 2], trns && k < trns.length ? trns[k] : 255];
+  } };
+}
+// Intensidad según el color de la escala "universal" de RainViewer (azul claro = débil … amarillo/rojo = fuerte)
+export function radarIntensity([r, g, b, a]) {
+  if (a < 40) return 0;
+  if (r > 200 && g < 110) return 3;          // rojo/magenta
+  if (r > 200 && g >= 110) return 2;          // amarillo/naranja
+  if (g > 150 && r < 160 && b < 140) return 2; // verde
+  return 1;                                    // azules
+}
+export function radarPixel(lat, lng, z = 7) {
+  const n = 2 ** z, fx = (lng + 180) / 360 * n, sin = Math.sin(lat * Math.PI / 180), fy = (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * n;
+  const tx = Math.floor(fx), ty = Math.floor(fy);
+  return { z, tx, ty, px: Math.min(255, Math.floor((fx - tx) * 256)), py: Math.min(255, Math.floor((fy - ty) * 256)) };
+}
+async function radarSource(lat, lng) {
+  const base = { id: 'radar', kind: 'observación', name: 'Radar de lluvia (RainViewer)' };
+  const ck = `${lat},${lng}`;
+  if (radarCache.data && radarCache.key === ck && Date.now() - radarCache.at < 4 * 60 * 1000) return radarCache.data;
+  let d;
+  try {
+    const j = await getJson('https://api.rainviewer.com/public/weather-maps.json');
+    const fr = (j.radar?.past || []).at(-1); if (!fr) throw new Error('sin cuadros de radar');
+    const ageMin = Math.round((Date.now() - fr.time * 1000) / 60000);
+    const { z, tx, ty, px, py } = radarPixel(lat, lng);
+    const res = await fetch(`${j.host}${fr.path}/256/${z}/${tx}/${ty}/2/1_1.png`, { signal: AbortSignal.timeout(8000), headers: UA });
+    if (!res.ok) throw new Error(`respondió con error ${res.status}`);
+    const img = decodePng(Buffer.from(await res.arrayBuffer()));
+    const at = (x, y) => img.at(Math.max(0, Math.min(255, x)), Math.max(0, Math.min(255, y)));
+    const here = radarIntensity(at(px, py));
+    let nearest = 0; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) nearest = Math.max(nearest, radarIntensity(at(px + dx, py + dy)));
+    const fresh = ageMin <= 25;
+    d = { ...base, ok: fresh, at: new Date(fr.time * 1000).toISOString(), intensity: fresh ? here : 0, rainNow: fresh ? INT_MM[here] : 0, near: fresh && nearest > 0,
+      detail: `${here ? `El radar ve lluvia sobre la ciudad (${INT_TXT[here].toLowerCase()})` : nearest ? 'El radar ve lluvia cerca (a pocos km), no sobre la ciudad' : 'El radar no ve lluvia sobre la ciudad'} · imagen de hace ${ageMin} min`,
+      error: fresh ? undefined : `imagen de radar de hace ${ageMin} min` };
+  } catch (e) { d = { ...base, ok: false, intensity: 0, error: e.message }; }
+  radarCache = { at: Date.now(), key: ck, data: d };
+  return d;
+}
+
 // OpenWeatherMap (opcional): solo si hay API key
 async function owmSource(lat, lng, key) {
   const base = { id: 'owm', kind: 'observación', name: 'OpenWeatherMap' };
@@ -207,19 +276,20 @@ export async function getWeather({ lat, lng, metarStation = 'SERO', owmKey = '' 
   let remote;
   if (cache.data && cache.key === key && Date.now() - cache.at < TTL) remote = cache.data;
   else {
-    const [omModels, metno, metar, owm] = await Promise.all([
+    const [omModels, metno, metar, owm, radar] = await Promise.all([
       openMeteoAll(lat, lng).catch(e => Object.keys(MODELS).map(m => ({ model: m, name: MODELS[m], ok: false, error: e.message, intensity: 0 }))),
       metnoSource(lat, lng),
       metarStation ? metarSource(metarStation) : Promise.resolve(null),
       owmSource(lat, lng, owmKey),
+      radarSource(lat, lng),
     ]);
-    remote = { models: [...omModels, metno], metar, owm, at: new Date().toISOString() };
+    remote = { models: [...omModels, metno], metar, owm, radar, at: new Date().toISOString() };
     cache = { at: Date.now(), key, data: remote };
   }
   return combine(remote, extra);
 }
 
-export function combine({ models, metar, owm, at }, extra = []) {
+export function combine({ models, metar, owm, radar, at }, extra = []) {
   const okM = models.filter(m => m.ok), base = okM.find(m => m.model === 'best_match') || okM.find(m => m.model === 'met_no') || okM[0];
   // Como Amaru: las señales tienen que coincidir. Un modelo solo no basta: hace falta que al menos
   // un tercio de los modelos (3 de 9) vean lluvia medible. Y si el mejor modelo dice cielo casi despejado, los modelos no cuentan.
@@ -235,7 +305,7 @@ export function combine({ models, metar, owm, at }, extra = []) {
     detail: !okM.length ? `Sin conexión con los pronósticos (${[...new Set(models.map(m => m.error).filter(Boolean))].join(' · ')})`
       : `${stale ? `Dato de Open-Meteo de hace ${stale.staleMin} min (${stale.staleWhy}) · ` : ''}${raining.length} de ${okM.length} modelos ven lluvia medible${raining.length ? ` (${raining.map(m => m.name).join(', ')})` : ''}; hacen falta ${need}${clear && raining.length ? ' · no cuenta: el cielo está casi despejado' : ''} · nubosidad ${base?.cloudCover ?? '—'} %`,
     error: okM.length ? undefined : models[0]?.error, models: models.map(m => ({ name: m.name, ok: m.ok, rainNow: m.rainNow ?? 0, intensity: m.intensity || 0, error: m.error, stale: m.stale ? m.staleMin : undefined })) };
-  const sources = [modelSrc, metar, owm, ...extra].filter(Boolean);
+  const sources = [modelSrc, metar, owm, radar, ...extra].filter(Boolean);
   const live = sources.filter(s => s.ok);
   if (!live.length) return { ok: false, source: 'Open-Meteo', error: modelSrc.error || 'sin conexión', rainNow: 0, rainPast3h: 0, rainNext3h: 0, rainNext24h: 0, hourly: [], sources, checkedAt: at };
   // Entre fuentes gana la que vea la lluvia más fuerte (cada una ya es confiable por sí sola: observación o consenso de modelos)
