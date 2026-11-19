@@ -17,23 +17,28 @@ const ICONS = {
 };
 export const pinHtml = (cls, icon) => `<div class="pin ${cls}"><svg viewBox="0 0 24 24">${ICONS[icon] || ICONS.inundacion}</svg></div>`;
 
-export async function createMap({ provider = 'leaflet', el, center, zoom, googleKey }) {
+export async function createMap({ provider = 'leaflet', el, center, zoom, googleKey, style = 'osm' }) {
   if (provider === 'google' && googleKey) {
     try { return await googleMap({ el, center, zoom, googleKey }); }
     catch (e) { console.warn('Google Maps no disponible, usando Leaflet.', e); }
   }
-  return leafletMap({ el, center, zoom });
+  return leafletMap({ el, center, zoom, style });
 }
 
 /* ---------------- Leaflet ---------------- */
-function leafletMap({ el, center, zoom }) {
+// Estilos del mapa base (todos de OpenStreetMap, gratis y sin key). Si un área del estilo estándar estorba, se puede cambiar desde Admin → Configuración.
+const BASES = {
+  osm: { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', cors: true, max: 19, attr: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' },
+  hot: { url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', cors: false, max: 19, attr: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · HOT' },
+  osmfr: { url: 'https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', cors: false, max: 19, attr: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · OSM Francia' },
+};
+function leafletMap({ el, center, zoom, style = 'osm' }) {
   const map = L.map(el, { zoomControl: false, attributionControl: true, zoomSnap: 1, zoomDelta: 1, wheelPxPerZoomLevel: 90 }).setView([center.lat, center.lng], zoom);
   L.control.zoom({ position: 'bottomright' }).addTo(map);
   L.control.scale({ position: 'bottomleft', metric: true, imperial: false, maxWidth: 110 }).addTo(map); // la barra de 100 m aparece en el zoom 18
   // Mapa base: OpenStreetMap oficial (gratis, sin API key).
-  const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, maxNativeZoom: 19, detectRetina: true, crossOrigin: true, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  }).addTo(map);
+  const B = BASES[style] || BASES.osm;
+  const tiles = L.tileLayer(B.url, { maxZoom: B.max, maxNativeZoom: B.max, detectRetina: true, crossOrigin: B.cors, subdomains: 'abc', attribution: B.attr }).addTo(map);
   // Aviso cuando los tiles no cargan (sin internet)
   const fb = document.createElement('div'); fb.className = 'map-fallback'; fb.textContent = 'Sin conexión al mapa base. Las capas de alerta siguen visibles.';
   el.appendChild(fb); tiles.on('load', () => fb.remove()); tiles.on('tileerror', () => { if (!el.contains(fb)) el.appendChild(fb); });

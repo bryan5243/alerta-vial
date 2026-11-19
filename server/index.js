@@ -126,7 +126,7 @@ app.get('/api/public/state', async (req, res) => {
   };
   res.json({
     config: { city: db.config.city, center: db.config.center, zoom: db.config.zoom,
-      mapProvider: db.config.mapProvider, googleMapsKey: db.config.googleMapsKey || '',
+      mapProvider: db.config.mapProvider, baseStyle: db.config.baseStyle || 'osm', googleMapsKey: db.config.googleMapsKey || '',
       mapVersion: db.config.mapVersion || 0, rainThresholdMm: db.config.weather.rainThresholdMm, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: f, noCar: noCarCfg(db) },
     alert: { ...db.alert, effective, suggested },
     weather: { ...weather, hourly: weather.hourly?.slice(0, 25) },
@@ -221,6 +221,7 @@ app.put('/api/admin/config', auth, (req, res) => {
   if (c.center) db.config.center = { lat: +c.center.lat, lng: +c.center.lng };
   if (c.zoom) db.config.zoom = +c.zoom;
   if (c.mapProvider) db.config.mapProvider = c.mapProvider === 'google' ? 'google' : 'leaflet';
+  if (c.baseStyle !== undefined) db.config.baseStyle = ['osm', 'hot', 'osmfr'].includes(c.baseStyle) ? c.baseStyle : 'osm';
   if (c.googleMapsKey !== undefined) db.config.googleMapsKey = String(c.googleMapsKey).trim();
   if (c.features) db.config.features = Object.fromEntries(Object.keys(DEFAULT_FEATURES).map(k => [k, c.features[k] !== false]));
   if (c.noCar !== undefined) db.config.noCar = [...new Set((Array.isArray(c.noCar) ? c.noCar : String(c.noCar).split(/\n|,/)).map(x => String(x).trim().slice(0, 60)).filter(Boolean))].slice(0, 40);

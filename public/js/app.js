@@ -166,7 +166,7 @@ async function load() {
   if (!document.body.classList.contains('is-offline')) checkMapVersion(state?.config?.mapVersion);
   const reports = pack.reports;
   if (!map) {
-    map = await createMap({ provider: state.config.mapProvider, el: document.getElementById('map'), center: state.config.center, zoom: Math.max(+state.config.zoom || 0, 16), googleKey: state.config.googleMapsKey });
+    map = await createMap({ provider: state.config.mapProvider, el: document.getElementById('map'), center: state.config.center, zoom: Math.max(+state.config.zoom || 0, 16), googleKey: state.config.googleMapsKey, style: state.config.baseStyle });
     map.onClick(onMapClick);
   }
   render(reports);

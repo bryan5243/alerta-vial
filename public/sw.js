@@ -2,7 +2,7 @@
 // - La página, estilos y scripts se guardan al instalar y se actualizan cada vez que hay red.
 // - Los cuadros del mapa (OpenStreetMap) que ya viste quedan guardados para verlos sin conexión.
 // - Los datos (calles, zonas, vías alternas) los guarda la propia página en el teléfono.
-const VER = 'av-shell-v41', TILES = 'av-tiles-v3', MAX_TILES = 1500;
+const VER = 'av-shell-v42', TILES = 'av-tiles-v3', MAX_TILES = 1500;
 const SHELL = ['/', '/css/app.css', '/js/app.js', '/js/common.js', '/js/gps.js', '/js/nav.js', '/js/map-provider.js', '/js/weather-fx.js', '/js/guide.js',
   '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css', '/img/emovtt-logo.png', '/img/emovtt-logo-blanco.png', '/manifest.webmanifest', '/img/icons/icon-192.png'];
 
@@ -16,7 +16,7 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const req = e.request; if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.hostname === 'tile.openstreetmap.org') { e.respondWith(tile(req)); return; }
+  if (url.hostname === 'tile.openstreetmap.org' || /^[abc]\.tile\.openstreetmap\.fr$/.test(url.hostname)) { e.respondWith(tile(req)); return; }
   if (url.origin !== location.origin) return;
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/admin')) return; // datos y panel: siempre en vivo
   e.respondWith(shell(req, url));

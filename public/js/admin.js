@@ -69,7 +69,7 @@ function renderShell() {
   if (HAS_MAP[section]) initMap().then(renderSection); else renderSection();
 }
 async function initMap() {
-  map = await createMap({ provider: db.config.mapProvider, el: document.getElementById('map'), center: db.config.center, zoom: db.config.zoom, googleKey: db.config.googleMapsKey });
+  map = await createMap({ provider: db.config.mapProvider, el: document.getElementById('map'), center: db.config.center, zoom: db.config.zoom, googleKey: db.config.googleMapsKey, style: db.config.baseStyle });
   map.onClick(onMapClick);
 }
 async function refresh() { db = await api('/api/admin/state'); document.getElementById('top-level').className = `chip ${db.alert.effective}`; document.getElementById('top-level').textContent = LEVELS[db.alert.effective]; topWeather(); renderSection(); }
@@ -592,6 +592,7 @@ function secConfig() {
       <div class="field"><label for="zoom">Zoom inicial</label><input id="zoom" type="number" min="8" max="18" value="${c.zoom}"><span class="hint">Tip: mueve el mapa de la derecha y pulsa "Usar vista actual".</span></div>
       <button type="button" class="btn ghost sm" id="usemap" style="margin-bottom:16px">Usar vista actual del mapa</button>
       <div class="field"><label for="prov">Proveedor de mapa</label><select id="prov"><option value="leaflet" ${c.mapProvider === 'leaflet' ? 'selected' : ''}>OpenStreetMap / Leaflet (gratis, sin key)</option><option value="google" ${c.mapProvider === 'google' ? 'selected' : ''}>Google Maps (requiere API key)</option></select></div>
+      <div class="field"><label for="bstyle">Estilo del mapa base</label><select id="bstyle"><option value="osm" ${(c.baseStyle || 'osm') === 'osm' ? 'selected' : ''}>OpenStreetMap estándar</option><option value="hot" ${c.baseStyle === 'hot' ? 'selected' : ''}>OpenStreetMap HOT (humanitario)</option><option value="osmfr" ${c.baseStyle === 'osmfr' ? 'selected' : ''}>OpenStreetMap Francia</option></select><span class="hint">Si en un estilo algún terreno o área dibujada estorba las calles, prueba otro. Se aplica a todos los usuarios.</span></div>
       <div class="field"><label for="gkey">Google Maps API key</label><input id="gkey" value="${esc(c.googleMapsKey || '')}" placeholder="AIza..."><span class="hint">Si falla la carga de Google, el sistema vuelve automáticamente a OpenStreetMap.</span></div>
       <label class="switch" style="margin:4px 0 10px"><input type="checkbox" id="fon" ${c.floodEnabled === true ? 'checked' : ''}> Usar Google Flood Forecasting</label>
       <div class="field" id="fkey-f" ${c.floodEnabled === true ? '' : 'hidden'}><label for="fkey">Google Flood Forecasting API key</label><input id="fkey" value="${esc(c.googleFloodKey || '')}" placeholder="AIza..."><span class="hint">Google la entrega solo con acceso aprobado. Si no la tienes, deja esto apagado: el índice de riesgo usa el estado de los ríos que marcas en el mapa.</span></div>
@@ -641,7 +642,7 @@ function secConfig() {
     const r = await api('/api/admin/restore', { method: 'POST', body: data });
     toast(`Datos restaurados: ${r.counts.points} puntos y ${r.counts.routes} vías alternas`, 'ok'); db = await api('/api/admin/state'); renderShell();
   };
-  id('fc').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { city: id('city').value, center: { lat: id('clat').value, lng: id('clng').value }, zoom: id('zoom').value, mapProvider: id('prov').value, googleMapsKey: id('gkey').value, googleFloodKey: id('fkey').value, floodEnabled: id('fon').checked } }); toast('Configuración guardada', 'ok'); db = await api('/api/admin/state'); renderShell(); };
+  id('fc').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { city: id('city').value, center: { lat: id('clat').value, lng: id('clng').value }, zoom: id('zoom').value, mapProvider: id('prov').value, baseStyle: id('bstyle').value, googleMapsKey: id('gkey').value, googleFloodKey: id('fkey').value, floodEnabled: id('fon').checked } }); toast('Configuración guardada', 'ok'); db = await api('/api/admin/state'); renderShell(); };
   id('fg').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { gps: { warnM: id('gw').value, dangerM: id('gd').value, voice: id('gv').checked } } }); toast('Avisos GPS guardados', 'ok'); refresh(); };
   id('fw').onsubmit = async e => { e.preventDefault(); await api('/api/admin/config', { method: 'PUT', body: { weather: { lat: id('wlat').value, lng: id('wlng').value, rainThresholdMm: id('t1').value, rainThresholdMm3h: id('t3').value, metarStation: id('metar').value, owmKey: id('owm').value } } }); toast('Clima guardado', 'ok'); refresh(); };
 }
