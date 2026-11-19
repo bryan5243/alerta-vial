@@ -248,7 +248,7 @@ app.get('/api/admin/backup', auth, (req, res) => {
 app.post('/api/admin/restore', auth, (req, res) => {
   const d = req.body;
   const ok = d && typeof d === 'object' && d.config && d.alert && ['points', 'streets', 'routes', 'recommendations'].every(k => Array.isArray(d[k]));
-  if (!ok) return res.status(400).json({ error: 'El archivo no es un respaldo de AlertaVial.' });
+  if (!ok) return res.status(400).json({ error: 'El archivo no es un respaldo del Sistema de Alerta Vial.' });
   reset(d); simulation = null;
   res.json({ ok: true, counts: Object.fromEntries(['points', 'streets', 'routes', 'rivers', 'zones', 'layers', 'reports'].map(k => [k, (d[k] || []).length])) });
 });
@@ -421,7 +421,7 @@ app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, '..', 'public'
 app.use((err, req, res, next) => { console.error(err); res.status(500).json({ error: 'Ocurrió un error inesperado en el servidor.' }); });
 
 app.listen(PORT, () => {
-  console.log(`\n  AlertaVial listo`);
+  console.log(`\n  Sistema de Alerta Vial listo`);
   console.log(`  En esta PC:      http://localhost:${PORT}`);
   for (const ip of lanIps()) console.log(`  En tu teléfono:  http://${ip}:${PORT}   (misma red WiFi)`);
   console.log(`  Panel admin:     http://localhost:${PORT}/admin\n`);
