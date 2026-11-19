@@ -212,14 +212,19 @@ export function decodePng(buf) {
     const k = px[y * stride + x]; return [plte[k * 3], plte[k * 3 + 1], plte[k * 3 + 2], trns && k < trns.length ? trns[k] : 255];
   } };
 }
-// Intensidad según el color de la escala "universal" de RainViewer (azul claro = débil … amarillo/rojo = fuerte)
-export function radarIntensity([r, g, b, a]) {
-  if (a < 40) return 0;
-  if (r > 200 && g < 110) return 3;          // rojo/magenta
-  if (r > 200 && g >= 110) return 2;          // amarillo/naranja
-  if (g > 150 && r < 160 && b < 140) return 2; // verde
-  return 1;                                    // azules
+// Escala "Universal Blue" (color 2) de RainViewer, de 15 a 64 dBZ (RGB). Por debajo de 15 dBZ los píxeles son semitransparentes (eco muy débil).
+const UB = '88ddee 6cd1eb 51c5e8 36bae5 1baee2 00a3e0 009ad5 0091ca 0088bf 007fb4 0077aa 0070a3 00699c 006295 005b8e 005588 005180 004e78 004a70 004768 ffee00 ffe000 ffd200 ffc500 ffb700 ffaa00 ff9f00 ff9500 ff8b00 ff8100 ff4400 f23600 e62800 d91b00 cd0d00 c10000 a80000 8f0000 760000 5d0000 ffaaff ff9fff ff95ff ff8bff ff81ff ff77ff ff6cff ff62ff ff58ff ff4eff'
+  .split(' ').map((h, i) => ({ dbz: 15 + i, c: [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4), 16)] }));
+// dBZ del píxel: busca el color más parecido de la escala; transparente o muy débil = -1
+export function radarDbz([r, g, b, a]) {
+  if (a < 250) return -1;
+  let best = null, bd = 1e9; for (const e of UB) { const d = (e.c[0] - r) ** 2 + (e.c[1] - g) ** 2 + (e.c[2] - b) ** 2; if (d < bd) { bd = d; best = e; } }
+  return bd < 40 * 40 * 3 ? best.dbz : -1;
 }
+// mm/h a partir de dBZ (relación Z = 200·R^1,6)
+export const dbzToMm = dbz => dbz < 0 ? 0 : r1(Math.pow(Math.pow(10, dbz / 10) / 200, 1 / 1.6));
+// Intensidad como los modelos: lluvia medible desde 0,5 mm/h (≈22 dBZ); fuerte desde 8 mm/h (≈37 dBZ)
+export const radarIntensity = px => mmInt(dbzToMm(radarDbz(px)));
 export function radarPixel(lat, lng, z = 7) {
   const n = 2 ** z, fx = (lng + 180) / 360 * n, sin = Math.sin(lat * Math.PI / 180), fy = (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * n;
   const tx = Math.floor(fx), ty = Math.floor(fy);
@@ -239,11 +244,11 @@ async function radarSource(lat, lng) {
     if (!res.ok) throw new Error(`respondió con error ${res.status}`);
     const img = decodePng(Buffer.from(await res.arrayBuffer()));
     const at = (x, y) => img.at(Math.max(0, Math.min(255, x)), Math.max(0, Math.min(255, y)));
-    const here = radarIntensity(at(px, py));
+    const mmHere = dbzToMm(radarDbz(at(px, py))), here = mmInt(mmHere);
     let nearest = 0; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) nearest = Math.max(nearest, radarIntensity(at(px + dx, py + dy)));
     const fresh = ageMin <= 25;
-    d = { ...base, ok: fresh, at: new Date(fr.time * 1000).toISOString(), intensity: fresh ? here : 0, rainNow: fresh ? INT_MM[here] : 0, near: fresh && nearest > 0,
-      detail: `${here ? `El radar ve lluvia sobre la ciudad (${INT_TXT[here].toLowerCase()})` : nearest ? 'El radar ve lluvia cerca (a pocos km), no sobre la ciudad' : 'El radar no ve lluvia sobre la ciudad'} · imagen de hace ${ageMin} min`,
+    d = { ...base, ok: fresh, at: new Date(fr.time * 1000).toISOString(), intensity: fresh ? here : 0, rainNow: fresh ? mmHere : 0, near: fresh && nearest > 0,
+      detail: `${here ? `El radar ve lluvia sobre la ciudad (${INT_TXT[here].toLowerCase()}, ~${mmHere} mm/h)` : nearest ? 'El radar ve lluvia cerca (a pocos km), no sobre la ciudad' : 'El radar no ve lluvia sobre la ciudad'} · imagen de hace ${ageMin} min`,
       error: fresh ? undefined : `imagen de radar de hace ${ageMin} min` };
   } catch (e) { d = { ...base, ok: false, intensity: 0, error: e.message }; }
   radarCache = { at: Date.now(), key: ck, data: d };
