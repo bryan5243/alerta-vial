@@ -231,8 +231,13 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
   }
   function driveOn(u) { const m = getMap(); if (!m.drive) return; $('#drive-tilt b').textContent = m.drive.tilt ? '2D' : '3D'; $('#drive-ctl').hidden = false; $('#gps-3d').hidden = false; $('#gps-3d').classList.add('on'); $('#gps-follow').hidden = true; m.drive.start(u); }
   function driveOff() { const m = getMap(); if (!m?.drive) return; m.drive.stop(); $('#drive-ctl').hidden = true; $('#gps-3d').classList.remove('on'); $('#gps-follow').hidden = false; }
+  // Salir con el botón "atrás" del teléfono o con Esc, como en cualquier app de navegación
+  let navPushed = false;
+  const pushNav = () => { if (!navPushed) try { history.pushState({ avnav: 1 }, ''); navPushed = true; } catch {} };
+  window.addEventListener('popstate', () => { if (navPushed) { navPushed = false; if (document.body.classList.contains('gps-on')) stop(); } });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.body.classList.contains('gps-on')) stop(); });
   function start() {
-    startCompass(); if (getMap().drive) $('#gps-3d').hidden = false;
+    startCompass(); pushNav(); if (getMap().drive) $('#gps-3d').hidden = false;
     $('#gps-bar').hidden = false; $('#btn-gps').classList.add('on'); document.body.classList.add('gps-on');
     if (!('geolocation' in navigator)) { toast('Tu navegador no permite usar el GPS. Prueba "Simular recorrido".', 'err'); return; }
     if (!window.isSecureContext) { toast('El GPS solo funciona con https o en localhost. Puedes usar "Simular recorrido".', 'err'); return; }
@@ -247,6 +252,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
     driveOff(); driveTried = false; $('#gps-3d').hidden = true;
     if (active) hide(); userMk?.remove(); userMk = null; user = null; last = null; hist.clear(); snoozed.clear(); detours.clear();
     $('#gps-bar').hidden = true; $('#btn-gps').classList.remove('on'); document.body.classList.remove('gps-on');
+    if (navPushed) { navPushed = false; try { history.back(); } catch {} }
     try { speechSynthesis.cancel(); } catch {}
     onMove(null);
   }
@@ -257,7 +263,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
     if (simTimer) { clearInterval(simTimer); simTimer = null; $('#gps-sim').classList.remove('on'); return; }
     const nav = getNav();
     if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-    $('#gps-bar').hidden = false; $('#btn-gps').classList.add('on'); document.body.classList.add('gps-on'); $('#gps-sim').classList.add('on');
+    pushNav(); $('#gps-bar').hidden = false; $('#btn-gps').classList.add('on'); document.body.classList.add('gps-on'); $('#gps-sim').classList.add('on');
     hist.clear(); snoozed.clear(); detours.clear(); simPaused = false; follow = true; $('#gps-follow').classList.add('on');
     if (nav?.trip) {
       const c0 = nav.trip.route.coords[0]; let pos = { lat: c0[0], lng: c0[1] };
