@@ -40,7 +40,7 @@ function omQuery(lat, lng, models) {
   const url = new URL('https://api.open-meteo.com/v1/forecast');
   url.search = new URLSearchParams({ latitude: lat, longitude: lng,
     current: 'precipitation,rain,showers,temperature_2m,weather_code,cloud_cover,is_day,uv_index,shortwave_radiation',
-    daily: 'uv_index_max,sunrise,sunset', hourly: 'precipitation,precipitation_probability,cape',
+    daily: 'uv_index_max,sunrise,sunset', hourly: 'precipitation,precipitation_probability,cape,weather_code',
     past_hours: 3, forecast_hours: 24, timezone: 'America/Guayaquil', ...(models ? { models } : {}) });
   return url;
 }
@@ -48,8 +48,8 @@ function omQuery(lat, lng, models) {
 function omParse(model, j, sfx) {
   const g = (o, k) => (sfx ? o?.[`${k}_${model}`] : o?.[k]);
   const H = j.hourly || {}, times = H.time || [];
-  const P = g(H, 'precipitation') || [], PP = g(H, 'precipitation_probability') || [], CP = g(H, 'cape') || [];
-  const hours = times.map((t, i) => ({ time: t, precipitation: P[i] ?? null, probability: PP[i] ?? null, cape: CP[i] ?? null }));
+  const P = g(H, 'precipitation') || [], PP = g(H, 'precipitation_probability') || [], CP = g(H, 'cape') || [], WC = g(H, 'weather_code') || [];
+  const hours = times.map((t, i) => ({ time: t, precipitation: P[i] ?? null, probability: PP[i] ?? null, cape: CP[i] ?? null, code: WC[i] ?? null }));
   if (!hours.length || hours.every(h => h.precipitation == null)) return { model, name: MODELS[model], ok: false, error: 'sin datos para este punto', intensity: 0 };
   const cur = j.current || {}, useCur = model === 'best_match' || !sfx; // "current" es del mejor modelo
   const nowIdx = Math.max(0, hours.findIndex(h => h.time.slice(0, 13) === String(cur.time || '').slice(0, 13)));
@@ -73,7 +73,8 @@ function omParse(model, j, sfx) {
     maxProbability24h: hours.some(h => h.probability != null) ? Math.max(0, ...hours.slice(nowIdx + 1, nowIdx + 25).map(h => h.probability || 0)) : null,
     // CAPE: energía del aire para formar nubes de tormenta (J/kg). Más de ~1000 en la costa = aguaceros posibles
     capeMax6h: hours.slice(nowIdx, nowIdx + 7).reduce((m, h) => (h.cape != null && h.cape > (m ?? -1) ? h.cape : m), null),
-    hourly: hours.slice(nowIdx, nowIdx + 25).map(({ cape, ...h }) => h) };
+    thunderCode6h: hours.slice(nowIdx, nowIdx + 7).some(h => h.code >= 95),
+    hourly: hours.slice(nowIdx, nowIdx + 25).map(({ cape, code, ...h }) => h) };
 }
 async function openMeteoAll(lat, lng) {
   const ids = Object.keys(MODELS), key = `${lat},${lng}`, now = Date.now();
@@ -272,6 +273,7 @@ export function combine({ models, metar, owm, at }, extra = []) {
   // Sin lluvia: de día y despejado es "Soleado"; de noche, "Noche despejada"
   if (!w.intensity && w.sun && ['Despejado', 'Parcialmente nublado'].includes(w.condition) && (w.condition === 'Despejado' || w.sun.sky === 'soleado')) w.condition = w.sun.sky === 'noche' ? 'Noche despejada' : 'Soleado';
   w.outlook = outlookOf(w, { okM, metar, need, base });
+  w.thunder = thunderOf(w, { okM, metar });
   return w;
 }
 
@@ -345,6 +347,34 @@ function outlookOf(w, { okM, metar, need, base }) {
     : level === 'calma' ? `No hay una probabilidad alta de lluvia (${NOTICE_PROB} % o más) en las próximas 6 horas.`
     : `Ahora no llueve, pero es probable un aguacero${from ? ` desde las ${from.slice(11, 16)}, aproximadamente` : ''}. Lleva paraguas y evita las calles que suelen inundarse.`;
   return { level, score, title, text, reasons: level === 'calma' ? [] : reasons, from, peak, min: NOTICE_PROB };
+}
+
+
+// Probabilidad estimada de tormenta eléctrica en las próximas 6 h. No existe un dato oficial de rayos para este punto: se combinan
+// los modelos que prevén tormenta (códigos 95-99 / MET Norway), la energía del aire (CAPE), la lluvia probable y lo que ve el aeropuerto.
+function thunderOf(w, { okM, metar }) {
+  const reasons = [], n = okM.length || 1;
+  const votes = okM.filter(m => m.thunderCode6h || m.thunder6h).length, share = votes / n;
+  const cape = Math.max(-1, ...okM.map(m => m.capeMax6h ?? -1));
+  const capeP = cape < 300 ? 0 : cape < 1000 ? 10 + (cape - 300) / 700 * 20 : cape < 2000 ? 30 + (cape - 1000) / 1000 * 25 : Math.min(75, 55 + (cape - 2000) / 1500 * 20);
+  const peak = Math.max(0, ...(w.hourly || []).slice(0, 7).map(h => h.probability ?? 0));
+  let p = Math.max(share * 85, capeP);
+  if (votes) reasons.push(`${votes} de ${n} modelos prevén tormenta eléctrica en las próximas 6 h`);
+  if (cape >= 1000) reasons.push(`el aire tiene energía para tormentas${cape >= 2000 ? ' fuertes' : ''} (CAPE ${Math.round(cape)} J/kg)`);
+  if (peak >= 60 && cape >= 800) { p += 12; reasons.push(`probabilidad de lluvia de ${peak} %`); }
+  if (metar?.ok && metar.cb) { p = Math.max(p, 60); reasons.push('el aeropuerto ve nubes de tormenta (cumulonimbos) cerca'); }
+  const now = w.weatherCode >= 95 || !!(metar?.ok && metar.ts);
+  if (metar?.ok && metar.ts) { p = Math.max(p, 90); reasons.push('el aeropuerto reporta tormenta en la zona'); }
+  if (w.weatherCode >= 95) { p = Math.max(p, 90); reasons.push('hay tormenta eléctrica ahora mismo'); }
+  p = now ? Math.max(90, Math.round(p)) : Math.max(0, Math.min(90, Math.round(p / 5) * 5));
+  const level = now ? 'activa' : p >= 70 ? 'alta' : p >= 40 ? 'moderada' : p >= 15 ? 'baja' : 'nula';
+  const label = { activa: 'Tormenta ahora', alta: 'Alta', moderada: 'Moderada', baja: 'Baja', nula: 'Muy baja' }[level];
+  const text = { activa: 'Hay tormenta eléctrica. Busca refugio bajo techo, evita árboles y zonas abiertas, y no cruces calles inundadas.',
+    alta: 'Es muy probable una tormenta eléctrica en las próximas horas. Evita salir y mantente lejos de ríos y calles que se inundan.',
+    moderada: 'Puede haber tormenta eléctrica en las próximas horas. Revisa el cielo y ten un plan por si cae un aguacero fuerte.',
+    baja: 'Hay poca probabilidad de tormenta eléctrica, pero conviene revisar el clima si vas a salir.',
+    nula: 'No se espera tormenta eléctrica en las próximas 6 horas.' }[level];
+  return { prob: p, level, label, text, reasons: level === 'nula' ? [] : reasons, now, models: { votes, of: n }, cape: cape >= 0 ? Math.round(cape) : null };
 }
 
 // Índice UV según la escala de la OMS, con el consejo para la gente

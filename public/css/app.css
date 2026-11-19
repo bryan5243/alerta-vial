@@ -717,3 +717,21 @@ button,a,.item,label.switch{-webkit-tap-highlight-color:transparent}
   /* simulador compacto */
   .sim-bar{padding:8px 10px;gap:6px} .sim-head small,.sim-ctl>span{display:none} .sim-opt{font-size:.74rem;line-height:1.25}
 }
+
+/* Detección automática de lluvia y probabilidad de tormenta eléctrica */
+.wx-auto{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 2px;padding:8px 12px;border-radius:12px;background:rgb(255 255 255/.55);border:1px solid var(--line);font-size:.9rem}
+.wx-auto i{width:10px;height:10px;border-radius:50%;background:#2A8C5A;box-shadow:0 0 0 0 rgb(42 140 90/.5);flex:none}
+.wx-auto.on i{background:#1C8FD6;animation:wxa 1.4s infinite} .wx-auto small{margin-left:auto;color:var(--muted);font-size:.74rem}
+@keyframes wxa{0%{box-shadow:0 0 0 0 rgb(28 143 214/.55)}100%{box-shadow:0 0 0 9px rgb(28 143 214/0)}}
+.wx-thunder{margin-top:12px;padding:12px 14px;border-radius:14px;background:var(--surface);border:1px solid var(--line);--tc:#2A8C5A}
+.wx-thunder.th-baja{--tc:#B58A00} .wx-thunder.th-moderada{--tc:#E36A17} .wx-thunder.th-alta,.wx-thunder.th-activa{--tc:#C62E2E}
+.th-h{display:flex;align-items:center;gap:8px} .th-h>b{font-size:.92rem;flex:1}
+.th-ic{width:28px;height:28px;border-radius:9px;display:grid;place-items:center;background:color-mix(in srgb,var(--tc) 14%,transparent);color:var(--tc)}
+.th-ic svg{width:16px;height:16px;fill:currentColor}
+.th-p{font-family:var(--font-display);font-size:1.5rem;font-weight:700;color:var(--tc);font-variant-numeric:tabular-nums} .th-p small{font-size:.8rem;margin-left:1px}
+.th-bar{height:8px;border-radius:6px;background:var(--surface-2);margin:8px 0 6px;overflow:hidden} .th-bar i{display:block;height:100%;border-radius:6px;background:var(--tc);transition:width .6s var(--ease)}
+.th-l{display:flex;justify-content:space-between;gap:8px;font-size:.8rem} .th-l b{color:var(--tc)} .th-l span{color:var(--muted)}
+.wx-thunder p{margin:8px 0 0;font-size:.84rem;line-height:1.4;color:var(--ink)}
+.th-why{margin-top:6px;font-size:.78rem;color:var(--muted)} .th-why summary{cursor:pointer;font-weight:600} .th-why ul{margin:6px 0 0;padding-left:18px}
+.wx-thunder.th-activa .th-ic{animation:wxa2 1s infinite} @keyframes wxa2{50%{transform:scale(1.15)}}
+@media (prefers-reduced-motion:reduce){ .wx-auto.on i,.wx-thunder.th-activa .th-ic{animation:none} }

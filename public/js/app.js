@@ -90,6 +90,14 @@ function renderGlance(nFlood) {
 const goTab = id => { const t = document.querySelector(`.tab[data-tab="${id}"]`); if (!t || t.hidden) return; t.click();
   if (window.innerWidth <= 900 && !matchMedia('(min-width:768px) and (min-height:561px)').matches) window.scrollTo({ top: Math.max(0, $('.panel').getBoundingClientRect().top + window.scrollY - Math.round(window.innerHeight * .3)), behavior: 'smooth' }); };
 $('#glance').addEventListener('click', e => { const b = e.target.closest('[data-go]'); if (b) goTab(b.dataset.go); });
+// Probabilidad estimada de tormenta eléctrica (próximas 6 h)
+function thunderCard(w) {
+  const t = w.thunder; if (!t) return '';
+  return `<div class="wx-thunder th-${t.level}"><div class="th-h"><span class="th-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span><b>Tormenta eléctrica</b><span class="th-p">${t.prob}<small>%</small></span></div>
+    <div class="th-bar" role="img" aria-label="Probabilidad de tormenta eléctrica ${t.prob} por ciento, ${esc(t.label)}"><i style="width:${t.prob}%"></i></div>
+    <div class="th-l"><b>${esc(t.label)}</b><span>próximas 6 h · estimado</span></div>
+    <p>${esc(t.text)}</p>${t.reasons?.length ? `<details class="th-why"><summary>Por qué</summary><ul>${t.reasons.map(r => `<li>${esc(cap(r))}</li>`).join('')}</ul></details>` : ''}</div>`;
+}
 let daysData = null;
 // Tarjeta "Clima ahora": cielo, temperatura, lluvia y sol (índice UV, radiación, salida y puesta)
 function weatherCard(w) {
@@ -108,11 +116,12 @@ function weatherCard(w) {
   return `<div class="wx-card sky-${sky}">
     <div class="wx-now"><span class="wx-big">${WX_IC[skyIcon(w)]}</span>
       <div class="wx-now-t"><b>${esc(w.condition || 'Clima')}</b><small>${w.temperature != null ? `${Math.round(w.temperature)}°C · ` : ''}dato de las ${wxTime(w.observedAt)}</small></div>${uvBadge}</div>
+    <div class="wx-auto${w.raining ? ' on' : ''}" role="status"><i aria-hidden="true"></i><b>${w.raining ? 'Lloviendo ahora' : 'No está lloviendo'}</b><small>detección automática${w.models?.length ? ` · ${w.models.filter(m => m.ok).length} fuentes` : ''}</small></div>
     <div class="wx-stats">
       <div class="stat${w.raining ? ' rain' : ''}"><b>${dec(w.rainNow)}<small> mm/h</small></b><span>Lluvia ahora</span></div>
       <div class="stat"><b>${dec(w.rainPast3h)}<small> mm</small></b><span>Últimas 3 h</span></div>
       <div class="stat"><b>${dec(w.rainNext3h)}<small> mm</small></b><span>Próximas 3 h</span></div>
-    </div>${rainHours(w)}${sunRow}</div>`;
+    </div>${rainHours(w)}${thunderCard(w)}${sunRow}</div>`;
 }
 function renderWx(w) {
   const chip = $('#wx-chip'); wxFx.set(w); applySky(w);
@@ -121,7 +130,8 @@ function renderWx(w) {
   chip.hidden = false; chip.className = `wx-chip i${i} sky-${skyOf(w)}`;
   const extra = w.rainNow > 0 ? `<span>${dec(w.rainNow)} mm/h</span>` : w.probNext3h >= 80 ? `<span>${w.probNext3h}% en 3 h</span>` : '';
   const ol = !i && ['atencion', 'probable'].includes(w.outlook?.level) ? `<span class="ol-tag ol-${w.outlook.level}">${w.outlook.level === 'probable' ? 'Lluvia probable' : 'Podría llover'}${w.outlook.from ? ` ${w.outlook.from.slice(11, 16)}` : ''}</span>` : '';
-  const uv = ol || (!i && uvOn(w) && w.sun.uvIndex >= 3 ? `<span class="uv-tag uv-${w.sun.uv.key}">UV ${dec(w.sun.uvIndex)}</span>` : '');
+  const th = !i && ['moderada', 'alta'].includes(w.thunder?.level) ? `<span class="ol-tag ol-probable">Tormenta ${w.thunder.prob} %</span>` : '';
+  const uv = ol || th || (!i && uvOn(w) && w.sun.uvIndex >= 3 ? `<span class="uv-tag uv-${w.sun.uv.key}">UV ${dec(w.sun.uvIndex)}</span>` : '');
   // aviso una sola vez cuando la lluvia pasa a "probable"
   if (!i && w.outlook?.level === 'probable') { const k = `av_ol_${w.outlook.from || ''}`; try { if (!sessionStorage.getItem(k)) { sessionStorage.setItem(k, '1'); toast(`Lluvia probable${w.outlook.from ? ` desde las ${w.outlook.from.slice(11, 16)}` : ' en las próximas horas'}. Lleva paraguas.`); } } catch {} }
   chip.innerHTML = `<span class="wx-ic">${WX_IC[ic]}</span><b>${esc(w.condition || 'Clima')}</b>${w.temperature != null && !i ? `<span>${Math.round(w.temperature)}°C</span>` : ''}${ol ? '' : extra}${uv}${w.simulated ? '<em>prueba</em>' : ''}<u aria-hidden="true">${wxFx.enabled ? 'efectos' : 'sin efectos'}</u>`;
