@@ -2,7 +2,7 @@
 // - La página, estilos y scripts se guardan al instalar y se actualizan cada vez que hay red.
 // - Los cuadros del mapa (OpenStreetMap) que ya viste quedan guardados para verlos sin conexión.
 // - Los datos (calles, zonas, vías alternas) los guarda la propia página en el teléfono.
-const VER = 'av-shell-v55', TILES = 'av-tiles-v3', MAX_TILES = 1500;
+const VER = 'av-shell-v56', TILES = 'av-tiles-v3', MAX_TILES = 1500;
 const SHELL = ['/', '/css/app.css', '/js/app.js', '/js/common.js', '/js/gps.js', '/js/nav.js', '/js/map-provider.js', '/js/weather-fx.js', '/js/guide.js',
   '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css', '/img/emovtt-logo.png', '/img/emovtt-logo-blanco.png', '/manifest.webmanifest', '/img/icons/icon-192.png'];
 
@@ -19,19 +19,29 @@ self.addEventListener('fetch', e => {
   if (url.hostname === 'tile.openstreetmap.org' || /^[abc]\.tile\.openstreetmap\.fr$/.test(url.hostname)) { e.respondWith(tile(req)); return; }
   if (url.origin !== location.origin) return;
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/admin')) return; // datos y panel: siempre en vivo
-  e.respondWith(shell(req, url));
+  e.respondWith(shell(req, url, e));
 });
 
-// Primero la red (para recibir siempre la última versión); si no hay señal, lo guardado.
-async function shell(req, url) {
-  const cache = await caches.open(VER);
-  try {
-    const res = await Promise.race([fetch(req, { cache: 'no-cache' }), new Promise((_, ko) => setTimeout(() => ko(new Error('timeout')), 6000))]);
-    if (res.ok) cache.put(url.pathname === '/index.html' ? '/' : req, res.clone());
+// Se abre al instante con lo guardado y, en segundo plano, se pide la versión nueva. Si cambió, se avisa a la página para que se recargue sola.
+// (Antes se esperaba la red solo 6 s: si el servidor tardaba en despertar, el teléfono se quedaba con la versión vieja hasta cerrar y abrir.)
+let lastNotice = 0;
+async function notifyUpdated() {
+  if (Date.now() - lastNotice < 20000) return; lastNotice = Date.now();
+  for (const c of await self.clients.matchAll({ type: 'window' })) c.postMessage({ type: 'shell-updated' });
+}
+const sig = r => r ? `${r.headers.get('etag') || ''}|${r.headers.get('last-modified') || ''}|${r.headers.get('content-length') || ''}` : '';
+async function shell(req, url, e) {
+  const cache = await caches.open(VER), key = url.pathname === '/index.html' ? '/' : req;
+  const hit = await cache.match(req, { ignoreSearch: true }) || (req.mode === 'navigate' ? await cache.match('/') : null);
+  const net = fetch(req, { cache: 'no-cache' }).then(async res => {
+    if (res.ok) {
+      const old = hit ? sig(hit) : null; await cache.put(key, res.clone());
+      if (old != null && old !== sig(res) && /\.(js|css|html)$|^\/$/.test(url.pathname)) notifyUpdated();
+    }
     return res;
-  } catch {
-    return (await cache.match(req, { ignoreSearch: true })) || (req.mode === 'navigate' ? cache.match('/') : Response.error());
-  }
+  });
+  if (hit) { e.waitUntil(net.catch(() => {})); return hit; }
+  try { return await net; } catch { return req.mode === 'navigate' ? (await cache.match('/')) || Response.error() : Response.error(); }
 }
 
 // Cuadros del mapa: si ya está guardado (y tiene menos de 3 días) se usa sin gastar datos; si es más viejo se pide de nuevo

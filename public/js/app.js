@@ -256,6 +256,12 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   // si ya había una versión instalada y llega una nueva, recarga una vez (así no queda CSS/JS viejo hasta salir y entrar)
   const had = !!navigator.serviceWorker.controller; let reloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !reloaded && !document.body.classList.contains('gps-on')) { reloaded = true; location.reload(); } });
+  // el service worker avisa cuando detecta archivos nuevos en el servidor: se recarga una vez (salvo mientras se navega con GPS)
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data?.type !== 'shell-updated' || reloaded) return;
+    const go = () => { if (reloaded) return; if (document.body.classList.contains('gps-on')) { setTimeout(go, 15000); return; } reloaded = true; location.reload(); };
+    go();
+  });
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
