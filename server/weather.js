@@ -266,6 +266,36 @@ async function radarSource(lat, lng) {
   return d;
 }
 
+
+// wttr.in (World Weather Online): otra fuente automática sin clave. Trae lluvia actual y la probabilidad de tormenta eléctrica por franjas de 3 h.
+let wttrCache = { at: 0, key: '', data: null };
+const WWO_THUNDER = new Set([200, 386, 389, 392, 395]);
+export function parseWttr(j, hourNow) {
+  const cur = j.current_condition?.[0] || {}, day = j.weather?.[0]?.hourly || [];
+  const slot = Math.max(0, Math.min(day.length - 1, Math.floor(hourNow / 3)));
+  const near = day.slice(slot, slot + 2), n = v => +v || 0;
+  const mm = n(cur.precipMM), code = n(cur.weatherCode);
+  const chance = Math.max(0, ...near.map(h => n(h.chanceofthunder)));
+  const thunderNow = WWO_THUNDER.has(code) && mm >= 0.2;
+  const intensity = thunderNow ? 4 : mmInt(mm);
+  return { mm, code, chance, thunderNow, intensity };
+}
+async function wttrSource(lat, lng) {
+  const base = { id: 'wttr', kind: 'pronóstico', name: 'World Weather Online (wttr.in)' };
+  const ck = `${lat},${lng}`;
+  if (wttrCache.data && wttrCache.key === ck && Date.now() - wttrCache.at < 10 * 60 * 1000) return wttrCache.data;
+  let d;
+  try {
+    const j = await getJson(`https://wttr.in/${lat},${lng}?format=j1`, 10000);
+    const hour = +new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'America/Guayaquil' }).slice(0, 2) || 0;
+    const p = parseWttr(j, hour);
+    d = { ...base, ok: true, at: new Date().toISOString(), intensity: p.intensity, rainNow: p.intensity ? Math.max(p.mm, INT_MM[p.intensity] / 2) : 0, thunderChance: p.chance, thunderNow: p.thunderNow,
+      detail: `${p.mm} mm ahora · probabilidad de tormenta eléctrica ${p.chance} %${p.thunderNow ? ' · tormenta ahora' : ''}` };
+  } catch (e) { d = { ...base, ok: false, intensity: 0, error: e.message }; }
+  wttrCache = { at: Date.now(), key: ck, data: d };
+  return d;
+}
+
 // OpenWeatherMap (opcional): solo si hay API key
 async function owmSource(lat, lng, key) {
   const base = { id: 'owm', kind: 'observación', name: 'OpenWeatherMap' };
@@ -292,20 +322,21 @@ export async function getWeather({ lat, lng, metarStation = 'SERO', owmKey = '' 
   let remote;
   if (cache.data && cache.key === key && Date.now() - cache.at < TTL) remote = cache.data;
   else {
-    const [omModels, metno, metar, owm, radar] = await Promise.all([
+    const [omModels, metno, metar, owm, radar, wttr] = await Promise.all([
       openMeteoAll(lat, lng).catch(e => Object.keys(MODELS).map(m => ({ model: m, name: MODELS[m], ok: false, error: e.message, intensity: 0 }))),
       metnoSource(lat, lng),
       metarStation ? metarSource(metarStation) : Promise.resolve(null),
       owmSource(lat, lng, owmKey),
       radarSource(lat, lng),
+      wttrSource(lat, lng),
     ]);
-    remote = { models: [...omModels, metno], metar, owm, radar, at: new Date().toISOString() };
+    remote = { models: [...omModels, metno], metar, owm, radar, wttr, at: new Date().toISOString() };
     cache = { at: Date.now(), key, data: remote };
   }
   return combine(remote, extra);
 }
 
-export function combine({ models, metar, owm, radar, at }, extra = []) {
+export function combine({ models, metar, owm, radar, wttr, at }, extra = []) {
   const okM = models.filter(m => m.ok), base = okM.find(m => m.model === 'best_match') || okM.find(m => m.model === 'met_no') || okM[0];
   // Como Amaru: las señales tienen que coincidir. Un modelo solo no basta: hace falta que al menos
   // un tercio de los modelos (3 de 9) vean lluvia medible. Y si el mejor modelo dice cielo casi despejado, los modelos no cuentan.
@@ -321,7 +352,7 @@ export function combine({ models, metar, owm, radar, at }, extra = []) {
     detail: !okM.length ? `Sin conexión con los pronósticos (${[...new Set(models.map(m => m.error).filter(Boolean))].join(' · ')})`
       : `${stale ? `Dato de Open-Meteo de hace ${stale.staleMin} min (${stale.staleWhy}) · ` : ''}${raining.length} de ${okM.length} modelos ven lluvia medible${raining.length ? ` (${raining.map(m => m.name).join(', ')})` : ''}; hacen falta ${need}${clear && raining.length ? ' · no cuenta: el cielo está casi despejado' : ''} · nubosidad ${base?.cloudCover ?? '—'} %`,
     error: okM.length ? undefined : models[0]?.error, models: models.map(m => ({ name: m.name, ok: m.ok, rainNow: m.rainNow ?? 0, intensity: m.intensity || 0, error: m.error, stale: m.stale ? m.staleMin : undefined })) };
-  const sources = [modelSrc, metar, owm, radar, ...extra].filter(Boolean);
+  const sources = [modelSrc, metar, owm, radar, wttr, ...extra].filter(Boolean);
   const live = sources.filter(s => s.ok);
   if (!live.length) return { ok: false, source: 'Open-Meteo', error: modelSrc.error || 'sin conexión', rainNow: 0, rainPast3h: 0, rainNext3h: 0, rainNext24h: 0, hourly: [], sources, checkedAt: at };
   // Entre fuentes gana la que vea la lluvia más fuerte (cada una ya es confiable por sí sola: observación o consenso de modelos)
@@ -365,7 +396,7 @@ export function combine({ models, metar, owm, radar, at }, extra = []) {
   // Sin lluvia: de día y despejado es "Soleado"; de noche, "Noche despejada"
   if (!w.intensity && w.sun && ['Despejado', 'Parcialmente nublado'].includes(w.condition) && (w.condition === 'Despejado' || w.sun.sky === 'soleado')) w.condition = w.sun.sky === 'noche' ? 'Noche despejada' : 'Soleado';
   w.outlook = outlookOf(w, { okM, metar, need, base });
-  w.thunder = thunderOf(w, { okM, metar, radar, extra });
+  w.thunder = thunderOf(w, { okM, metar, radar, wttr, extra });
   return w;
 }
 
@@ -444,7 +475,7 @@ function outlookOf(w, { okM, metar, need, base }) {
 
 // Probabilidad estimada de tormenta eléctrica en las próximas 6 h. No existe un dato oficial de rayos para este punto: se combinan
 // los modelos que prevén tormenta (códigos 95-99 / MET Norway), la energía del aire (CAPE), la lluvia probable y lo que ve el aeropuerto.
-function thunderOf(w, { okM, metar, radar, extra = [] }) {
+function thunderOf(w, { okM, metar, radar, wttr, extra = [] }) {
   const reasons = [], n = okM.length || 1;
   const votes = okM.filter(m => m.thunderCode6h || m.thunder6h).length, share = votes / n;
   const cape = Math.max(-1, ...okM.map(m => m.capeMax6h ?? -1));
@@ -458,9 +489,10 @@ function thunderOf(w, { okM, metar, radar, extra = [] }) {
   // Radar: ecos de 45 dBZ o más son núcleos de tormenta (aguacero convectivo muy intenso)
   if (radar?.ok && radar.dbz >= 45) { p = Math.max(p, radar.dbz >= 50 ? 85 : 70); reasons.push(`el radar ve un núcleo de tormenta sobre la ciudad (${radar.dbz} dBZ)`); }
   else if (radar?.ok && radar.dbzNear >= 45) { p = Math.max(p, 55); reasons.push(`el radar ve un núcleo de tormenta cerca (${radar.dbzNear} dBZ)`); }
+  if (wttr?.ok && wttr.thunderChance >= 20) { const wp = Math.min(85, Math.round(wttr.thunderChance * 0.9)); p = Math.max(p, wp); reasons.push(`World Weather Online da ${wttr.thunderChance} % de probabilidad de tormenta eléctrica`); }
   const team = extra.some(x => x.id === 'equipo' && x.ok && x.intensity >= 4);
   if (team) reasons.push('el equipo EMOVTT confirma tormenta eléctrica');
-  const now = w.weatherCode >= 95 || !!(metar?.ok && metar.ts) || team;
+  const now = w.weatherCode >= 95 || !!(metar?.ok && metar.ts) || team || !!(wttr?.ok && wttr.thunderNow);
   if (metar?.ok && metar.ts) { p = Math.max(p, 90); reasons.push('el aeropuerto reporta tormenta en la zona'); }
   if (w.weatherCode >= 95) { p = Math.max(p, 90); reasons.push('hay tormenta eléctrica ahora mismo'); }
   p = now ? Math.max(90, Math.round(p)) : Math.max(0, Math.min(90, Math.round(p / 5) * 5));
