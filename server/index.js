@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { load, save, nextId, reset } from './db.js';
-import { getWeather, getTide, levelFromWeather, riskIndex, describe, localSources, dayParts, rainingNow } from './weather.js';
+import { getDays, getWeather, getTide, levelFromWeather, riskIndex, describe, localSources, dayParts, rainingNow } from './weather.js';
 import { getFloodForecast } from './flood.js';
 import { seedIfEmpty } from './seed.js';
 import fs from 'node:fs';
@@ -389,6 +389,8 @@ function validate(name, item) {
   }
   return null;
 }
+
+app.get('/api/public/forecast-days', async (req, res) => res.json(await getDays(load().config.weather)));
 
 // ---------- Notificaciones push ----------
 app.get('/api/public/push-key', (req, res) => res.json({ key: push.publicKey() }));

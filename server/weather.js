@@ -454,3 +454,30 @@ export function levelFromWeather(w, cfg) {
   if (i >= 1 || ((w.probNext3h ?? 0) >= 80 && w.rainNext3h >= t / 2)) return 'amarilla';
   return 'normal';
 }
+
+// Pronóstico por días: ayer (dato ya ocurrido), hoy y los 2 días siguientes. Una sola consulta a Open-Meteo,
+// guardada 30 min; si falla se sigue mostrando el último dato bueno.
+let daysCache = { at: 0, key: '', data: null };
+const WMO_TXT = { 0: 'Despejado', 1: 'Mayormente despejado', 2: 'Parcialmente nublado', 3: 'Nublado', 45: 'Neblina', 48: 'Neblina', 51: 'Llovizna', 53: 'Llovizna', 55: 'Llovizna intensa',
+  56: 'Llovizna', 57: 'Llovizna', 61: 'Lluvia leve', 63: 'Lluvia moderada', 65: 'Lluvia fuerte', 66: 'Lluvia leve', 67: 'Lluvia fuerte', 80: 'Chubascos leves', 81: 'Chubascos', 82: 'Chubascos fuertes',
+  95: 'Tormenta', 96: 'Tormenta con granizo', 99: 'Tormenta con granizo' };
+export async function getDays({ lat, lng }) {
+  const key = `${lat},${lng}`;
+  if (daysCache.data && daysCache.key === key && Date.now() - daysCache.at < 30 * 60 * 1000) return daysCache.data;
+  try {
+    const url = new URL('https://api.open-meteo.com/v1/forecast');
+    url.search = new URLSearchParams({ latitude: lat, longitude: lng, timezone: 'America/Guayaquil', past_days: 1, forecast_days: 3,
+      daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,precipitation_hours' });
+    const j = await getJson(url);
+    const D = j.daily || {}, t = D.time || [];
+    if (t.length < 3) throw new Error('respuesta incompleta');
+    const days = t.map((date, i) => ({ date, rel: i - 1, code: D.weather_code?.[i], text: WMO_TXT[D.weather_code?.[i]] || '',
+      tMax: D.temperature_2m_max?.[i], tMin: D.temperature_2m_min?.[i], mm: r1(D.precipitation_sum?.[i]),
+      prob: D.precipitation_probability_max?.[i] ?? null, hours: D.precipitation_hours?.[i] ?? null }));
+    daysCache = { at: Date.now(), key, data: { ok: true, source: 'Open-Meteo', days } };
+    return daysCache.data;
+  } catch (e) {
+    if (daysCache.data && daysCache.key === key) return { ...daysCache.data, stale: true };
+    return { ok: false, error: e.message, days: [] };
+  }
+}

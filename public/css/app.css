@@ -649,3 +649,19 @@ button,a,.item,label.switch{-webkit-tap-highlight-color:transparent}
 .leaflet-control-scale-line{background:rgba(255,255,255,.88);color:var(--ink);border:2px solid var(--ink);border-top:0;border-radius:0 0 4px 4px;font-size:.72rem;font-weight:700;line-height:1.3;padding:1px 6px;text-shadow:none}
 @media (max-width:900px){ .leaflet-bottom.leaflet-left .leaflet-control-scale{margin-bottom:calc(var(--peek,0px) + 74px)!important} .map-full .leaflet-bottom.leaflet-left .leaflet-control-scale{margin-bottom:8px!important} }
 @media (max-width:900px){ body:has(.nav-card:not([hidden])) .leaflet-control-scale{display:none} }
+
+/* Pronóstico por días */
+.wx-days{margin-top:14px;padding-top:12px;border-top:1px dashed var(--wx-line)}
+.wx-days:empty{display:none}
+.sky-noche .wx-days{border-top-color:rgb(255 255 255/.18)}
+.wx-days-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px}
+.wx-days-g{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.wd{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;border-radius:12px;background:var(--wx-stat);text-align:center;min-width:0}
+.wd.today{outline:2px solid var(--brand,#1B2B8B);outline-offset:-2px}
+.wd.past{opacity:.78}
+.wd-l{font-size:.78rem;font-weight:700;color:var(--wx-ink);text-transform:capitalize}
+.wd-t{font-size:.7rem;color:var(--wx-muted);line-height:1.2;min-height:2.4em;overflow-wrap:anywhere}
+.wd-temp b{font-size:.95rem;color:var(--wx-ink)} .wd-temp small{font-size:.75rem;color:var(--wx-muted)}
+.wd-r{font-size:.7rem;font-weight:600;color:var(--wx-muted);font-variant-numeric:tabular-nums;line-height:1.25}
+.wd.wet .wd-r{color:#1C77B8} .sky-noche .wd.wet .wd-r{color:#9CCBF2}
+.wd-n{font-size:.65rem;color:var(--wx-muted);opacity:.8}

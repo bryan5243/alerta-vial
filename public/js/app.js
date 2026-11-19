@@ -2,7 +2,7 @@ import { createMap } from './map-provider.js';
 import { createGps, nearestOnLine, haversine, progressOn, isAhead } from './gps.js';
 import { createNav, setNoCar } from './nav.js';
 import { createWeatherFx } from './weather-fx.js';
-import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, wxTime, toast, ICON, waveSvg, edgeFade, dec, rainHours } from './common.js';
+import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, wxTime, toast, ICON, waveSvg, edgeFade, dec, rainHours, daysCards } from './common.js';
 
 const $ = s => document.querySelector(s);
 let map, state, radarOn = false, radarFrames = [], radarTimer = null, picking = false, pickMarker = null, pickPos = null;
@@ -91,7 +91,7 @@ function weatherCard(w) {
       <div class="stat${w.raining ? ' rain' : ''}"><b>${dec(w.rainNow)}<small> mm/h</small></b><span>Lluvia ahora</span></div>
       <div class="stat"><b>${dec(w.rainPast3h)}<small> mm</small></b><span>Últimas 3 h</span></div>
       <div class="stat"><b>${dec(w.rainNext3h)}<small> mm</small></b><span>Próximas 3 h</span></div>
-    </div>${rainHours(w)}${sunRow}</div>`;
+    </div>${rainHours(w)}<div class="wx-days" data-days>${daysCards(daysData)}</div>${sunRow}</div>`;
 }
 function renderWx(w) {
   const chip = $('#wx-chip'); wxFx.set(w); applySky(w);
@@ -507,3 +507,12 @@ if (pushOk) {
     } catch { toast('No se pudieron activar los avisos en este navegador.', 'err'); }
   });
 }
+
+// Pronóstico de ayer, hoy y los próximos 2 días (se pide aparte y se guarda 30 min en el servidor)
+let daysData = null;
+async function loadDays() {
+  try { daysData = await (await fetch('/api/public/forecast-days', { signal: AbortSignal.timeout(12000) })).json(); try { localStorage.setItem('av_days', JSON.stringify(daysData)); } catch {} }
+  catch { try { daysData ||= JSON.parse(localStorage.getItem('av_days') || 'null'); } catch {} }
+  document.querySelectorAll('[data-days]').forEach(el => { el.innerHTML = daysCards(daysData); });
+}
+loadDays(); setInterval(loadDays, 30 * 60 * 1000);

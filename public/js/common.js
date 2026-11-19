@@ -102,3 +102,19 @@ function partsRows(w) {
   if (ps.every(p => p.probability < 80)) return `<p class="wx-dry">Sin probabilidad alta de lluvia (80 % o más) en las próximas 24 horas.</p>`;
   return `<div class="wx-parts">${ps.map(p => `<div class="wp${tone(p.probability)}"><span class="wp-l">${p.label}<small>${hr(p.from)}–${(hr(p.to) + 1) % 24} h</small></span><span class="wp-bar"><i style="width:${Math.max(3, p.probability)}%"></i></span><b class="wp-p">${p.probability}%</b><span class="wp-mm">${p.precipitation >= .1 ? `${dec(p.precipitation)} mm` : p.probability >= 50 ? '< 0,1 mm' : '0 mm'}</span></div>`).join('')}</div>`;
 }
+
+// Pronóstico por días: ayer (ya ocurrió), hoy y los 2 días siguientes
+const WD = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+export function daysCards(d) {
+  if (!d?.ok || !d.days?.length) return '';
+  const lab = x => x.rel === -1 ? 'Ayer' : x.rel === 0 ? 'Hoy' : x.rel === 1 ? 'Mañana' : WD[new Date(x.date + 'T12:00:00').getDay()];
+  return `<div class="wx-days-h"><span class="wx-hours-t">Ayer, hoy y los próximos días</span><span class="wx-hours-k">${d.stale ? 'dato guardado' : 'Open-Meteo'}</span></div>
+    <div class="wx-days-g" role="list">${d.days.map(x => {
+    const p = x.prob == null ? null : Math.round(x.prob), past = x.rel < 0;
+    const wet = past ? x.mm >= 1 : (p ?? 0) >= 80 || x.mm >= 5;
+    return `<div class="wd${x.rel === 0 ? ' today' : ''}${past ? ' past' : ''}${wet ? ' wet' : ''}" role="listitem" aria-label="${lab(x)}: ${x.text}, ${past ? 'llovió' : 'lluvia'} ${dec(x.mm)} mm${p == null || past ? '' : `, probabilidad ${p} %`}">
+      <span class="wd-l">${lab(x)}</span><span class="wd-t">${x.text || '–'}</span>
+      <span class="wd-temp"><b>${x.tMax == null ? '–' : Math.round(x.tMax)}°</b> <small>${x.tMin == null ? '' : Math.round(x.tMin) + '°'}</small></span>
+      <span class="wd-r">${past ? `${dec(x.mm)} mm` : p == null ? `${dec(x.mm)} mm` : `${p}% · ${dec(x.mm)} mm`}</span>${past ? '<span class="wd-n">ya ocurrió</span>' : ''}</div>`;
+  }).join('')}</div>`;
+}

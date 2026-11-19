@@ -396,3 +396,6 @@ Antes, cuando la ruta tenía que esquivar un punto de riesgo, solo se ofrecía u
 ## Reportes con foto y avisos de lluvia
 - **Foto obligatoria** en los reportes ciudadanos: se reduce en el teléfono (1280 px, JPEG) y el servidor la guarda en `data/photos/` (junto a la base). Se ve en el panel de revisión y en el mapa cuando el reporte se verifica. Un reporte sin foto se rechaza.
 - **Avisos push** (campana en el mapa): el servidor revisa el clima cada 5 min y avisa cuando se aproxima lluvia, hay tormenta, empieza a llover o sube el color de la alerta (máx. uno del mismo tipo cada 2 h). Claves VAPID y suscripciones en `db.push`. Admin → Configuración → "Avisos en el teléfono" envía una prueba. Requiere HTTPS (Render lo da) e iPhone con la app en la pantalla de inicio.
+
+## Pronóstico por días
+En la pestaña Resumen, bajo "Lluvia por horas", se muestran 4 tarjetas: ayer (lo que ya ocurrió), hoy, mañana y pasado mañana (temperatura, probabilidad y mm de lluvia). Viene de `/api/public/forecast-days` (Open-Meteo, una consulta guardada 30 min) y la app guarda la última copia para verla sin señal.
