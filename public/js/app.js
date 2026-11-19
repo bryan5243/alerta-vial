@@ -106,6 +106,16 @@ function thunderCard(w) {
     <div class="th-l"><b>${esc(t.label)}</b><span>próximas 6 h · estimado</span></div>
     <p>${esc(t.text)}</p>${t.reasons?.length ? `<details class="th-why"><summary>Por qué</summary><ul>${t.reasons.map(r => `<li>${esc(cap(r))}</li>`).join('')}</ul></details>` : ''}</div>`;
 }
+// Vista de inicio: un radio de 1 km alrededor del centro (así caben todas las zonas afectadas). Se calcula con el tamaño real del mapa.
+const HOME_RADIUS = () => +state?.config?.homeRadius || 1000;
+function homeZoom() {
+  const c = state?.config?.center, el = document.getElementById('map'); if (!c || !el) return Math.max(+state?.config?.zoom || 0, 16);
+  const w = el.clientWidth, h = el.clientHeight, appNav = document.documentElement.classList.contains('app-nav');
+  const avail = Math.min(w - 24, h - (appNav ? 150 : 90)); if (!(avail > 80)) return 15;
+  const mpp = HOME_RADIUS() * 2 / avail; // metros por píxel necesarios
+  return Math.max(12, Math.min(18, Math.log2(156543.03 * Math.cos(c.lat * Math.PI / 180) / mpp)));
+}
+const goHome = () => { const c = state?.config?.center; if (c && map) map.setCenter(c, homeZoom()); };
 let daysData = null;
 // Tarjeta "Clima ahora": cielo, temperatura, lluvia y sol (índice UV, radiación, salida y puesta)
 function weatherCard(w) {
@@ -204,7 +214,7 @@ async function load() {
   if (!document.body.classList.contains('is-offline')) checkMapVersion(state?.config?.mapVersion);
   const reports = pack.reports;
   if (!map) {
-    map = await createMap({ provider: state.config.mapProvider, el: document.getElementById('map'), center: state.config.center, zoom: Math.max(+state.config.zoom || 0, 16), googleKey: state.config.googleMapsKey, style: state.config.baseStyle });
+    map = await createMap({ provider: state.config.mapProvider, el: document.getElementById('map'), center: state.config.center, zoom: homeZoom(), googleKey: state.config.googleMapsKey, style: state.config.baseStyle });
     map.onClick(onMapClick);
   }
   render(reports);
@@ -499,7 +509,7 @@ document.querySelector('.panel').addEventListener('click', e => {
   map.fitBounds(src.coords); setTimeout(() => sh2?.open?.(), 400);
   if (isAppNav()) setSheet(false); else if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' });
 });
-$('#btn-fit').addEventListener('click', () => map.fitBounds([...state.streets, ...state.routes].flatMap(x => x.coords)));
+$('#btn-fit').addEventListener('click', goHome);
 
 // Radar RainViewer
 async function applyRadar() {
