@@ -688,7 +688,7 @@ button,a,.item,label.switch{-webkit-tap-highlight-color:transparent}
 /* Tarjeta de ruta en teléfono (≤767 px): pequeña, anclada a la pantalla (position:fixed) y con rejilla, así nunca depende del ancho del mapa */
 @media (max-width:767px){
   .nav-card{position:fixed;left:10px!important;right:10px!important;width:auto!important;max-width:none!important;bottom:calc(env(safe-area-inset-bottom, 0px) + 66px);
-    padding:10px!important;gap:6px 10px;border-radius:14px;max-height:calc(100dvh - 190px)}
+    padding:10px!important;gap:6px 10px;border-radius:14px;max-height:calc(var(--app-h,100dvh) - 190px)}
   .map-full .nav-card{bottom:calc(env(safe-area-inset-bottom, 0px) + 14px)}
   .nav-card .nav-badge{width:30px;height:30px;border-radius:10px} .nav-card .nav-badge svg{width:16px;height:16px}
   .nav-card .nav-info{flex:1 1 0;min-width:0}

@@ -25,6 +25,20 @@ const chromeH = () => document.documentElement.style.setProperty('--chrome', `${
 const chromeObs = new ResizeObserver(() => { chromeH(); map?.invalidate(); });
 chromeObs.observe(document.querySelector('header.top')); chromeObs.observe($('#band')); chromeH();
 new ResizeObserver(() => map?.invalidate()).observe(document.getElementById('map'));
+// Alto real de la pantalla: en iPhone (sobre todo como acceso directo) 100dvh queda desactualizado al girar, volver de otra app o cambiar la barra,
+// y hacía falta cerrar y abrir. Se vuelve a medir en cada cambio y se reacomoda el mapa.
+let vpT = 0;
+const syncViewport = () => {
+  const root = document.documentElement;
+  root.style.setProperty('--app-h', `${window.innerHeight}px`);
+  root.style.setProperty('--app-w', `${root.clientWidth}px`);
+  chromeH(); map?.invalidate();
+};
+const syncSoon = () => { clearTimeout(vpT); syncViewport(); vpT = setTimeout(syncViewport, 350); };
+window.addEventListener('resize', syncSoon); window.addEventListener('orientationchange', syncSoon); window.addEventListener('pageshow', syncSoon);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncSoon(); });
+window.visualViewport?.addEventListener('resize', () => { clearTimeout(vpT); vpT = setTimeout(syncViewport, 200); });
+syncViewport();
 const hiddenLayers = new Set(JSON.parse((() => { try { return localStorage.getItem('av_hidden_layers'); } catch { return null; } })() || '[]'));
 // Clima sobre el mapa: indicador + animación de lluvia / tormenta
 const wxFx = createWeatherFx({ canvas: $('#wx-fx'), flash: $('#wx-flash') });

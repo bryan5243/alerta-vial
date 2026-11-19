@@ -20,7 +20,7 @@
 <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/css/app.css">
 <style>
-  .shell{display:grid;grid-template-rows:auto auto 1fr;height:100dvh}
+  .shell{display:grid;grid-template-rows:auto auto 1fr;height:var(--app-h,100dvh)}
   header.top{display:flex;align-items:center;gap:16px;padding:10px 20px;background:linear-gradient(100deg,var(--brand-dark),var(--brand) 60%,#1E3AA8);color:#fff;border-bottom:3px solid var(--brand-yellow)}
   .brand{display:flex;align-items:center;gap:14px;min-width:0}
   .brand img{height:44px;width:auto;flex:none}
@@ -79,7 +79,7 @@
   @keyframes live{70%{box-shadow:0 0 0 8px transparent}}
   .gps-on .picking{top:74px} .gps-on .fab{display:none}
   @media (max-width:900px){
-    .gps-on .mapwrap{position:fixed;inset:0;height:100dvh;z-index:1300;top:0}
+    .gps-on .mapwrap{position:fixed;inset:0;height:var(--app-h,100dvh);z-index:1300;top:0}
     .gps-on .fab,.gps-on .legend{display:none}
     .gps-bar{right:64px;left:10px;top:10px}
     .gps-bar .gps-txt small{display:none} .gps-bar .gps-txt b{font-size:.85rem}
@@ -88,7 +88,7 @@
     .gps-on .gps-btn{width:44px;padding:0!important} .gps-on .gps-lbl{display:none}
     .tab{white-space:nowrap}
     .layers-pop{width:min(260px,calc(100vw - 90px))}
-    .shell{height:auto;min-height:100dvh}
+    .shell{height:auto;min-height:var(--app-h,100dvh)}
     .main{grid-template-columns:1fr;grid-template-rows:52dvh auto}
     .mapwrap{order:-1;position:sticky;top:0;z-index:5}
     .panel{border-right:0;border-top:1px solid var(--line);border-radius:18px 18px 0 0;margin-top:-16px;position:relative;z-index:6}
@@ -97,7 +97,7 @@
     header.top{padding:8px 14px;gap:10px} .brand{gap:10px} .brand img{height:30px} .brand .sep{height:28px} .brand small{font-size:.72rem}
     @media (max-width:520px){ .brand small{display:none} } .tabs,.pane,.glance{padding-left:16px;padding-right:16px}
     /* --- Móvil: más mapa, menos texto encima --- */
-    .main{grid-template-rows:calc(100dvh - var(--chrome,116px) - 34px) auto}
+    .main{grid-template-rows:calc(var(--app-h,100dvh) - var(--chrome,116px) - 34px) auto}
     .level-band{padding:8px 44px 8px 14px;min-height:0;gap:10px;cursor:pointer}
     .level-band .lvl-icon{width:32px;height:32px;border-radius:10px} .level-band .lvl-icon svg{width:18px;height:18px}
     .level-band .lvl-label{font-size:.95rem}
@@ -114,7 +114,7 @@
     .fab .fab-ic svg{width:18px;height:18px;display:block}
     @media (max-width:420px){ .fab .fab-t{font-size:.85rem} }
     #btn-full{display:inline-flex}
-    .map-full .mapwrap{position:fixed;inset:0;height:100dvh;z-index:1300;top:0}
+    .map-full .mapwrap{position:fixed;inset:0;height:var(--app-h,100dvh);z-index:1300;top:0}
     .map-full .legend{display:flex;left:10px;right:10px;bottom:62px;gap:8px 12px;font-size:.72rem;padding:6px 10px}
     .map-full #btn-full{background:var(--brand,#1B2B8B);color:#fff;border-color:transparent}
     .map-full .ovf-banner{bottom:128px}
@@ -189,6 +189,7 @@
   .gps-eta{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 10px;line-height:1.15} .gps-eta[hidden]{display:none}
   .gps-eta b{font-family:var(--font-display);font-size:1.6rem;font-weight:700;color:#0F7B4F;font-variant-numeric:tabular-nums} .gps-eta span{font-size:.9rem;color:var(--muted)}
   body.drive-on .sim-bar{position:fixed;left:10px;right:10px;bottom:calc(150px + env(safe-area-inset-bottom,0px));margin:0;padding:6px 8px;border-radius:16px;border-left:0;flex-direction:row;align-items:center;gap:6px}
+  @media (max-height:560px){ .sim-head,.sim-opt{display:none} }
   body.drive-on .sim-head,body.drive-on .sim-opt,body.drive-on .sim-ctl>span,body.drive-on #sim-reset{display:none} body.drive-on .sim-ctl .btn{white-space:nowrap;font-size:.8rem} body.drive-on .sim-ctl{flex-wrap:nowrap;gap:6px;width:100%} body.drive-on .sim-ctl .btn{min-height:36px;padding:0 10px}
   body.drive-on .mapwrap.drive .drive-ctl{top:auto;bottom:calc(158px + env(safe-area-inset-bottom,0px))} body.drive-on.sim-mode .mapwrap.drive .drive-ctl{bottom:calc(210px + env(safe-area-inset-bottom,0px))}
   body.drive-on .drive-ctl .btn{border-radius:50%;box-shadow:0 2px 10px rgb(15 34 56/.22);border:0}
@@ -251,7 +252,7 @@
   }
   /* Celular en horizontal: casi toda la altura para el mapa y la tarjeta de ruta abajo sin el botón Reportar encima */
   @media (max-width:900px) and (max-height:560px){
-    .main{grid-template-rows:calc(100dvh - var(--chrome,80px) - 22px) auto}
+    .main{grid-template-rows:calc(var(--app-h,100dvh) - var(--chrome,80px) - 22px) auto}
     .peek{padding-top:12px;min-height:40px} .peek-grab{top:5px}
     .nav-card{bottom:10px;padding:10px 12px}
     .mapwrap:has(.nav-card:not([hidden])) .fab{display:none}
@@ -280,7 +281,7 @@
   }
   /* Tablet vertical (iPad y similares): lista a la izquierda y mapa a la derecha, sin tener que bajar */
   @media (min-width:768px) and (max-width:900px) and (min-height:561px){
-    .shell{height:100dvh;min-height:0}
+    .shell{height:var(--app-h,100dvh);min-height:0}
     .main{grid-template-columns:320px 1fr;grid-template-rows:minmax(0,1fr)}
     .mapwrap{order:0;position:relative;top:auto;z-index:auto;--peek:0px}
     .panel{border-top:0;border-right:1px solid var(--line);border-radius:0;margin-top:0;z-index:auto}
