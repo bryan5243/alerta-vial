@@ -307,7 +307,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   const show = () => { if (standalone || later() || SIM) return; box.hidden = false; requestAnimationFrame(() => box.classList.add('on')); };
   const hide = days => { box.classList.remove('on'); setTimeout(() => (box.hidden = true), 300); if (days) try { localStorage.setItem('av_install_later', Date.now() + days * 864e5); } catch {} };
   window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e; setTimeout(show, 4000); });
-  window.addEventListener('appinstalled', () => { hide(); toast('Alerta Vial quedó instalada en tu teléfono.', 'ok'); });
+  window.addEventListener('appinstalled', () => { hide(); toast('El Sistema de Alerta Vial quedó instalado en tu teléfono.', 'ok'); });
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !/crios|fxios/i.test(navigator.userAgent);
   if (ios && !standalone) {
     $('#ins-d').innerHTML = 'Toca <svg class="ins-share" viewBox="0 0 24 24"><path d="M12 3v12m-4-8 4-4 4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg> <b>Compartir</b> y luego <b>Agregar a inicio</b>.';
