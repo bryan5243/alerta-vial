@@ -186,7 +186,10 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
   const fromIn = $('#nav-from'), fromRow = $('#nav-from-row'), fromClr = $('#nav-from-clear');
   let mode = 'dest', lastDest = null; // mode: qué campo está buscando ('dest' | 'from')
   // El campo "Punto de partida" aparece al buscar o cuando ya hay ruta; vacío = mi ubicación (GPS)
+  let fromPin = null;
   function paintFrom() {
+    fromPin?.remove?.(); fromPin = null; const m = getMap();
+    if (from && m) fromPin = m.addMarker({ lat: from.lat, lng: from.lng, cls: 'nav-from', icon: 'nav', pulse: true, popup: `<b>Punto de partida</b><br>${esc(from.name || '')}` });
     fromIn.value = from ? from.name : ''; fromClr.hidden = !from; fromRow.classList.toggle('set', !!from);
     fromRow.hidden = !(from || trip || lastDest || input.value.trim() || document.activeElement === input || document.activeElement === fromIn);
   }
@@ -247,7 +250,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
   }
   function chooseFrom(r) {
     cancelSearch(); from = { lat: r.lat, lng: r.lng, name: r.name }; list.hidden = true; fromIn.blur(); paintFrom();
-    const d = trip?.dest || lastDest; if (d) go(d); else input.focus();
+    const d = trip?.dest || lastDest; if (d) go(d); else { getMap()?.panTo?.({ lat: from.lat, lng: from.lng }); input.focus(); }
   }
 
   // Sin escribir nada: ciudades cercanas a un toque, rutas y lugares guardados.
@@ -396,7 +399,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     if (!trip) { if (detourR) shapes.push(map.addPolyline({ coords: detourR.coords, status: 'nav', flow: 'route', weight: 8, popup: `<b>${esc(detourR.name)}</b>` })); return; }
     (trip.options || []).forEach((o, i) => { if (i !== trip.sel) shapes.push(map.addPolyline({ coords: o.coords, status: 'osm', weight: 7, popup: `<b>Ruta ${i + 1}</b><br>${fmtKm(o.distance)} · ${fmtMin(o.duration)}<br><small>Tocar la línea elige esta ruta</small>`, onClick: () => chooseRoute(i) })); });
     shapes.push(map.addPolyline({ coords: trip.route.coords, status: 'nav', flow: 'route', weight: 8, popup: `<b>Tu ruta a ${esc(trip.dest.name)}</b><br>${fmtKm(trip.route.distance)} · ${fmtMin(trip.route.duration)}` }));
-    if (!trip.origin.mine) shapes.push(map.addMarker({ lat: trip.origin.lat, lng: trip.origin.lng, cls: 'nav-from', icon: 'nav', popup: `<b>Salida</b><br>${esc(trip.origin.name || 'Punto elegido')}` }));
+    if (!trip.origin.mine && !from) shapes.push(map.addMarker({ lat: trip.origin.lat, lng: trip.origin.lng, cls: 'nav-from', icon: 'nav', popup: `<b>Salida</b><br>${esc(trip.origin.name || 'Punto elegido')}` }));
     shapes.push(map.addMarker({ lat: trip.dest.lat, lng: trip.dest.lng, cls: 'nav-dest', icon: 'flag', popup: `<b>${esc(trip.dest.name)}</b>` }));
     // la ruta se encuadra en lo que queda libre: debajo del buscador y encima de la tarjeta de ruta
     if (fit) { const mw = document.querySelector('.mapwrap')?.getBoundingClientRect(), cr = card.hidden ? null : card.getBoundingClientRect(), mob = innerWidth <= 900;
@@ -469,7 +472,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
       input.value = trip.dest.name; $('#nav-clear').hidden = false; draw(true); renderCard(); return;
     }
     restore = null;
-    draw(false);
+    draw(false); paintFrom();
     if (!trip || replanning || trip.direct) return;
     if (blockers(trip.route.coords, hazardZones(getState())).length && !trip.route.blocked?.length) {
       replanning = true;

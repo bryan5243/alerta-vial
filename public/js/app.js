@@ -216,6 +216,9 @@ async function load() {
   if (!map) {
     map = await createMap({ provider: state.config.mapProvider, el: document.getElementById('map'), center: state.config.center, zoom: homeZoom(), googleKey: state.config.googleMapsKey, style: state.config.baseStyle });
     map.onClick(onMapClick);
+    // El mapa a veces se mide antes de que termine de acomodarse la pantalla: se reajusta a 1 km una vez más
+    const rehome = () => { if (!document.body.classList.contains('gps-on') && !nav?.active) goHome(); };
+    setTimeout(rehome, 700); window.addEventListener('load', () => setTimeout(rehome, 300), { once: true });
   }
   render(reports);
   gps.refresh(); nav.refresh();
