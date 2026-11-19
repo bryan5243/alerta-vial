@@ -247,9 +247,11 @@ async function radarSource(lat, lng) {
     // "Sobre la ciudad" = el píxel y sus vecinos (≈3,6 km): un aguacero es pequeño y la ciudad ocupa varios píxeles
     let mmHere = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) mmHere = Math.max(mmHere, dbzToMm(radarDbz(at(px + dx, py + dy))));
     const here = mmInt(mmHere);
+    let dbzHere = -1, dbzNear = -1;
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) { const v = radarDbz(at(px + dx, py + dy)); dbzNear = Math.max(dbzNear, v); if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) dbzHere = Math.max(dbzHere, v); }
     let nearest = 0; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) nearest = Math.max(nearest, radarIntensity(at(px + dx, py + dy)));
     const fresh = ageMin <= 25;
-    d = { ...base, ok: fresh, at: new Date(fr.time * 1000).toISOString(), intensity: fresh ? here : 0, rainNow: fresh ? mmHere : 0, near: fresh && nearest > 0,
+    d = { ...base, ok: fresh, at: new Date(fr.time * 1000).toISOString(), intensity: fresh ? here : 0, rainNow: fresh ? mmHere : 0, near: fresh && nearest > 0, dbz: fresh ? dbzHere : -1, dbzNear: fresh ? dbzNear : -1,
       detail: `${here ? `El radar ve lluvia sobre la ciudad (${INT_TXT[here].toLowerCase()}, ~${mmHere} mm/h)` : nearest ? 'El radar ve lluvia cerca (a pocos km), no sobre la ciudad' : 'El radar no ve lluvia sobre la ciudad'} · imagen de hace ${ageMin} min`,
       error: fresh ? undefined : `imagen de radar de hace ${ageMin} min` };
   } catch (e) { d = { ...base, ok: false, intensity: 0, error: e.message }; }
@@ -356,7 +358,7 @@ export function combine({ models, metar, owm, radar, at }, extra = []) {
   // Sin lluvia: de día y despejado es "Soleado"; de noche, "Noche despejada"
   if (!w.intensity && w.sun && ['Despejado', 'Parcialmente nublado'].includes(w.condition) && (w.condition === 'Despejado' || w.sun.sky === 'soleado')) w.condition = w.sun.sky === 'noche' ? 'Noche despejada' : 'Soleado';
   w.outlook = outlookOf(w, { okM, metar, need, base });
-  w.thunder = thunderOf(w, { okM, metar });
+  w.thunder = thunderOf(w, { okM, metar, radar, extra });
   return w;
 }
 
@@ -435,7 +437,7 @@ function outlookOf(w, { okM, metar, need, base }) {
 
 // Probabilidad estimada de tormenta eléctrica en las próximas 6 h. No existe un dato oficial de rayos para este punto: se combinan
 // los modelos que prevén tormenta (códigos 95-99 / MET Norway), la energía del aire (CAPE), la lluvia probable y lo que ve el aeropuerto.
-function thunderOf(w, { okM, metar }) {
+function thunderOf(w, { okM, metar, radar, extra = [] }) {
   const reasons = [], n = okM.length || 1;
   const votes = okM.filter(m => m.thunderCode6h || m.thunder6h).length, share = votes / n;
   const cape = Math.max(-1, ...okM.map(m => m.capeMax6h ?? -1));
@@ -446,7 +448,12 @@ function thunderOf(w, { okM, metar }) {
   if (cape >= 1000) reasons.push(`el aire tiene energía para tormentas${cape >= 2000 ? ' fuertes' : ''} (CAPE ${Math.round(cape)} J/kg)`);
   if (peak >= 60 && cape >= 800) { p += 12; reasons.push(`probabilidad de lluvia de ${peak} %`); }
   if (metar?.ok && metar.cb) { p = Math.max(p, 60); reasons.push('el aeropuerto ve nubes de tormenta (cumulonimbos) cerca'); }
-  const now = w.weatherCode >= 95 || !!(metar?.ok && metar.ts);
+  // Radar: ecos de 45 dBZ o más son núcleos de tormenta (aguacero convectivo muy intenso)
+  if (radar?.ok && radar.dbz >= 45) { p = Math.max(p, radar.dbz >= 50 ? 85 : 70); reasons.push(`el radar ve un núcleo de tormenta sobre la ciudad (${radar.dbz} dBZ)`); }
+  else if (radar?.ok && radar.dbzNear >= 45) { p = Math.max(p, 55); reasons.push(`el radar ve un núcleo de tormenta cerca (${radar.dbzNear} dBZ)`); }
+  const team = extra.some(x => x.id === 'equipo' && x.ok && x.intensity >= 4);
+  if (team) reasons.push('el equipo EMOVTT confirma tormenta eléctrica');
+  const now = w.weatherCode >= 95 || !!(metar?.ok && metar.ts) || team;
   if (metar?.ok && metar.ts) { p = Math.max(p, 90); reasons.push('el aeropuerto reporta tormenta en la zona'); }
   if (w.weatherCode >= 95) { p = Math.max(p, 90); reasons.push('hay tormenta eléctrica ahora mismo'); }
   p = now ? Math.max(90, Math.round(p)) : Math.max(0, Math.min(90, Math.round(p / 5) * 5));
