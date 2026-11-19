@@ -78,6 +78,8 @@ function simulatedWeather(real) {
   w.outlook = s.rainNow > 0 ? { level: 'lloviendo', title: 'Está lloviendo', text: 'Revisa las calles inundadas y las vías alternas antes de salir.', reasons: [] } : real?.outlook;
   return Object.assign(w, describe(w));
 }
+import { startLightning } from './lightning.js';
+{ const c0 = load().config; if (c0.lightningEnabled !== false) startLightning({ lat: c0.weather?.lat ?? c0.center?.lat, lng: c0.weather?.lng ?? c0.center?.lng }); }
 async function computeStatus() {
   const db = load();
   let [weather, tide, flood] = await Promise.all([
