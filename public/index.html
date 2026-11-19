@@ -147,9 +147,13 @@
   .mapwrap.drive.drive-flat .leaflet-marker-icon .pin-w{transform:rotate(calc(var(--rot,0deg) * -1))}
   .mapwrap.drive .drive-horizon{display:block;position:absolute;left:0;right:0;top:0;height:34%;z-index:430;pointer-events:none;background:linear-gradient(#bcd3e6 0%,rgb(188 211 230/.85) 35%,rgb(231 238 244/0) 100%)}
   .mapwrap.drive.drive-flat .drive-horizon{display:none}
-  .mapwrap.drive .drive-me{display:block;position:absolute;left:50%;top:64%;width:34px;height:42px;margin:-21px 0 0 -17px;z-index:640;pointer-events:none;transform:rotate(var(--me,0deg));transition:transform .6s linear;filter:drop-shadow(0 4px 6px rgb(0 0 0/.35))}
+  .mapwrap.drive .drive-me{display:block;position:absolute;left:50%;top:64%;width:40px;height:80px;margin:-52px 0 0 -20px;z-index:640;pointer-events:none;transform:rotate(var(--me,0deg));transition:transform .6s linear;filter:drop-shadow(0 4px 6px rgb(0 0 0/.35))}
   .mapwrap.drive.drive-flat .drive-me{top:60%}
-  .drive-me svg{width:100%;height:100%;fill:#1B2B8B;stroke:#fff;stroke-width:3.5;stroke-linejoin:round}
+  .drive-me svg{width:100%;height:100%;overflow:visible}
+  .drive-me .body{fill:#F5A623;stroke:#fff;stroke-width:3;stroke-linejoin:round}
+  .drive-me .roof{fill:#1B2B8B}
+  .drive-me .gl{fill:#9fd0ee;stroke:#1B2B8B;stroke-width:1.5}
+  .drive-me .w{fill:#1b1b1b;stroke:none}
   .mapwrap.drive .drive-ctl{display:flex;position:absolute;right:10px;top:calc(50% - 20px);flex-direction:column;gap:8px;z-index:660}
   .mapwrap.drive .drive-ctl[hidden]{display:none}
   .drive-ctl .btn{width:44px;height:44px;min-height:44px;padding:0;background:var(--surface);color:var(--ink);border-color:var(--line);box-shadow:var(--shadow-1);justify-content:center}
@@ -314,7 +318,7 @@
     <div class="mapwrap">
       <div id="map" role="application" aria-label="Mapa de calles inundadas"></div>
       <div class="drive-horizon" aria-hidden="true"></div>
-      <div class="drive-me" id="drive-me" aria-hidden="true"><svg viewBox="0 0 48 60"><path d="M24 2 44 54 24 44 4 54z"/></svg></div>
+      <div class="drive-me" id="drive-me" aria-hidden="true"><svg viewBox="0 0 60 120"><ellipse cx="30" cy="66" rx="29" ry="50" fill="#000" opacity=".18" stroke="none"/><rect x="3" y="22" width="9" height="20" rx="4" class="w"/><rect x="48" y="22" width="9" height="20" rx="4" class="w"/><rect x="3" y="82" width="9" height="20" rx="4" class="w"/><rect x="48" y="82" width="9" height="20" rx="4" class="w"/><path class="body" d="M30 4c14 0 22 10 23 26l2 64c0 14-8 22-25 22S5 108 5 94l2-64C8 14 16 4 30 4z"/><path class="gl" d="M14 38c4-5 28-5 32 0l3 14H11z"/><path class="gl" d="M12 88h36l-3 14c-6 3-24 3-30 0z"/><rect class="roof" x="14" y="55" width="32" height="30" rx="7"/><circle cx="16" cy="9" r="4" fill="#FFE27A" stroke="#fff" stroke-width="1.5"/><circle cx="44" cy="9" r="4" fill="#FFE27A" stroke="#fff" stroke-width="1.5"/><path d="M30 14l-6 10h12z" fill="#fff" stroke="none"/></svg></div>
       <div class="drive-ctl" id="drive-ctl" hidden>
         <button class="btn icon" id="drive-compass" aria-label="Brújula: tocar para fijar el norte arriba" title="Brújula · tocar: norte arriba / rumbo arriba"><svg viewBox="0 0 40 40" class="dc-needle"><circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".35"/><path d="M20 5l6 15h-12z" fill="#C62E2E"/><path d="M20 35l-6-15h12z" fill="currentColor" opacity=".55"/></svg></button>
         <button class="btn icon" id="drive-tilt" aria-label="Cambiar inclinación 3D / 2D" title="Inclinación 3D / 2D"><b>2D</b></button>
