@@ -1,5 +1,5 @@
 // Clima de varias fuentes, porque un solo pronóstico no ve los aguaceros locales de la costa:
-//  · Open-Meteo con 8 modelos meteorológicos (una sola consulta) + MET Norway (yr.no): pronósticos; un tercio tiene que coincidir
+//  · Open-Meteo con 8 modelos meteorológicos (una sola consulta) + MET Norway (yr.no): pronósticos; dos tienen que coincidir
 //  · Estación del aeropuerto de Santa Rosa (METAR SERO, NOAA): observación real, cuando el aeropuerto reporta
 //  · Radar de lluvia de RainViewer: ve los aguaceros locales sobre la ciudad
 //  · OpenWeatherMap (opcional, con API key gratuita)
@@ -298,7 +298,7 @@ export function combine({ models, metar, owm, radar, at }, extra = []) {
   const okM = models.filter(m => m.ok), base = okM.find(m => m.model === 'best_match') || okM.find(m => m.model === 'met_no') || okM[0];
   // Como Amaru: las señales tienen que coincidir. Un modelo solo no basta: hace falta que al menos
   // un tercio de los modelos (3 de 9) vean lluvia medible. Y si el mejor modelo dice cielo casi despejado, los modelos no cuentan.
-  const need = Math.max(2, Math.ceil(okM.length / 3));
+  const need = 2; // dos fuentes independientes que coincidan (antes un tercio de los modelos: dejaba pasar aguaceros locales)
   const kth = arr => { const v = arr.slice().sort((x, y) => y - x); return v.length >= need ? v[need - 1] : 0; };
   const clear = (base?.cloudCover ?? 100) < 50;
   const raining = okM.filter(m => m.intensity > 0);
