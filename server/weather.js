@@ -240,6 +240,13 @@ async function radarSource(lat, lng) {
     const fr = (j.radar?.past || []).at(-1); if (!fr) throw new Error('sin cuadros de radar');
     const ageMin = Math.round((Date.now() - fr.time * 1000) / 60000);
     const { z, tx, ty, px, py } = radarPixel(lat, lng);
+    // ¿Hay radar real en esta zona? (el mapa de cobertura de RainViewer: transparente = sin radar)
+    const cov = await fetch(`${j.host}/v2/coverage/0/256/${z}/${tx}/${ty}/0/0_0.png`, { signal: AbortSignal.timeout(8000), headers: UA });
+    if (cov.ok) {
+      const ci = decodePng(Buffer.from(await cov.arrayBuffer()));
+      let covered = 0; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) covered = Math.max(covered, ci.at(Math.max(0, Math.min(255, px + dx)), Math.max(0, Math.min(255, py + dy)))[3]);
+      if (covered < 40) throw new Error('sin cobertura de radar en esta zona (RainViewer no tiene radar sobre Santa Rosa)');
+    }
     const res = await fetch(`${j.host}${fr.path}/256/${z}/${tx}/${ty}/2/1_1.png`, { signal: AbortSignal.timeout(8000), headers: UA });
     if (!res.ok) throw new Error(`respondió con error ${res.status}`);
     const img = decodePng(Buffer.from(await res.arrayBuffer()));
