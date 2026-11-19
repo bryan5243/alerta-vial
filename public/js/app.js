@@ -102,6 +102,7 @@ function feelCard(w) {
 function thunderCard(w) {
   const t = w.thunder; if (!t) return '';
   return `<div class="wx-thunder th-${t.level}"><div class="th-h"><span class="th-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span><b>Tormenta eléctrica</b><span class="th-p">${t.prob}<small>%</small></span></div>
+    <div class="th-now ${t.activity ? 'on lv' + t.activity.level : 'off'}"><i aria-hidden="true"></i><span>${t.activity ? `<b>${esc(t.activity.label)}</b> en este momento${t.activity.mm ? ` · ~${t.activity.mm} mm/h` : ''}` : 'Ahora: <b>sin tormenta detectada</b>'}</span></div>
     <div class="th-bar" role="img" aria-label="Probabilidad de tormenta eléctrica ${t.prob} por ciento, ${esc(t.label)}"><i style="width:${t.prob}%"></i></div>
     <div class="th-l"><b>${esc(t.label)}</b><span>próximas 6 h · estimado</span></div>
     <p>${esc(t.text)}</p>${t.reasons?.length ? `<details class="th-why"><summary>Por qué</summary><ul>${t.reasons.map(r => `<li>${esc(cap(r))}</li>`).join('')}</ul></details>` : ''}</div>`;

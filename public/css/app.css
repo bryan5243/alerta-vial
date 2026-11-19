@@ -754,3 +754,11 @@ button,a,.item,label.switch{-webkit-tap-highlight-color:transparent}
 .nav-fromrow .nav-clear{right:4px;top:3px;width:36px;height:36px}
 .nav-fromrow.set input{border-color:#16a34a}
 .navigating .nav-fromrow{display:none!important}
+
+.th-now{display:flex;align-items:center;gap:8px;margin:8px 0 2px;padding:7px 10px;border-radius:10px;font-size:.84rem;background:var(--surface-2);color:var(--muted)}
+.th-now i{width:9px;height:9px;border-radius:50%;background:#2A8C5A;flex:none}
+.th-now b{color:var(--ink)}
+.th-now.on{color:var(--ink)} .th-now.lv1{background:#fff6dc} .th-now.lv1 i{background:#B58A00}
+.th-now.lv2{background:#ffe9d6} .th-now.lv2 i{background:#E36A17}
+.th-now.lv3{background:#fde0e0} .th-now.lv3 i{background:#C62E2E;animation:wxa2 1s infinite}
+@media (prefers-reduced-motion:reduce){.th-now.lv3 i{animation:none}}

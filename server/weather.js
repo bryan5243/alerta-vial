@@ -495,6 +495,14 @@ function thunderOf(w, { okM, metar, radar, wttr, extra = [] }) {
   const now = w.weatherCode >= 95 || !!(metar?.ok && metar.ts) || team || !!(wttr?.ok && wttr.thunderNow);
   if (metar?.ok && metar.ts) { p = Math.max(p, 90); reasons.push('el aeropuerto reporta tormenta en la zona'); }
   if (w.weatherCode >= 95) { p = Math.max(p, 90); reasons.push('hay tormenta eléctrica ahora mismo'); }
+  // Intensidad de la tormenta en curso (como "lluvia leve / moderada / fuerte"): por los mm/h que reportan las fuentes y los núcleos del radar
+  let activity = null;
+  if (now) {
+    const rm = Math.max(radar?.ok ? radar.rainNow || 0 : 0, wttr?.ok ? wttr.mm || 0 : 0, ...okM.map(m => m.rainNow || 0), ...extra.filter(x => x.ok && x.intensity >= 4).map(x => INT_MM[x.intensity]));
+    const dbz = radar?.ok ? radar.dbz : -1;
+    const lv = dbz >= 50 || rm >= 8 ? 3 : dbz >= 45 || rm >= 2.5 ? 2 : 1;
+    activity = { level: lv, label: ['', 'Tormenta leve', 'Tormenta moderada', 'Tormenta intensa'][lv], mm: r1(rm) };
+  }
   p = now ? Math.max(90, Math.round(p)) : Math.max(0, Math.min(90, Math.round(p / 5) * 5));
   const level = now ? 'activa' : p >= 70 ? 'alta' : p >= 40 ? 'moderada' : p >= 15 ? 'baja' : 'nula';
   const label = { activa: 'Tormenta ahora', alta: 'Alta', moderada: 'Moderada', baja: 'Baja', nula: 'Muy baja' }[level];
@@ -503,7 +511,7 @@ function thunderOf(w, { okM, metar, radar, wttr, extra = [] }) {
     moderada: 'Puede haber tormenta eléctrica en las próximas horas. Revisa el cielo y ten un plan por si cae un aguacero fuerte.',
     baja: 'Hay poca probabilidad de tormenta eléctrica, pero conviene revisar el clima si vas a salir.',
     nula: 'No se espera tormenta eléctrica en las próximas 6 horas.' }[level];
-  return { prob: p, level, label, text, reasons: level === 'nula' ? [] : reasons, now, models: { votes, of: n }, cape: cape >= 0 ? Math.round(cape) : null };
+  return { prob: p, level, label, text, reasons: level === 'nula' ? [] : reasons, now, activity, models: { votes, of: n }, cape: cape >= 0 ? Math.round(cape) : null };
 }
 
 
