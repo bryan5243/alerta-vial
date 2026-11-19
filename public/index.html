@@ -15,7 +15,7 @@
 <meta name="theme-color" content="#14206B">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="AlertaVial">
+<meta name="apple-mobile-web-app-title" content="Alerta Vial">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/css/app.css">
@@ -408,6 +408,11 @@
         <input id="nav-q" type="search" placeholder="¿A dónde vas?" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" aria-label="Buscar destino">
         <button type="button" class="nav-clear" id="nav-clear" hidden aria-label="Borrar búsqueda">×</button>
         <button type="button" class="nav-plan" id="nav-plan" aria-label="Mi ruta: marcar de dónde sales y a dónde vas" title="Mi ruta: de dónde sales y a dónde vas"></button>
+        <div class="nav-from" id="nav-from-row" hidden>
+          <span class="nf-ic" aria-hidden="true"></span>
+          <input id="nav-from" type="search" placeholder="Punto de partida: Mi ubicación" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" aria-label="Punto de partida">
+          <button type="button" class="nav-clear" id="nav-from-clear" hidden aria-label="Usar mi ubicación">×</button>
+        </div>
         <div class="nav-results" id="nav-results" hidden></div>
         <button type="button" class="wx-chip" id="wx-chip" hidden></button>
         <button type="button" class="alt-chip" id="alt-chip" hidden></button>
@@ -528,7 +533,7 @@
 
 <div class="install" id="install" hidden role="dialog" aria-labelledby="ins-t">
   <img src="/img/icons/icon-192.png" alt="" width="48" height="48">
-  <div class="ins-tx"><b id="ins-t">Instala AlertaVial en tu teléfono</b><span id="ins-d">Ábrela desde tu pantalla de inicio, como una app, y funciona aunque se caiga la señal.</span></div>
+  <div class="ins-tx"><b id="ins-t">Instala Alerta Vial en tu teléfono</b><span id="ins-d">Ábrela desde tu pantalla de inicio, como una app, y funciona aunque se caiga la señal.</span></div>
   <div class="ins-acts"><button type="button" class="btn sm" id="ins-go">Instalar</button><button type="button" class="ins-x" id="ins-x" aria-label="Ahora no">×</button></div>
 </div>
 

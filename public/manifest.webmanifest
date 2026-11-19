@@ -1,6 +1,6 @@
 {
-  "name": "AlertaVial · EMOVTT Santa Rosa",
-  "short_name": "AlertaVial",
+  "name": "Sistema de Alerta Vial · EMOVTT Santa Rosa",
+  "short_name": "Alerta Vial",
   "description": "Calles inundadas, vías alternas y navegación segura en Santa Rosa, El Oro.",
   "lang": "es-EC",
   "start_url": "/?app=1",

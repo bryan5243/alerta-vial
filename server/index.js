@@ -406,7 +406,7 @@ app.get('/api/public/push-key', (req, res) => res.json({ key: push.publicKey() }
 app.post('/api/public/push-subscribe', (req, res) => push.addSub(req.body?.subscription) ? res.json({ ok: true }) : res.status(400).json({ error: 'Suscripción no válida.' }));
 app.post('/api/public/push-unsubscribe', (req, res) => { push.removeSub(String(req.body?.endpoint || '')); res.json({ ok: true }); });
 app.post('/api/admin/push/test', auth, async (req, res) => {
-  const r = await push.sendAll({ title: 'Prueba de avisos · AlertaVial', body: 'Si ves esto, las notificaciones funcionan en este teléfono.', tag: 'prueba' });
+  const r = await push.sendAll({ title: 'Prueba de avisos', body: 'Si ves esto, las notificaciones funcionan en este teléfono.', tag: 'prueba' });
   res.json(r);
 });
 async function pushTick() {

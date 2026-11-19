@@ -183,6 +183,13 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
   let restore = sim ? null : LS.get('av_trip', null);
 
   const input = $('#nav-q'), list = $('#nav-results'), card = $('#nav-card');
+  const fromIn = $('#nav-from'), fromRow = $('#nav-from-row'), fromClr = $('#nav-from-clear');
+  let mode = 'dest', lastDest = null; // mode: qué campo está buscando ('dest' | 'from')
+  // El campo "Punto de partida" aparece al buscar o cuando ya hay ruta; vacío = mi ubicación (GPS)
+  function paintFrom() {
+    fromIn.value = from ? from.name : ''; fromClr.hidden = !from; fromRow.classList.toggle('set', !!from);
+    fromRow.hidden = !(from || trip || lastDest || input.value.trim() || document.activeElement === input || document.activeElement === fromIn);
+  }
   // Indicaciones giro a giro; si el vehículo toma otra calle, se recalcula el camino desde donde está.
   // Tiempo y distancia que faltan (hoja inferior del modo navegación)
   function etaUpdate(r) {
@@ -205,15 +212,43 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
   window.visualViewport?.addEventListener('resize', fitList);
   new MutationObserver(fitList).observe(list, { childList: true, attributes: true, attributeFilter: ['hidden'] });
   input.addEventListener('input', () => {
-    clearTimeout(timer); const q = input.value.trim(); $('#nav-clear').hidden = !q;
+    mode = 'dest'; paintFrom(); clearTimeout(timer); const q = input.value.trim(); $('#nav-clear').hidden = !q;
     if (!q) { list.innerHTML = ''; showQuick(); return; }
     if (q.length < 2) { list.hidden = true; return; }
     search(q); // los resultados de la ciudad y los lugares guardados salen al instante; los de internet llegan enseguida
   });
-  input.addEventListener('focus', () => { if (!input.value.trim()) showQuick(); else if (list.innerHTML) list.hidden = false; });
+  input.addEventListener('focus', () => { mode = 'dest'; paintFrom(); if (!input.value.trim()) showQuick(); else if (list.innerHTML) list.hidden = false; });
   input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); list.querySelector('[data-i]')?.click(); } if (e.key === 'Escape') list.hidden = true; });
-  $('#nav-clear').addEventListener('click', () => { cancelSearch(); input.value = ''; $('#nav-clear').hidden = true; list.hidden = true; list.innerHTML = ''; end(); input.focus(); });
+  fromIn.addEventListener('focus', () => { mode = 'from'; paintFrom(); if (!fromIn.value.trim() || from) showQuickFrom(); else if (list.innerHTML) list.hidden = false; });
+  fromIn.addEventListener('input', () => {
+    mode = 'from'; clearTimeout(timer); const q = fromIn.value.trim(); fromClr.hidden = !q && !from;
+    if (!q) { list.innerHTML = ''; showQuickFrom(); return; }
+    if (q.length < 2) { list.hidden = true; return; }
+    search(q);
+  });
+  fromIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); list.querySelector('[data-i]')?.click(); } if (e.key === 'Escape') list.hidden = true; });
+  fromIn.addEventListener('blur', () => setTimeout(paintFrom, 200));
+  input.addEventListener('blur', () => setTimeout(paintFrom, 200));
+  fromClr.addEventListener('click', () => { cancelSearch(); const had = !!from; from = null; fromIn.value = ''; list.hidden = true; list.innerHTML = ''; paintFrom(); const d = trip?.dest || lastDest; if (had && d) go(d); else fromIn.focus(); });
+  $('#nav-clear').addEventListener('click', () => { lastDest = null; cancelSearch(); input.value = ''; $('#nav-clear').hidden = true; list.hidden = true; list.innerHTML = ''; end(); input.focus(); });
   document.addEventListener('click', e => { if (!e.target.closest('.nav-search')) list.hidden = true; });
+
+  // Punto de partida: mi ubicación, un punto en el mapa, lugares guardados o ciudades
+  function showQuickFrom() {
+    const pl = LS.get('av_places', []);
+    list.innerHTML = `<button type="button" class="nav-res${from ? '' : ' pick'}" data-me>${ICON.nav}<span><b>Mi ubicación (GPS)</b><small>Saldrás desde donde estás ahora</small></span></button>
+      <button type="button" class="nav-res pick" data-pickfrom>${ICON.pin}<span><b>Elegir el punto de partida en el mapa</b><small>Toca el lugar desde donde sales</small></span></button>
+      <div class="nav-sec">Ciudades cercanas</div>${chips()}` + (pl.length ? `<div class="nav-sec">Mis lugares</div>` + pl.slice(0, 4).map((p, i) => `<button type="button" class="nav-res" data-pl="${i}">${ICON.pin}<span><b>${esc(p.name)}</b><small>Lugar guardado</small></span></button>`).join('') : '');
+    list.hidden = false;
+    list.querySelector('[data-me]').onclick = () => { fromClr.click(); list.hidden = true; fromIn.blur(); };
+    list.querySelector('[data-pickfrom]').onclick = () => { cancelSearch(); list.hidden = true; fromIn.blur(); startPick('from-s'); };
+    list.querySelectorAll('[data-pl]').forEach(b => b.onclick = () => chooseFrom(pl[+b.dataset.pl]));
+    list.querySelectorAll('[data-city]').forEach(b => b.onclick = () => { const c = CITIES.find(x => x.name === b.dataset.city); if (c) chooseFrom({ ...c, kind: 'city' }); });
+  }
+  function chooseFrom(r) {
+    cancelSearch(); from = { lat: r.lat, lng: r.lng, name: r.name }; list.hidden = true; fromIn.blur(); paintFrom();
+    const d = trip?.dest || lastDest; if (d) go(d); else input.focus();
+  }
 
   // Sin escribir nada: ciudades cercanas a un toque, rutas y lugares guardados.
   function showQuick() {
@@ -237,7 +272,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     el.querySelectorAll('[data-city]').forEach(b => b.onclick = () => { const c = CITIES.find(x => x.name === b.dataset.city); if (c) pick({ ...c, kind: 'city' }); });
   }
   const cancelSearch = () => { seq++; plSeq++; clearTimeout(timer); clearTimeout(plTimer); };
-  const choose = r => { cancelSearch(); input.value = r.name; $('#nav-clear').hidden = false; list.hidden = true; input.blur(); go(r); };
+  const choose = r => { lastDest = r; cancelSearch(); input.value = r.name; $('#nav-clear').hidden = false; list.hidden = true; input.blur(); go(r); };
   const saved = () => LS.get('av_places', []);
   async function search(q) {
     const my = ++seq, st = getState(), center = st.config.center;
@@ -246,8 +281,8 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
       list.hidden = false;
       list.innerHTML = rows.map(resRow).join('') + (status === 'load' ? `<div class="nav-msg load"><i class="nav-dots" aria-hidden="true"></i>Buscando más lugares…</div>`
         : status === 'none' ? `<div class="nav-msg">No encontramos “${esc(q)}”. Prueba con otra palabra (por ejemplo el nombre de la calle o el barrio), una ciudad de abajo, o elige el punto en el mapa.</div>${chips()}`
-        : status === 'off' ? `<div class="nav-msg">Sin conexión para buscar más lugares. Puedes elegir una ciudad, el punto en el mapa o una ruta guardada.</div>` : '') + pickBtn();
-      bindRows(list, rows, choose); bindPick(list);
+        : status === 'off' ? `<div class="nav-msg">Sin conexión para buscar más lugares. Puedes elegir una ciudad, el punto en el mapa o una ruta guardada.</div>` : '') + (mode === 'from' ? '' : pickBtn());
+      bindRows(list, rows, r => mode === 'from' ? chooseFrom(r) : choose(r)); bindPick(list);
     };
     draw(near, 'load');
     try {
@@ -264,7 +299,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
   function bindPick(el) { el.querySelector('[data-pick]')?.addEventListener('click', () => { cancelSearch(); list.hidden = true; startPick('go'); }); }
   function startPick(target) {
     picking = target; document.body.classList.add('nav-picking'); closePlan();
-    toast(target === 'from-go' ? 'Simulación: toca en el mapa de dónde sale el vehículo' : target === 'from' ? 'Toca en el mapa el lugar desde donde sales' : 'Toca en el mapa el lugar al que quieres ir', 'ok');
+    toast(target === 'from-go' ? 'Simulación: toca en el mapa de dónde sale el vehículo' : (target === 'from' || target === 'from-s') ? 'Toca en el mapa el lugar desde donde sales' : 'Toca en el mapa el lugar al que quieres ir', 'ok');
   }
 
   async function origin() {
@@ -367,13 +402,14 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     if (fit) { const mw = document.querySelector('.mapwrap')?.getBoundingClientRect(), cr = card.hidden ? null : card.getBoundingClientRect(), mob = innerWidth <= 900;
       map.fitBounds([[trip.origin.lat, trip.origin.lng], ...trip.route.coords], { top: mob ? 70 : 0, bottom: mob && cr && mw ? Math.max(0, mw.bottom - cr.top) : 0 }); }
   }
-  function end() { setTrip(null); detourR = null; draw(); card.hidden = true; card.innerHTML = ''; }
+  function end() { paintFrom(); setTrip(null); detourR = null; draw(); card.hidden = true; card.innerHTML = ''; }
 
   /* ---------- Panel "Mi ruta": de dónde sales y a dónde vas ---------- */
   const plan = $('#plan-bg');
   function openPlan() { list.hidden = true; renderPlan(); plan.classList.add('open'); }
   function closePlan() { plan.classList.remove('open'); }
   function renderPlan() {
+    paintFrom();
     $('#pl-from').textContent = from ? from.name : 'Mi ubicación (GPS)';
     document.querySelectorAll('[data-from]').forEach(b => b.classList.toggle('on', (b.dataset.from === 'me') === !from));
     if (planTo) $('#pl-to').value = planTo.name;
@@ -448,13 +484,14 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     get active() { return !!trip; },
     get trip() { return trip; },
     track(user) { if (trip && user) guide.update(user); else guide.hide(); },
-    resetFrom() { from = null; },
+    resetFrom() { from = null; paintFrom(); },
     onMapClick(pos) {
       if (!picking) return false;
       const c = getState()?.config?.center;
       if (c && haversine(c, pos) > TRAVEL_RADIUS_M) { toast('Ese punto queda muy lejos de El Oro. Escribe el nombre de la ciudad en el buscador.', 'err'); return true; }
       const t = picking; picking = null; document.body.classList.remove('nav-picking');
       if (t === 'from') { from = { ...pos, name: 'Punto elegido en el mapa' }; openPlan(); return true; }
+      if (t === 'from-s') { from = { ...pos, name: 'Punto elegido en el mapa' }; paintFrom(); const d = trip?.dest || lastDest; if (d) go(d); else input.focus(); return true; }
       if (t === 'to') { planTo = { ...pos, name: 'Punto elegido en el mapa' }; openPlan(); return true; }
       if (t === 'from-go') { from = { ...pos, name: 'Salida de la simulación' }; const d = pendingDest; pendingDest = null; if (d) go(d); return true; }
       input.value = 'Punto elegido en el mapa'; $('#nav-clear').hidden = false; go({ ...pos, name: 'el punto elegido' }); return true;
