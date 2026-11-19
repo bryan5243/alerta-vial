@@ -665,3 +665,7 @@ button,a,.item,label.switch{-webkit-tap-highlight-color:transparent}
 .wd-r{font-size:.7rem;font-weight:600;color:var(--wx-muted);font-variant-numeric:tabular-nums;line-height:1.25}
 .wd.wet .wd-r{color:#1C77B8} .sky-noche .wd.wet .wd-r{color:#9CCBF2}
 .wd-n{font-size:.65rem;color:var(--wx-muted);opacity:.8}
+.wx-daycard{margin-top:12px}
+.wx-daycard .wx-days{margin:0;padding:0;border:0}
+.wx-days-msg{margin:0;font-size:.85rem;color:var(--wx-muted)}
+.linklike{background:none;border:0;padding:0;font:inherit;font-weight:700;color:var(--brand,#1B2B8B);text-decoration:underline;cursor:pointer}

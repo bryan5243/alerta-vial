@@ -70,6 +70,7 @@ function renderGlance(nFlood) {
 const goTab = id => { const t = document.querySelector(`.tab[data-tab="${id}"]`); if (!t || t.hidden) return; t.click();
   if (window.innerWidth <= 900 && !matchMedia('(min-width:768px) and (min-height:561px)').matches) window.scrollTo({ top: Math.max(0, $('.panel').getBoundingClientRect().top + window.scrollY - Math.round(window.innerHeight * .3)), behavior: 'smooth' }); };
 $('#glance').addEventListener('click', e => { const b = e.target.closest('[data-go]'); if (b) goTab(b.dataset.go); });
+let daysData = null;
 // Tarjeta "Clima ahora": cielo, temperatura, lluvia y sol (índice UV, radiación, salida y puesta)
 function weatherCard(w) {
   const sky = skyOf(w), s = w.sun, night = s?.isDay === 0;
@@ -91,7 +92,7 @@ function weatherCard(w) {
       <div class="stat${w.raining ? ' rain' : ''}"><b>${dec(w.rainNow)}<small> mm/h</small></b><span>Lluvia ahora</span></div>
       <div class="stat"><b>${dec(w.rainPast3h)}<small> mm</small></b><span>Últimas 3 h</span></div>
       <div class="stat"><b>${dec(w.rainNext3h)}<small> mm</small></b><span>Próximas 3 h</span></div>
-    </div>${rainHours(w)}<div class="wx-days" data-days>${daysCards(daysData)}</div>${sunRow}</div>`;
+    </div>${rainHours(w)}${sunRow}</div>`;
 }
 function renderWx(w) {
   const chip = $('#wx-chip'); wxFx.set(w); applySky(w);
@@ -266,8 +267,9 @@ function render(reports) {
 
   // Clima
   const w = weather; renderWx(w);
-  $('#weather').innerHTML = w.ok ? outlookCard(w.outlook) + weatherCard(w)
-    : `<div class="wx-card wx-off">${ICON.cloud}<span>Sin datos de clima por ahora. Las alertas manuales siguen activas.</span></div>`;
+  $('#weather').innerHTML = (w.ok ? outlookCard(w.outlook) + weatherCard(w)
+    : `<div class="wx-card wx-off">${ICON.cloud}<span>Sin datos de clima por ahora. Las alertas manuales siguen activas.</span></div>`)
+    + `<div class="wx-card wx-daycard sky-${w.ok ? skyOf(w) : 'nublado'}"><div class="wx-days" data-days>${daysCards(daysData)}</div></div>`;
   const srcOpen = $('#srcline details')?.open;
   $('#srcline').innerHTML = `<details class="src"${srcOpen ? ' open' : ''}><summary>${ICON.info}<span>De dónde salen los datos${w.ok ? ` <small>· ${wxTime(w.observedAt)}</small>` : ''}</span></summary><div class="src-b">
     <p><b>Clima:</b> ${esc(w.source)}${w.ok ? `, dato de las ${wxTime(w.observedAt)}` : ''}.${w.decidedBy ? ` Lluvia detectada por ${esc(w.decidedBy)}.` : ''}</p>
@@ -528,10 +530,10 @@ if (pushOk) {
   });
 }
 // Pronóstico de ayer, hoy y los próximos 2 días (se pide aparte y se guarda 30 min en el servidor)
-let daysData = null;
 async function loadDays() {
-  try { daysData = await (await fetch('/api/public/forecast-days', { signal: AbortSignal.timeout(12000) })).json(); try { localStorage.setItem('av_days', JSON.stringify(daysData)); } catch {} }
-  catch { try { daysData ||= JSON.parse(localStorage.getItem('av_days') || 'null'); } catch {} }
+  try { const r = await fetch('/api/public/forecast-days', { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw 0; daysData = await r.json(); try { localStorage.setItem('av_days', JSON.stringify(daysData)); } catch {} }
+  catch { try { daysData ||= JSON.parse(localStorage.getItem('av_days') || 'null'); } catch {} daysData ||= { ok: false, days: [] }; }
   document.querySelectorAll('[data-days]').forEach(el => { el.innerHTML = daysCards(daysData); });
 }
 loadDays(); setInterval(loadDays, 30 * 60 * 1000);
+document.addEventListener('click', e => { if (e.target.closest('[data-days-retry]')) { daysData = null; document.querySelectorAll('[data-days]').forEach(el => { el.innerHTML = daysCards(null); }); loadDays(); } });
