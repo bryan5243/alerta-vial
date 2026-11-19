@@ -219,7 +219,7 @@ async function load() {
     map.onClick(onMapClick);
     // El mapa a veces se mide antes de que termine de acomodarse la pantalla: se reajusta a 1 km una vez más
     const rehome = () => { if (!document.body.classList.contains('gps-on') && !nav?.active) goHome(); };
-    setTimeout(rehome, 700); window.addEventListener('load', () => setTimeout(rehome, 300), { once: true });
+    setTimeout(() => { rehome(); setTimeout(() => document.getElementById('splash')?.classList.add('out'), 250); }, 700); window.addEventListener('load', () => setTimeout(rehome, 300), { once: true });
   }
   render(reports);
   gps.refresh(); nav.refresh();
