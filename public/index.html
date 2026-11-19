@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, viewport-fit=cover, shrink-to-fit=no">
 <title>Alerta Vial · EMOVTT Santa Rosa EP</title>
 <meta name="description" content="Mapa en tiempo real de calles inundadas, vías alternas y recomendaciones para la ciudad.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -233,9 +233,15 @@
   .fab{display:inline-flex;align-items:center;gap:8px} .fab .fab-ic svg{width:18px;height:18px;display:block}
   @media (min-width:901px){ .sheet{border-radius:22px;margin-bottom:24px} .sheet-bg{align-items:center} }
   #risk[hidden],#weather[hidden],#srcline[hidden],.glance[hidden],.tabs[hidden],.tab[hidden],.legend[hidden],.legend span[hidden],.map-actions .btn[hidden],.fab[hidden]{display:none!important}
+  /* Nada puede ser más ancho que la pantalla (en iPhone un elemento ancho agranda la página y corta la tarjeta de ruta) */
+  html,body{max-width:100%;overflow-x:hidden}
+  .shell,.main,.mapwrap{min-width:0;max-width:100vw}
+  .mapwrap{overflow:hidden}
+  @media (max-width:767px){ .nav-card{width:calc(100vw - 20px)!important;left:10px!important;right:auto!important} }
+  .nav-card{max-width:calc(100vw - 20px)!important}
   /* App instalada (acceso directo): la barra de estado del teléfono queda sobre la cabecera azul, así que se le deja su espacio */
   @media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui){
-    header.top{padding-top:calc(env(safe-area-inset-top, 0px) + 8px)}
+    header.top{padding-top:calc(env(safe-area-inset-top, 0px) + 12px)}
   }
   html{background:#14206B}
 </style>
