@@ -502,6 +502,15 @@ $('#report-form').addEventListener('submit', async e => {
 
 load().catch(err => { console.error(err); toast('No se pudo cargar la información. Reintenta en unos segundos.', 'err'); });
 setInterval(() => load().catch(() => {}), 60000);
+// Cambios del admin en vivo: cada 10 s se consulta un número de revisión; si cambió, se recarga el estado de inmediato
+let lastRev = null, revBusy = false;
+async function pollRev() {
+  if (revBusy || document.hidden || !navigator.onLine) return; revBusy = true;
+  try { const r = await (await fetch('/api/public/rev', { cache: 'no-store', signal: AbortSignal.timeout(6000) })).json();
+    const k = `${r.rev}|${r.mapVersion}`; if (lastRev !== null && k !== lastRev) await load(); lastRev = k; } catch {} finally { revBusy = false; }
+}
+setInterval(pollRev, 10000); pollRev();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { lastRev = null; load().catch(() => {}); pollRev(); } });
 
 // Avisos de lluvia y tormenta (notificaciones push)
 const pushBtn = $('#btn-push'), tip = $('#push-tip');

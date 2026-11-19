@@ -30,6 +30,11 @@ app.use(express.json({ limit: '25mb' })); // capas GeoJSON pueden ser grandes
 // no-cache: el navegador revalida siempre (usa ETag), así nadie se queda con archivos viejos tras una actualización
 app.use(express.static(path.join(__dirname, '..', 'public'), { setHeaders: (res, f) => { if (/\.(html|js|css|webmanifest)$/.test(f)) res.setHeader('Cache-Control', 'no-cache'); } }));
 
+// Revisión de datos: sube con cada cambio hecho desde el admin. Los teléfonos la consultan (muy liviano) y recargan al instante.
+let dataRev = Date.now();
+app.use('/api/admin', (req, res, next) => { if (req.method !== 'GET') res.on('finish', () => { if (res.statusCode < 400) dataRev = Date.now(); }); next(); });
+app.get('/api/public/rev', (req, res) => { res.set('Cache-Control', 'no-store'); res.json({ rev: dataRev, mapVersion: load().config.mapVersion || 0 }); });
+
 seedIfEmpty();
 
 // ---------- Auth (sesión simple en memoria) ----------
