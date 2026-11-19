@@ -378,7 +378,7 @@ function applyFeatures(F) {
   $('#btn-radar').hidden = off('radar'); if (off('radar') && radarOn) { radarOn = false; $('#btn-radar').classList.remove('on'); clearInterval(radarTimer); map?.setRadar(null); }
   $('#btn-report').hidden = off('reports');
   const tabF = { streets: 'streets', routes: 'routes', rivers: 'rivers', recs: 'recommendations' };
-  const tabs = [...document.querySelectorAll('.tab')];
+  const tabs = [...document.querySelectorAll('.tab:not(.tab-map)')];
   tabs.forEach(t => { t.hidden = t.dataset.tab === 'sum' ? off('risk') && off('weather') : off(tabF[t.dataset.tab]); });
   const vis = tabs.filter(t => !t.hidden);
   $('#tabs').hidden = !vis.length;
@@ -434,11 +434,22 @@ const empty = (icon, t, s) => `<div class="empty">${icon}<div style="font-weight
 
 // Tabs
 const tabsFade = edgeFade($('#tabs'));
-document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+// Celular: barra de pestañas inferior; al tocar una sube la hoja con su contenido, y "Mapa" (o tocar el mapa) la baja
+const isAppNav = () => document.documentElement.classList.contains('app-nav');
+const paintTabs = () => { const open = document.documentElement.classList.contains('sheet-open');
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('is-on', x.dataset.tab === 'map' ? !open : open && x.getAttribute('aria-selected') === 'true')); };
+function setSheet(on) { document.documentElement.classList.toggle('sheet-open', !!on && isAppNav()); paintTabs(); map?.invalidate(); }
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', e => {
+  if (t.dataset.tab === 'map') { setSheet(false); return; }
+  const same = t.getAttribute('aria-selected') === 'true';
   document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x === t));
   document.querySelectorAll('.pane').forEach(p => p.hidden = p.id !== `pane-${t.dataset.tab}`);
-  t.scrollIntoView({ inline: 'nearest', block: 'nearest' }); tabsFade();
+  if (isAppNav() && e.isTrusted) { const open = document.documentElement.classList.contains('sheet-open'); setSheet(!(open && same)); if (!open || !same) $('.panel').scrollTop = 0; } else paintTabs();
+  if (!isAppNav()) t.scrollIntoView({ inline: 'nearest', block: 'nearest' }); tabsFade();
 }));
+window.addEventListener('resize', () => { if (!isAppNav()) setSheet(false); else paintTabs(); });
+document.querySelector('.mapwrap').addEventListener('pointerdown', e => { if (isAppNav() && document.documentElement.classList.contains('sheet-open') && !e.target.closest('.map-actions,.nav-search,.nav-card,.fab,.gps-bar')) setSheet(false); });
+paintTabs();
 // Celular: la tira de arriba de la hoja dice qué hay debajo del mapa y la abre o cierra
 $('#peek-ic').innerHTML = ICON.chevron;
 const panelUp = () => document.body.classList.toggle('panel-up', window.scrollY > 60);
@@ -451,12 +462,12 @@ $('#peek').addEventListener('click', () => {
 document.querySelector('.panel').addEventListener('click', e => {
   const it = e.target.closest('.item[data-id]'); if (!it) return;
   const sh = shapes[it.dataset.kind].get(it.dataset.id); const src = state[it.dataset.kind].find(x => x.id === it.dataset.id);
-  if (it.dataset.kind === 'overflows') { map.panTo({ lat: src.lat, lng: src.lng }, 18); setTimeout(() => sh?.open?.(), 500); if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+  if (it.dataset.kind === 'overflows') { map.panTo({ lat: src.lat, lng: src.lng }, 18); setTimeout(() => sh?.open?.(), 500); if (isAppNav()) setSheet(false); else if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
   document.querySelectorAll('.item.selected').forEach(x => x.classList.remove('selected')); it.classList.add('selected');
   if (it.dataset.kind === 'routes' && !shapes.routes.has(it.dataset.id)) { altFocus.add(it.dataset.id); syncRoutes(); }
   const sh2 = it.dataset.kind === 'routes' ? shapes.routes.get(it.dataset.id) : sh;
   map.fitBounds(src.coords); setTimeout(() => sh2?.open?.(), 400);
-  if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (isAppNav()) setSheet(false); else if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 $('#btn-fit').addEventListener('click', () => map.fitBounds([...state.streets, ...state.routes].flatMap(x => x.coords)));
 
@@ -470,7 +481,7 @@ async function applyRadar() {
 $('#btn-radar').addEventListener('click', () => { radarOn = !radarOn; $('#btn-radar').classList.toggle('on', radarOn); if (radarOn) applyRadar(); else { clearInterval(radarTimer); map.setRadar(null); } });
 
 // Reporte ciudadano
-$('#btn-report').addEventListener('click', () => { picking = true; $('#picking').classList.add('on'); if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); });
+$('#btn-report').addEventListener('click', () => { picking = true; $('#picking').classList.add('on'); if (isAppNav()) setSheet(false); else if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); });
 $('#pick-cancel').addEventListener('click', stopPick);
 function stopPick() { picking = false; $('#picking').classList.remove('on'); }
 function onMapClick(pos) {

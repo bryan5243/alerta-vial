@@ -19,6 +19,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/css/app.css">
+<script>(function(){var d=document.documentElement,f=function(){var w=innerWidth,h=innerHeight;d.classList.toggle("app-nav",w<=900&&!(w>=768&&h>=561))};f();addEventListener("resize",f);addEventListener("orientationchange",f)})()</script>
 <style>
   .shell{display:grid;grid-template-rows:auto auto 1fr;height:var(--app-h,100dvh)}
   header.top{display:flex;align-items:center;gap:16px;padding:10px 20px;background:linear-gradient(100deg,var(--brand-dark),var(--brand) 60%,#1E3AA8);color:#fff;border-bottom:3px solid var(--brand-yellow)}
@@ -310,6 +311,36 @@
     header.top{padding-top:calc(env(safe-area-inset-top, 0px) + 12px)}
   }
   html{background:#14206B}
+  /* ===== Móvil: barra de pestañas inferior con iconos (como una app nativa). La hoja con el contenido sube al tocar una pestaña ===== */
+  .tab .t-ic,.tab-map{display:none}
+  html.app-nav{--tb:calc(62px + env(safe-area-inset-bottom,0px))}
+  html.app-nav .shell{height:var(--app-h,100dvh);min-height:0;overflow:hidden}
+  html.app-nav .main{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr)}
+  html.app-nav .mapwrap{order:0;position:relative;top:auto;z-index:auto;--peek:var(--tb)}
+  html.app-nav .map-full .mapwrap,html.app-nav .gps-on .mapwrap{--peek:0px}
+  html.app-nav .panel{position:fixed;left:0;right:0;bottom:0;margin:0;z-index:1100;display:flex;flex-direction:column;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+    background:var(--surface);border:0;border-top:1px solid var(--line);border-radius:0;max-height:calc(var(--app-h,100dvh) - var(--chrome,116px) - 8px)}
+  html.app-nav.sheet-open .panel{height:calc(var(--app-h,100dvh)*.6);border-radius:22px 22px 0 0;border-top:0;box-shadow:0 -10px 36px rgb(15 34 56/.22);animation:sheet-up .3s cubic-bezier(.2,.8,.2,1)}
+  @keyframes sheet-up{from{transform:translateY(36px);opacity:.4}to{transform:none;opacity:1}}
+  html.app-nav .peek,html.app-nav .glance{display:none!important}
+  html.app-nav:not(.sheet-open) .pane,html.app-nav:not(.sheet-open) .disclaimer{display:none!important}
+  html.app-nav .gps-on .panel,html.app-nav .map-full .panel{display:none}
+  html.app-nav .pane{padding:18px 16px 12px}
+  html.app-nav .tabs{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:0;order:99;position:sticky;bottom:0;top:auto;margin-top:auto;overflow:visible;
+    padding:4px 4px calc(4px + env(safe-area-inset-bottom,0px));background:var(--surface);border-top:1px solid var(--line);border-bottom:0}
+  html.app-nav.sheet-open .tabs{border-top:1px solid var(--line)}
+  html.app-nav .tab,html.app-nav .tab-map{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:3px;min-height:54px;padding:5px 0 3px;border:0;font-size:.68rem;font-weight:600;line-height:1.1;color:var(--muted);position:relative;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+  html.app-nav .tab .t-ic{display:grid;place-items:center;width:54px;height:30px;border-radius:15px;transition:background .22s,color .22s,transform .22s}
+  html.app-nav .tab .t-ic svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+  html.app-nav .tab:active .t-ic{transform:scale(.92)}
+  html.app-nav .tab .t-x{display:none}
+  html.app-nav .tab[aria-selected="true"]{border:0;color:var(--muted)}
+  html.app-nav .tab.is-on{color:var(--ink)} html.app-nav .tab.is-on .t-ic{background:var(--accent-soft);color:var(--accent-ink)}
+  html.app-nav .tab .n{position:absolute;top:2px;left:calc(50% + 6px);min-width:17px;height:17px;padding:0 5px;border-radius:9px;font-size:.64rem;line-height:17px;text-align:center;background:var(--accent);color:#fff;box-shadow:0 0 0 2px var(--surface)}
+  html.app-nav .tab[data-tab="streets"] .n{background:var(--roja)}
+  html.app-nav .toast-wrap,html.app-nav body:not(.gps-on) .toast-wrap{bottom:calc(var(--tb) + 14px)!important}
+  html.app-nav .push-tip,html.app-nav .install{bottom:calc(var(--tb) + 12px)}
+  @media (prefers-reduced-motion:reduce){ html.app-nav.sheet-open .panel{animation:none} }
 </style>
 </head>
 <body>
@@ -336,11 +367,12 @@
       <button type="button" class="peek" id="peek" aria-label="Ver calles, vías alternas y consejos"><span class="peek-grab" aria-hidden="true"></span><span class="peek-t" id="peek-t">Calles, vías alternas y consejos</span><span class="peek-ic" id="peek-ic" aria-hidden="true"></span></button>
       <div class="glance" id="glance" aria-label="Resumen del estado"><span class="skel"></span><span class="skel"></span><span class="skel"></span></div>
       <div class="tabs" id="tabs" role="tablist">
-        <button class="tab" role="tab" aria-selected="true" data-tab="sum">Resumen</button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="streets">Calles <span class="n" id="n-streets">–</span></button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="routes">Vías<span class="t-x"> alternas</span> <span class="n" id="n-routes">–</span></button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="rivers">Ríos <span class="n" id="n-rivers">–</span></button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="recs">Consejos <span class="n" id="n-recs">–</span></button>
+        <button class="tab tab-map" role="tab" aria-selected="false" data-tab="map"><span class="t-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3 3 5v16l6-2 6 2 6-2V3l-6 2z"/><path d="M9 3v16M15 5v16"/></svg></span><span class="t-l">Mapa</span></button>
+        <button class="tab" role="tab" aria-selected="true" data-tab="sum"><span class="t-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2v2M4.2 4.2l1.4 1.4M20 12h2M17.4 6.6l1.4-1.4"/><path d="M16 12a4 4 0 0 0-7.7-1.5A4.5 4.5 0 0 0 8.5 19H17a3.5 3.5 0 0 0-1-7z"/></svg></span><span class="t-l">Resumen</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="streets"><span class="t-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 21 8 3M19 21 16 3M12 5v2M12 11v2M12 17v2"/></svg></span><span class="t-l">Calles</span> <span class="n" id="n-streets">–</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="routes"><span class="t-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.5"/></svg></span><span class="t-l">Vías<span class="t-x"> alternas</span></span> <span class="n" id="n-routes">–</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="rivers"><span class="t-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 7c2-2 4-2 6 0s4 2 6 0 4-2 6 0M2 13c2-2 4-2 6 0s4 2 6 0 4-2 6 0M2 19c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg></span><span class="t-l">Ríos</span> <span class="n" id="n-rivers">–</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="recs"><span class="t-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2V16h5v-.1c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z"/></svg></span><span class="t-l">Consejos</span> <span class="n" id="n-recs">–</span></button>
       </div>
       <section class="pane pane-sum" id="pane-sum" role="tabpanel">
         <div class="weather" id="weather"><div class="skel"></div></div>
