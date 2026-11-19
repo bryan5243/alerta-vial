@@ -135,6 +135,29 @@
     @media (max-width:480px){ .tab .t-x{display:none} }
     @media (max-width:380px){ .tabs{padding-left:8px;padding-right:8px;gap:0} .tab{padding:8px 4px;font-size:.84rem} }
   }
+  /* ===== Vista de conducción 3D ===== */
+  .pin-w{width:30px;height:30px}
+  .drive-horizon,.drive-me,.drive-ctl,.drive-attr{display:none}
+  .mapwrap.drive{background:linear-gradient(#bcd3e6,#e7eef4 45%);overflow:clip;contain:paint}
+  .mapwrap.drive #map{inset:auto;left:50%;top:64%;width:250%;height:290%;transform-origin:50% 50%;
+    transform:translate(-50%,-50%) perspective(820px) rotateX(var(--tilt,55deg)) rotateZ(var(--rot,0deg));transition:transform .6s linear}
+  .mapwrap.drive.drive-flat #map{top:60%}
+  .mapwrap.drive .leaflet-control-container,.mapwrap.drive .me,.mapwrap.drive .map-fallback{display:none}
+  .mapwrap.drive .leaflet-marker-icon .pin-w{transform:rotate(calc(var(--rot,0deg) * -1)) scaleY(var(--unsq,1.7));transform-origin:50% 100%;transition:transform .6s linear}
+  .mapwrap.drive.drive-flat .leaflet-marker-icon .pin-w{transform:rotate(calc(var(--rot,0deg) * -1))}
+  .mapwrap.drive .drive-horizon{display:block;position:absolute;left:0;right:0;top:0;height:34%;z-index:430;pointer-events:none;background:linear-gradient(#bcd3e6 0%,rgb(188 211 230/.85) 35%,rgb(231 238 244/0) 100%)}
+  .mapwrap.drive.drive-flat .drive-horizon{display:none}
+  .mapwrap.drive .drive-me{display:block;position:absolute;left:50%;top:64%;width:34px;height:42px;margin:-21px 0 0 -17px;z-index:640;pointer-events:none;transform:rotate(var(--me,0deg));transition:transform .6s linear;filter:drop-shadow(0 4px 6px rgb(0 0 0/.35))}
+  .mapwrap.drive.drive-flat .drive-me{top:60%}
+  .drive-me svg{width:100%;height:100%;fill:#1B2B8B;stroke:#fff;stroke-width:3.5;stroke-linejoin:round}
+  .mapwrap.drive .drive-ctl{display:flex;position:absolute;right:10px;top:calc(50% - 20px);flex-direction:column;gap:8px;z-index:660}
+  .mapwrap.drive .drive-ctl[hidden]{display:none}
+  .drive-ctl .btn{width:44px;height:44px;min-height:44px;padding:0;background:var(--surface);color:var(--ink);border-color:var(--line);box-shadow:var(--shadow-1);justify-content:center}
+  .drive-ctl .dc-needle{width:30px;height:30px;transform:rotate(var(--rot,0deg));transition:transform .6s linear}
+  .drive-ctl #drive-tilt b{font-size:.8rem}
+  .mapwrap.drive .drive-attr{display:block;position:absolute;left:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 4px);z-index:660;font-size:.66rem;color:#33475b;background:rgb(255 255 255/.75);padding:1px 6px;border-radius:6px}
+  .mapwrap.drive .nav-picking{cursor:default}
+  @media (prefers-reduced-motion:reduce){ .mapwrap.drive #map,.drive-me,.drive-ctl .dc-needle{transition-duration:.01s} }
   /* Foto del reporte y campana de avisos (todas las pantallas) */
   .req{color:#C62E2E;font-weight:700;font-size:.8em;text-transform:uppercase;letter-spacing:.04em;margin-left:4px}
   .photo{border:2px dashed #8FA3BC;border-radius:16px;background:rgb(27 43 139/.04);overflow:hidden;transition:border-color .2s}
@@ -290,6 +313,15 @@
 
     <div class="mapwrap">
       <div id="map" role="application" aria-label="Mapa de calles inundadas"></div>
+      <div class="drive-horizon" aria-hidden="true"></div>
+      <div class="drive-me" id="drive-me" aria-hidden="true"><svg viewBox="0 0 48 60"><path d="M24 2 44 54 24 44 4 54z"/></svg></div>
+      <div class="drive-ctl" id="drive-ctl" hidden>
+        <button class="btn icon" id="drive-compass" aria-label="Brújula: tocar para fijar el norte arriba" title="Brújula · tocar: norte arriba / rumbo arriba"><svg viewBox="0 0 40 40" class="dc-needle"><circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".35"/><path d="M20 5l6 15h-12z" fill="#C62E2E"/><path d="M20 35l-6-15h12z" fill="currentColor" opacity=".55"/></svg></button>
+        <button class="btn icon" id="drive-tilt" aria-label="Cambiar inclinación 3D / 2D" title="Inclinación 3D / 2D"><b>2D</b></button>
+        <button class="btn icon" id="drive-zin" aria-label="Acercar" title="Acercar"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button class="btn icon" id="drive-zout" aria-label="Alejar" title="Alejar"><svg class="i" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+      </div>
+      <div class="drive-attr" id="drive-attr" aria-hidden="true">© OpenStreetMap</div>
       <div class="sky-fx" aria-hidden="true"><span class="sun-glow"></span><span class="sun-rays"></span><span class="cloud c1"></span><span class="cloud c2"></span><span class="cloud c3"></span></div>
       <canvas class="wx-fx" id="wx-fx" aria-hidden="true"></canvas><div class="wx-flash" id="wx-flash" aria-hidden="true"></div>
       <div class="nav-search" role="search">
@@ -326,6 +358,7 @@
         <span class="gps-live"></span>
         <div class="gps-txt"><b id="gps-state">Buscando tu ubicación…</b><small id="gps-acc"></small></div>
         <button class="btn icon sm on" id="gps-follow" aria-label="Seguir mi ubicación" title="Seguir mi ubicación"></button>
+        <button class="btn sm on" id="gps-3d" aria-label="Vista 3D de conducción" title="Vista 3D de conducción (activar o desactivar)" hidden>3D</button>
         <button class="btn icon sm on" id="gps-voice" aria-label="Avisos por voz" title="Avisos por voz"></button>
         <button class="btn sm" id="gps-sim" title="Simula que te acercas a una calle inundada" aria-label="Simular recorrido"><span class="sim-ic"></span><span class="sim-t">Simular</span></button>
         <button class="btn icon sm" id="gps-stop" aria-label="Detener GPS" title="Detener GPS"></button>

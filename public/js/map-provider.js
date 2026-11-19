@@ -15,7 +15,7 @@ const ICONS = {
   nav: '<path d="M4 11 20 4l-7 16-2-7z"/>',
   interseccion: '<path d="M12 2v20M2 12h20"/><path d="M5 18c1.5-1 3-1 4.5 0s3 1 4.5 0 3-1 4.5 0"/>',
 };
-export const pinHtml = (cls, icon) => `<div class="pin ${cls}"><svg viewBox="0 0 24 24">${ICONS[icon] || ICONS.inundacion}</svg></div>`;
+export const pinHtml = (cls, icon) => `<div class="pin-w"><div class="pin ${cls}"><svg viewBox="0 0 24 24">${ICONS[icon] || ICONS.inundacion}</svg></div></div>`;
 
 export async function createMap({ provider = 'leaflet', el, center, zoom, googleKey, style = 'osm' }) {
   if (provider === 'google' && googleKey) {
@@ -45,8 +45,50 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
   const layers = L.layerGroup().addTo(map);
   let radar = null, clickCb = null;
   map.on('click', e => clickCb && clickCb({ lat: e.latlng.lat, lng: e.latlng.lng }));
+
+  /* ---- Vista de conducción 3D (como Google Maps): el mapa se inclina, gira según el rumbo y sigue al vehículo ---- */
+  const wrap = el.parentElement;
+  const dv = { active: false, tilt: 55, northUp: false, hdg: 0, rot: 0, manualUntil: 0, zoomBase: 18 };
+  const dvVars = () => {
+    const k = Math.cos(dv.tilt * Math.PI / 180);
+    wrap.style.setProperty('--rot', `${dv.rot}deg`); wrap.style.setProperty('--tilt', `${dv.tilt}deg`);
+    wrap.style.setProperty('--unsq', String(+(1 / Math.max(.3, k)).toFixed(3)));
+    wrap.style.setProperty('--me', `${dv.northUp ? dv.hdg : 0}deg`);
+    wrap.classList.toggle('drive-flat', dv.tilt === 0); wrap.classList.toggle('drive-north', dv.northUp);
+  };
+  const drive = {
+    get active() { return dv.active; }, get tilt() { return dv.tilt; }, get northUp() { return dv.northUp; },
+    start(u) {
+      if (dv.active) return; dv.active = true;
+      const c = u || map.getCenter(); dv.hdg = u?.heading ?? 0; dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars();
+      wrap.classList.add('drive'); document.body.classList.add('drive-on');
+      map.dragging.disable(); map.options.touchZoom = 'center'; map.options.scrollWheelZoom = 'center'; map.options.doubleClickZoom = 'center';
+      map.touchZoom.disable(); map.touchZoom.enable(); map.scrollWheelZoom.disable(); map.scrollWheelZoom.enable();
+      map.invalidateSize({ animate: false }); map.setView([c.lat ?? c[0], c.lng ?? c[1]], Math.max(map.getZoom(), 17), { animate: false });
+    },
+    stop() {
+      if (!dv.active) return; dv.active = false;
+      wrap.classList.remove('drive', 'drive-flat', 'drive-north'); document.body.classList.remove('drive-on');
+      ['--rot', '--tilt', '--unsq', '--me'].forEach(k => wrap.style.removeProperty(k));
+      map.options.touchZoom = true; map.options.scrollWheelZoom = true; map.options.doubleClickZoom = true;
+      map.dragging.enable(); map.touchZoom.disable(); map.touchZoom.enable(); map.scrollWheelZoom.disable(); map.scrollWheelZoom.enable();
+      const c = map.getCenter(); map.invalidateSize({ animate: false }); map.setView(c, Math.min(map.getZoom(), 18), { animate: false });
+    },
+    update(u) {
+      if (!dv.active || !u) return;
+      if (u.heading != null && !isNaN(u.heading)) { const d = ((u.heading - dv.hdg + 540) % 360) - 180; dv.hdg += d; }
+      dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars();
+      // zoom según la velocidad (más lejos cuanto más rápido), salvo que acabes de hacer zoom a mano
+      let z = dv.zoomBase;
+      if (Date.now() > dv.manualUntil) { const v = (u.speed ?? 0) * 3.6; z = v > 70 ? 16 : v > 45 ? 17 : 18; } else z = map.getZoom();
+      map.setView([u.lat, u.lng], z, { animate: true, duration: .9, easeLinearity: 1, noMoveStart: true });
+    },
+    zoom(dz) { dv.manualUntil = Date.now() + 25000; map.setZoom(Math.max(13, Math.min(19, map.getZoom() + dz))); },
+    toggleTilt() { dv.tilt = dv.tilt ? 0 : 55; dvVars(); return dv.tilt; },
+    toggleNorth() { dv.northUp = !dv.northUp; dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars(); return dv.northUp; },
+  };
   return {
-    provider: 'leaflet', raw: map,
+    provider: 'leaflet', raw: map, drive,
     addMarker({ lat, lng, cls, icon, popup, onClick, pulse }) {
       const m = L.marker([lat, lng], { icon: L.divIcon({ className: '', html: pinHtml(cls + (pulse ? ' pulse' : ''), icon), iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28] }) });
       if (popup) m.bindPopup(popup, { maxWidth: 260 });

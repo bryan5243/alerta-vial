@@ -63,6 +63,7 @@ const angDiff = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
 
 export function createGps({ getMap, getState, getShapes, getNav = () => null, onMove = () => {} }) {
   const $ = s => document.querySelector(s);
+  let compass = null, compassOn = false, driveTried = false;
   let watchId = null, simTimer = null, user = null, userMk = null, last = null, follow = true, voice = true;
   let active = null;       // { hz, level, d, point }
   let pulse = null, link = null, hlShape = null, routeShape = null;
@@ -93,10 +94,12 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
   function onPos(pos) {
     const now = Date.now();
     let heading = pos.heading;
+    const still = pos.speed == null || pos.speed < 1.2;
+    if ((heading == null || isNaN(heading)) && still && compass != null && (!last || haversine(last, pos) <= 3)) heading = compass; // parado: usa la brújula del teléfono
     if ((heading == null || isNaN(heading)) && last && haversine(last, pos) > 3) heading = bearing(last, pos);
     user = { ...pos, heading };
     const map = getMap();
-    if (!userMk) userMk = map.addUser(user); else userMk.update(user);
+    if (!userMk) { userMk = map.addUser(user); if (map.drive && !driveTried) { driveTried = true; driveOn(user); } } else userMk.update(user);
     $('#gps-acc').textContent = pos.accuracy ? `precisión ${Math.round(pos.accuracy)} m` : '';
     last = { lat: pos.lat, lng: pos.lng };
 
@@ -123,7 +126,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
       if (!best || score < best.score) best = { hz, level, d, point, score };
     }
     if (best) show(best); else if (active) hide();
-    if (!best && follow) map.panTo(user, 18);
+    if (map.drive?.active) map.drive.update(user); else if (!best && follow) map.panTo(user, 18);
     $('#gps-state').textContent = best ? (best.level === 'danger' ? 'Peligro cerca' : 'Precaución adelante') : `Sin peligros a ${warnM} m`;
     $('#gps-bar').dataset.level = best ? best.level : 'ok';
     onMove(user);
@@ -148,7 +151,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
       $('#hz-alt').textContent = alt?.id === 'auto' ? (getNav()?.trip ? 'Tomar desvío' : 'Ver desvío') : 'Ver vía alterna';
       $('#hz-alt').hidden = !alt; $('#hz-alt').onclick = () => alt && showAlt(alt);
       if (!alt) autoDetour(b.hz);
-      map.fitBounds([[user.lat, user.lng], [b.point.lat, b.point.lng]]);
+      if (!map.drive?.active) map.fitBounds([[user.lat, user.lng], [b.point.lat, b.point.lng]]);
       announce(b, true);
     }
     if (escalate) { card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake'); announce(b, false); }
@@ -211,15 +214,25 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
     return st.routes.find(r => r.avoids === hz.id) || detours.get(hz.id) || (hz.kind === 'street' || hz.src?.type === 'interseccion' ? null : st.routes.slice().sort((a, b) => nearestOnLine(user, a.coords).d - nearestOnLine(user, b.coords).d)[0]) || null;
   }
   function showAlt(r) {
-    if (r.id === 'auto') { getNav()?.showDetour(r); getMap().fitBounds([[user.lat, user.lng], ...r.coords]); toast(`${r.name}. ${r.description || ''}`.trim(), 'ok'); return; }
+    if (r.id === 'auto') { getNav()?.showDetour(r); if (!getMap().drive?.active) getMap().fitBounds([[user.lat, user.lng], ...r.coords]); toast(`${r.name}. ${r.description || ''}`.trim(), 'ok'); return; }
     const shp = getShapes().routes.get(r.id); routeShape?.removeClass('route-flow');
     if (shp?.addClass) { shp.addClass('route-flow'); routeShape = shp; }
-    getMap().fitBounds([[user.lat, user.lng], ...r.coords]);
+    if (!getMap().drive?.active) getMap().fitBounds([[user.lat, user.lng], ...r.coords]);
     toast(`Vía alterna: ${r.name}. ${r.description || ''}`.trim(), 'ok');
   }
 
   /* ---------- controles ---------- */
+  // Brújula del teléfono (para ubicarte cuando estás detenido). En iPhone pide permiso al tocar el botón.
+  function startCompass() {
+    if (compassOn) return; compassOn = true;
+    const h = e => { const c = e.webkitCompassHeading ?? ((e.absolute || e.type === 'deviceorientationabsolute') && e.alpha != null ? (360 - e.alpha) % 360 : null); if (c != null && !isNaN(c)) compass = c; };
+    const listen = () => { window.addEventListener('deviceorientationabsolute', h, true); window.addEventListener('deviceorientation', h, true); };
+    try { if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') DeviceOrientationEvent.requestPermission().then(r => { if (r === 'granted') listen(); }).catch(() => {}); else listen(); } catch {}
+  }
+  function driveOn(u) { const m = getMap(); if (!m.drive) return; $('#drive-tilt b').textContent = m.drive.tilt ? '2D' : '3D'; $('#drive-ctl').hidden = false; $('#gps-3d').hidden = false; $('#gps-3d').classList.add('on'); $('#gps-follow').hidden = true; m.drive.start(u); }
+  function driveOff() { const m = getMap(); if (!m?.drive) return; m.drive.stop(); $('#drive-ctl').hidden = true; $('#gps-3d').classList.remove('on'); $('#gps-follow').hidden = false; }
   function start() {
+    startCompass(); if (getMap().drive) $('#gps-3d').hidden = false;
     $('#gps-bar').hidden = false; $('#btn-gps').classList.add('on'); document.body.classList.add('gps-on');
     if (!('geolocation' in navigator)) { toast('Tu navegador no permite usar el GPS. Prueba "Simular recorrido".', 'err'); return; }
     if (!window.isSecureContext) { toast('El GPS solo funciona con https o en localhost. Puedes usar "Simular recorrido".', 'err'); return; }
@@ -231,6 +244,7 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
   function stop() {
     if (watchId != null) navigator.geolocation.clearWatch(watchId); watchId = null;
     clearInterval(simTimer); simTimer = null; $('#gps-sim').classList.remove('on');
+    driveOff(); driveTried = false; $('#gps-3d').hidden = true;
     if (active) hide(); userMk?.remove(); userMk = null; user = null; last = null; hist.clear(); snoozed.clear(); detours.clear();
     $('#gps-bar').hidden = true; $('#btn-gps').classList.remove('on'); document.body.classList.remove('gps-on');
     try { speechSynthesis.cancel(); } catch {}
@@ -293,6 +307,10 @@ export function createGps({ getMap, getState, getShapes, getNav = () => null, on
   $('#btn-gps').addEventListener('click', () => (watchId != null || simTimer ? stop() : start()));
   $('#gps-stop').addEventListener('click', stop);
   $('#gps-sim').addEventListener('click', simulate);
+  $('#gps-3d').addEventListener('click', () => { const m = getMap(); if (m.drive?.active) driveOff(); else driveOn(user); });
+  $('#drive-zin').addEventListener('click', () => getMap().drive?.zoom(1)); $('#drive-zout').addEventListener('click', () => getMap().drive?.zoom(-1));
+  $('#drive-tilt').addEventListener('click', e => { const t = getMap().drive?.toggleTilt(); e.currentTarget.querySelector('b').textContent = t ? '2D' : '3D'; e.currentTarget.title = t ? 'Pasar a vista plana 2D' : 'Pasar a vista inclinada 3D'; });
+  $('#drive-compass').addEventListener('click', () => { const n = getMap().drive?.toggleNorth(); toast(n ? 'Norte arriba' : 'Rumbo arriba: el mapa gira contigo', 'ok'); });
   $('#gps-follow').addEventListener('click', e => { follow = !follow; e.currentTarget.classList.toggle('on', follow); if (follow && user) getMap().panTo(user, 18); });
   $('#gps-voice').addEventListener('click', e => { voice = !voice; e.currentTarget.classList.toggle('on', voice); if (!voice) try { speechSynthesis.cancel(); } catch {} });
   $('#hz-ok').addEventListener('click', () => { if (active) { snoozed.set(active.hz.id, { until: Date.now() + 120000, level: active.level }); hide(); } });

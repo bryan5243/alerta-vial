@@ -399,3 +399,7 @@ Antes, cuando la ruta tenía que esquivar un punto de riesgo, solo se ofrecía u
 
 ## Pronóstico por días
 En la pestaña Resumen, bajo "Lluvia por horas", se muestran 4 tarjetas: ayer (lo que ya ocurrió), hoy, mañana y pasado mañana (temperatura, probabilidad y mm de lluvia). Viene de `/api/public/forecast-days` (Open-Meteo, una consulta guardada 30 min) y la app guarda la última copia para verla sin señal.
+
+
+## Vista de conducción 3D
+Al iniciar el GPS (o la simulación) el mapa pasa solo a vista de conducción: se inclina (perspectiva 3D), gira para que el rumbo quede siempre hacia arriba, sigue al vehículo con movimiento suave y ajusta el zoom según la velocidad (18 en ciudad, 17 desde 45 km/h, 16 desde 70 km/h). Botones a la derecha: brújula (la aguja marca el norte; al tocarla se fija el norte arriba), 2D/3D (inclinación), acercar y alejar; también funciona el pellizco. El botón "3D" de la barra del GPS sale a la vista normal para explorar el mapa. Parado, el rumbo sale de la brújula del teléfono (en iPhone pide permiso al iniciar). Está hecho con transformaciones CSS 3D sobre Leaflet (`map.drive` en `map-provider.js`); con Google Maps no aplica.
