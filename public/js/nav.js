@@ -184,7 +184,14 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
 
   const input = $('#nav-q'), list = $('#nav-results'), card = $('#nav-card');
   // Indicaciones giro a giro; si el vehículo toma otra calle, se recalcula el camino desde donde está.
-  const guide = createGuide({ el: $('#turn'), getVoice, onOffRoute: async user => {
+  // Tiempo y distancia que faltan (hoja inferior del modo navegación)
+  function etaUpdate(r) {
+    const el = $('#gps-eta'); if (!el) return;
+    if (!r) { el.hidden = true; el.innerHTML = ''; return; }
+    const at = new Date(Date.now() + r.dur * 1000).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' });
+    el.hidden = false; el.innerHTML = `<b>${fmtMin(r.dur)}</b><span>${fmtKm(r.remain)} · ${at}</span>`;
+  }
+  const guide = createGuide({ el: $('#turn'), onProgress: etaUpdate, getVoice, onOffRoute: async user => {
     if (!trip) return;
     const route = await safeRoute(startFrom(user), trip.dest, hazardZones(getState()));
     setTrip({ ...trip, origin: { lat: user.lat, lng: user.lng, mine: true }, route, direct: false, offline: false }); draw(false); renderCard();
@@ -304,7 +311,7 @@ export function createNav({ getMap, getState, getUser, startGps, onChange = () =
     toast(`Ruta ${i + 1} elegida: ${fmtKm(trip.route.distance)}, ${fmtMin(trip.route.duration)}.`, 'ok');
   }
   function setTrip(t) {
-    trip = t; guide.setRoute(trip ? trip.route : null); if (!trip) guide.hide();
+    trip = t; guide.setRoute(trip ? trip.route : null); if (!trip) { guide.hide(); etaUpdate(null); }
     if (!sim) LS.set('av_trip', trip ? { dest: trip.dest, origin: trip.origin, route: slim(trip.route), saved: trip.saved, at: Date.now() } : null);
     onChange();
   }

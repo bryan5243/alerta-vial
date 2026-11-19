@@ -57,11 +57,12 @@ export const TURN_SVG = {
 const fmt = m => (m >= 1000 ? `${(m / 1000).toFixed(1).replace('.', ',')} km` : `${Math.max(10, Math.round(m / 10) * 10)} m`);
 
 // Guía de la ruta en curso: decide la próxima indicación, la anuncia por voz y detecta desvíos.
-export function createGuide({ el, getVoice, onOffRoute }) {
-  let route = null, steps = [], idx = 0, said = new Map(), off = 0, lastReroute = 0, busy = false;
+export function createGuide({ el, getVoice, onOffRoute, onProgress }) {
+  let total = 0, route = null, steps = [], idx = 0, said = new Map(), off = 0, lastReroute = 0, busy = false;
 
   function setRoute(r) {
     route = r; idx = 0; said = new Map(); off = 0;
+    total = r?.coords?.length ? progressOn(r.coords, { lat: r.coords.at(-1)[0], lng: r.coords.at(-1)[1] }).s : 0; onProgress?.(null);
     const raw = r?.steps?.length ? r.steps : r ? turnsFromGeometry(r.coords) : [];
     steps = raw.filter(s => s.type !== 'depart').map(s => ({ ...s, s: progressOn(r.coords, s).s }));
   }
@@ -85,6 +86,7 @@ export function createGuide({ el, getVoice, onOffRoute }) {
   async function update(user) {
     if (!route || !user) { el.hidden = true; return; }
     const p = progressOn(route.coords, user);
+    if (onProgress && total > 0) { const remain = Math.max(0, total - p.s); onProgress({ remain, dur: (route.duration || 0) * remain / total }); }
     // ¿Fuera de la ruta? Muy lejos (más de ~2,5 veces el margen) = al instante; cerca del margen = 2 lecturas seguidas
     // (así un salto del GPS no recalcula por gusto). El margen es 35 m, o más si el GPS es impreciso.
     const tol = Math.max(35, (user.accuracy || 0) * 1.5);

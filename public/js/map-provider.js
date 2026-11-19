@@ -48,7 +48,7 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
 
   /* ---- Vista de conducción 3D (como Google Maps): el mapa se inclina, gira según el rumbo y sigue al vehículo ---- */
   const wrap = el.parentElement;
-  const dv = { active: false, tilt: 55, northUp: false, hdg: 0, rot: 0, manualUntil: 0, zoomBase: 18 };
+  const dv = { active: false, tilt: 45, northUp: false, hdg: 0, rot: 0, manualUntil: 0, zoomBase: 18 };
   const dvVars = () => {
     const k = Math.cos(dv.tilt * Math.PI / 180);
     wrap.style.setProperty('--rot', `${dv.rot}deg`); wrap.style.setProperty('--tilt', `${dv.tilt}deg`);
@@ -83,7 +83,7 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
       map.dragging.disable(); map.options.touchZoom = 'center'; map.options.scrollWheelZoom = 'center'; map.options.doubleClickZoom = 'center';
       map.touchZoom.disable(); map.touchZoom.enable(); map.scrollWheelZoom.disable(); map.scrollWheelZoom.enable();
       map.invalidateSize({ animate: false });
-      const z0 = Math.max(map.getZoom(), 17);
+      const z0 = Math.min(17, Math.max(map.getZoom(), 16));
       map.setView([c.lat ?? c[0], c.lng ?? c[1]], z0, { animate: false });
       dv.lat = dv.tLat = c.lat ?? c[0]; dv.lng = dv.tLng = c.lng ?? c[1]; dv.tZ = z0; dv.ext = false; dv.lean = 0; dv.last = 0;
       dv.raf = requestAnimationFrame(dvLoop);
@@ -105,10 +105,10 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
       dv.pt = { lat: u.lat, lng: u.lng, t: now };
       const v = (sp ?? 0) * 3.6; dv.speed = v;
       wrap.classList.toggle('drive-moving', v > 2);
-      if (Date.now() > dv.manualUntil && !dv.ext) dv.tZ = v > 70 ? 16 : v > 45 ? 17 : 18;
+      if (Date.now() > dv.manualUntil && !dv.ext) dv.tZ = v > 70 ? 15 : v > 45 ? 16 : 17;
     },
     zoom(dz) { dv.manualUntil = Date.now() + 25000; dv.tZ = Math.max(13, Math.min(19, Math.round(map.getZoom()) + dz)); },
-    toggleTilt() { dv.tilt = dv.tilt ? 0 : 55; dvVars(); return dv.tilt; },
+    toggleTilt() { dv.tilt = dv.tilt ? 0 : 45; dvVars(); return dv.tilt; },
     toggleNorth() { dv.northUp = !dv.northUp; dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars(); return dv.northUp; },
   };
   return {
