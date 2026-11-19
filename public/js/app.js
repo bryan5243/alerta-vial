@@ -491,27 +491,42 @@ load().catch(err => { console.error(err); toast('No se pudo cargar la informaci�
 setInterval(() => load().catch(() => {}), 60000);
 
 // Avisos de lluvia y tormenta (notificaciones push)
-const pushBtn = $('#btn-push');
+const pushBtn = $('#btn-push'), tip = $('#push-tip');
 const pushOk = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && window.isSecureContext;
 const b64 = k => Uint8Array.from(atob(k.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
 async function pushSub() { const reg = await navigator.serviceWorker.ready; return reg.pushManager.getSubscription(); }
-async function pushRefresh() { const on = !!(await pushSub().catch(() => null)) && Notification.permission === 'granted'; pushBtn.setAttribute('aria-pressed', on); pushBtn.title = on ? 'Avisos activados (toca para desactivar)' : 'Activar avisos de lluvia y tormenta'; }
+async function pushRefresh() {
+  const on = !!(await pushSub().catch(() => null)) && Notification.permission === 'granted';
+  pushBtn.setAttribute('aria-pressed', on);
+  pushBtn.setAttribute('aria-label', on ? 'Avisos activados. Toca para desactivar' : 'Activar avisos de lluvia y tormenta');
+  pushBtn.title = on ? 'Avisos activados (toca para desactivar)' : 'Activar avisos de lluvia y tormenta';
+  if (on) tip.hidden = true;
+  return on;
+}
+async function pushToggle() {
+  try {
+    const cur = await pushSub();
+    if (cur) { await fetch('/api/public/push-unsubscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ endpoint: cur.endpoint }) }); await cur.unsubscribe(); toast('Avisos desactivados', 'ok'); return pushRefresh(); }
+    if (Notification.permission === 'denied') return toast('Las notificaciones están bloqueadas: permítelas en los ajustes del navegador.', 'err');
+    if (await Notification.requestPermission() !== 'granted') return toast('Sin permiso no podemos avisarte. Puedes activarlo cuando quieras con la campana.', 'err');
+    const { key } = await (await fetch('/api/public/push-key')).json();
+    const sub = await (await navigator.serviceWorker.ready).pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(key) });
+    const r = await fetch('/api/public/push-subscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subscription: sub.toJSON() }) });
+    if (!r.ok) throw new Error('subscribe');
+    toast('Avisos activados: te avisaremos si hay tormenta o se acerca lluvia.', 'ok'); pushRefresh();
+  } catch { toast('No se pudieron activar los avisos en este navegador.', 'err'); }
+}
 if (pushOk) {
-  pushBtn.hidden = false; pushBtn.innerHTML = ICON.bell || ICON.info; pushRefresh();
-  pushBtn.addEventListener('click', async () => {
-    try {
-      const cur = await pushSub();
-      if (cur) { await fetch('/api/public/push-unsubscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ endpoint: cur.endpoint }) }); await cur.unsubscribe(); toast('Avisos desactivados', 'ok'); return pushRefresh(); }
-      if (await Notification.requestPermission() !== 'granted') return toast('Permite las notificaciones en tu navegador para recibir avisos.', 'err');
-      const { key } = await (await fetch('/api/public/push-key')).json();
-      const sub = await (await navigator.serviceWorker.ready).pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(key) });
-      const r = await fetch('/api/public/push-subscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subscription: sub.toJSON() }) });
-      if (!r.ok) throw new Error('subscribe');
-      toast('Listo: te avisaremos si hay tormenta o se acerca lluvia.', 'ok'); pushRefresh();
-    } catch { toast('No se pudieron activar los avisos en este navegador.', 'err'); }
+  pushBtn.hidden = false; pushBtn.innerHTML = ICON.bell; $('#pt-ic').innerHTML = ICON.bell;
+  pushBtn.addEventListener('click', pushToggle);
+  $('#pt-yes').addEventListener('click', () => { tip.hidden = true; pushToggle(); });
+  $('#pt-no').addEventListener('click', () => { tip.hidden = true; try { localStorage.setItem('av_push_no', String(Date.now())); } catch {} });
+  // Sugerencia: si aún no están activados (y no los rechazó hace poco), se ofrece una vez al abrir
+  pushRefresh().then(on => {
+    let no = 0; try { no = +localStorage.getItem('av_push_no') || 0; } catch {}
+    if (!on && Notification.permission === 'default' && Date.now() - no > 7 * 864e5) setTimeout(() => { if (pushBtn.getAttribute('aria-pressed') !== 'true') tip.hidden = false; }, 4000);
   });
 }
-
 // Pronóstico de ayer, hoy y los próximos 2 días (se pide aparte y se guarda 30 min en el servidor)
 let daysData = null;
 async function loadDays() {
