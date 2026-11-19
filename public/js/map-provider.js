@@ -32,7 +32,7 @@ function leafletMap({ el, center, zoom }) {
   L.control.scale({ position: 'bottomleft', metric: true, imperial: false, maxWidth: 110 }).addTo(map); // la barra de 100 m aparece en el zoom 18
   // Mapa base: OpenStreetMap oficial (gratis, sin API key).
   const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, maxNativeZoom: 19, detectRetina: true, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19, maxNativeZoom: 19, detectRetina: true, crossOrigin: true, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   }).addTo(map);
   // Aviso cuando los tiles no cargan (sin internet)
   const fb = document.createElement('div'); fb.className = 'map-fallback'; fb.textContent = 'Sin conexión al mapa base. Las capas de alerta siguen visibles.';

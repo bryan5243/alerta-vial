@@ -2,7 +2,7 @@
 // - La página, estilos y scripts se guardan al instalar y se actualizan cada vez que hay red.
 // - Los cuadros del mapa (OpenStreetMap) que ya viste quedan guardados para verlos sin conexión.
 // - Los datos (calles, zonas, vías alternas) los guarda la propia página en el teléfono.
-const VER = 'av-shell-v38', TILES = 'av-tiles-v2', MAX_TILES = 1500;
+const VER = 'av-shell-v39', TILES = 'av-tiles-v3', MAX_TILES = 1500;
 const SHELL = ['/', '/css/app.css', '/js/app.js', '/js/common.js', '/js/gps.js', '/js/nav.js', '/js/map-provider.js', '/js/weather-fx.js', '/js/guide.js',
   '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css', '/img/emovtt-logo.png', '/img/emovtt-logo-blanco.png', '/manifest.webmanifest', '/img/icons/icon-192.png'];
 
@@ -34,15 +34,22 @@ async function shell(req, url) {
   }
 }
 
-// Cuadros del mapa: si ya está guardado se usa sin gastar datos; si no, se descarga y se guarda.
+// Cuadros del mapa: si ya está guardado (y tiene menos de 3 días) se usa sin gastar datos; si es más viejo se pide de nuevo
+// y solo si no hay señal se usa el guardado. Solo se guardan respuestas correctas (nunca cuadros de error).
+const TILE_AGE = 3 * 24 * 3600 * 1000;
 async function tile(req) {
   const cache = await caches.open(TILES);
-  const hit = await cache.match(req); if (hit) return hit;
+  const hit = await cache.match(req);
+  const age = hit ? Date.now() - (+hit.headers.get('x-cached-at') || 0) : Infinity;
+  if (hit && age < TILE_AGE) return hit;
   try {
     const res = await fetch(req);
-    if (res.ok || res.type === 'opaque') { cache.put(req, res.clone()).then(() => trim(cache)); }
+    if (res.ok && res.type !== 'opaque') {
+      const blob = await res.clone().blob();
+      if (blob.size > 200) cache.put(req, new Response(blob, { headers: { 'content-type': res.headers.get('content-type') || 'image/png', 'x-cached-at': String(Date.now()) } })).then(() => trim(cache));
+    }
     return res;
-  } catch { return Response.error(); }
+  } catch { return hit || Response.error(); }
 }
 let trimming = false;
 async function trim(cache) {
