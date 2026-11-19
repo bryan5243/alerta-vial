@@ -112,7 +112,8 @@ function homeZoom() {
   const c = state?.config?.center, el = document.getElementById('map'); if (!c || !el) return Math.max(+state?.config?.zoom || 0, 16);
   const w = el.clientWidth, h = el.clientHeight, appNav = document.documentElement.classList.contains('app-nav');
   const avail = Math.min(w - 24, h - (appNav ? 150 : 90)); if (!(avail > 80)) return 15;
-  const mpp = HOME_RADIUS() * 2 / avail; // metros por píxel necesarios
+  // En el teléfono la barra de escala abre marcando 1 km (≈1/3 del ancho); en pantallas grandes, 1 km de radio
+  const mpp = w <= 900 ? HOME_RADIUS() / Math.max(100, Math.min(140, w * .32)) : HOME_RADIUS() * 2 / avail;
   return Math.max(12, Math.min(18, Math.log2(156543.03 * Math.cos(c.lat * Math.PI / 180) / mpp)));
 }
 const goHome = () => { const c = state?.config?.center; if (c && map) map.setCenter(c, homeZoom()); };

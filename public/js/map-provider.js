@@ -35,7 +35,7 @@ const BASES = {
 function leafletMap({ el, center, zoom, style = 'osm' }) {
   const map = L.map(el, { zoomControl: false, attributionControl: true, zoomSnap: 1, zoomDelta: 1, wheelPxPerZoomLevel: 90 }).setView([center.lat, center.lng], zoom);
   L.control.zoom({ position: 'bottomright' }).addTo(map);
-  L.control.scale({ position: 'bottomleft', metric: true, imperial: false, maxWidth: 110 }).addTo(map); // la barra de 100 m aparece en el zoom 18
+  L.control.scale({ position: 'bottomleft', metric: true, imperial: false, maxWidth: 150 }).addTo(map); // la barra de 100 m aparece en el zoom 18
   // Mapa base: OpenStreetMap oficial (gratis, sin API key).
   const B = BASES[style] || BASES.osm;
   const tiles = L.tileLayer(B.url, { maxZoom: B.max, maxNativeZoom: B.max, detectRetina: true, crossOrigin: B.cors, subdomains: 'abc', attribution: B.attr }).addTo(map);
