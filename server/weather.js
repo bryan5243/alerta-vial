@@ -461,9 +461,37 @@ let daysCache = { at: 0, key: '', data: null };
 const WMO_TXT = { 0: 'Despejado', 1: 'Mayormente despejado', 2: 'Parcialmente nublado', 3: 'Nublado', 45: 'Neblina', 48: 'Neblina', 51: 'Llovizna', 53: 'Llovizna', 55: 'Llovizna intensa',
   56: 'Llovizna', 57: 'Llovizna', 61: 'Lluvia leve', 63: 'Lluvia moderada', 65: 'Lluvia fuerte', 66: 'Lluvia leve', 67: 'Lluvia fuerte', 80: 'Chubascos leves', 81: 'Chubascos', 82: 'Chubascos fuertes',
   95: 'Tormenta', 96: 'Tormenta con granizo', 99: 'Tormenta con granizo' };
+// Respaldo: MET Norway (yr.no) agrupado por día local (Ecuador, UTC-5). No trae ayer.
+async function daysFromMetno({ lat, lng }) {
+  let res;
+  try { res = await fetch(`https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=${(+lat).toFixed(4)}&lon=${(+lng).toFixed(4)}`, { signal: AbortSignal.timeout(9000), headers: METNO_UA }); }
+  catch { throw new Error('sin conexión'); }
+  if (!res.ok) throw new Error(`respondió con error ${res.status}`);
+  const ts = (await res.json())?.properties?.timeseries || [];
+  const byDay = new Map();
+  for (const x of ts) {
+    const d = new Date(new Date(x.time).getTime() - 5 * 3600e3), date = d.toISOString().slice(0, 10), hr = d.getUTCHours();
+    const o = byDay.get(date) || { date, t: [], mm: 0, prob: null, sym: '', symHr: 99 };
+    const det = x.data?.instant?.details || {};
+    if (det.air_temperature != null) o.t.push(det.air_temperature);
+    const n1 = x.data?.next_1_hours, n6 = x.data?.next_6_hours;
+    // lluvia: por hora mientras haya; si no, por bloques de 6 h (solo en horas 0, 6, 12, 18 para no repetir)
+    if (n1) o.mm += n1.details?.precipitation_amount ?? 0; else if (n6 && hr % 6 === 0) o.mm += n6.details?.precipitation_amount ?? 0;
+    const pr = (n1 || n6)?.details?.probability_of_precipitation; if (pr != null) o.prob = Math.max(o.prob ?? 0, pr);
+    const sym = (n6 || n1)?.summary?.symbol_code; if (sym && Math.abs(hr - 13) < o.symHr) { o.sym = sym; o.symHr = Math.abs(hr - 13); }
+    byDay.set(date, o);
+  }
+  const dates = [...byDay.keys()].sort();
+  const today = new Date(Date.now() - 5 * 3600e3).toISOString().slice(0, 10);
+  const mk = (date, rel) => { const o = byDay.get(date); if (!o) return { date, rel, na: true, text: '' };
+    const code = METNO_CODE(o.sym); return { date, rel, code, text: WMO_TXT[code] || '', tMax: o.t.length ? Math.max(...o.t) : null, tMin: o.t.length ? Math.min(...o.t) : null, mm: r1(o.mm), prob: o.prob, partial: date === dates[0] }; };
+  const day = k => new Date(new Date(today + 'T12:00:00Z').getTime() + k * 864e5).toISOString().slice(0, 10);
+  return [mk(day(-1), -1), mk(day(0), 0), mk(day(1), 1), mk(day(2), 2)];
+}
 export async function getDays({ lat, lng }) {
   const key = `${lat},${lng}`;
   if (daysCache.data && daysCache.key === key && Date.now() - daysCache.at < 30 * 60 * 1000) return daysCache.data;
+  const errs = [];
   try {
     const url = new URL('https://api.open-meteo.com/v1/forecast');
     url.search = new URLSearchParams({ latitude: lat, longitude: lng, timezone: 'America/Guayaquil', past_days: 1, forecast_days: 3,
@@ -476,8 +504,12 @@ export async function getDays({ lat, lng }) {
       prob: D.precipitation_probability_max?.[i] ?? null, hours: D.precipitation_hours?.[i] ?? null }));
     daysCache = { at: Date.now(), key, data: { ok: true, source: 'Open-Meteo', days } };
     return daysCache.data;
-  } catch (e) {
-    if (daysCache.data && daysCache.key === key) return { ...daysCache.data, stale: true };
-    return { ok: false, error: e.message, days: [] };
-  }
+  } catch (e) { errs.push(`Open-Meteo: ${e.message}`); }
+  try {
+    const days = await daysFromMetno({ lat, lng });
+    daysCache = { at: Date.now() - 20 * 60 * 1000, key, data: { ok: true, source: 'MET Norway (yr.no)', days } }; // se reintenta Open-Meteo en 10 min
+    return daysCache.data;
+  } catch (e) { errs.push(`MET Norway: ${e.message}`); }
+  if (daysCache.data && daysCache.key === key) return { ...daysCache.data, stale: true };
+  return { ok: false, error: errs.join(' · '), days: [] };
 }

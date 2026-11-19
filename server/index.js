@@ -27,7 +27,8 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const app = express();
 app.set('trust proxy', 1); // detrás del proxy de Render/cPanel: IP real para el límite de reportes
 app.use(express.json({ limit: '25mb' })); // capas GeoJSON pueden ser grandes
-app.use(express.static(path.join(__dirname, '..', 'public')));
+// no-cache: el navegador revalida siempre (usa ETag), así nadie se queda con archivos viejos tras una actualización
+app.use(express.static(path.join(__dirname, '..', 'public'), { setHeaders: (res, f) => { if (/\.(html|js|css|webmanifest)$/.test(f)) res.setHeader('Cache-Control', 'no-cache'); } }));
 
 seedIfEmpty();
 

@@ -108,11 +108,12 @@ const WD = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 export function daysCards(d) {
   const head = '<div class="wx-days-h"><span class="wx-hours-t">Ayer, hoy y los próximos 2 días</span><span class="wx-hours-k">pronóstico</span></div>';
   if (!d) return `${head}<p class="wx-days-msg">Cargando el pronóstico…</p>`;
-  if (!d.ok || !d.days?.length) return `${head}<p class="wx-days-msg">No se pudo cargar el pronóstico por días. <button type="button" class="linklike" data-days-retry>Reintentar</button></p>`;
+  if (!d.ok || !d.days?.length) return `${head}<p class="wx-days-msg">No se pudo cargar el pronóstico por días${d.error ? ` <small>(${esc(d.error)})</small>` : ''}. <button type="button" class="linklike" data-days-retry>Reintentar</button></p>`;
   const lab = x => x.rel === -1 ? 'Ayer' : x.rel === 0 ? 'Hoy' : x.rel === 1 ? 'Mañana' : WD[new Date(x.date + 'T12:00:00').getDay()];
-  return `<div class="wx-days-h"><span class="wx-hours-t">Ayer, hoy y los próximos 2 días</span><span class="wx-hours-k">${d.stale ? 'dato guardado' : 'Open-Meteo'}</span></div>
+  return `<div class="wx-days-h"><span class="wx-hours-t">Ayer, hoy y los próximos 2 días</span><span class="wx-hours-k">${d.stale ? 'dato guardado' : esc(d.source || 'Open-Meteo')}</span></div>
     <div class="wx-days-g" role="list">${d.days.map(x => {
     const p = x.prob == null ? null : Math.round(x.prob), past = x.rel < 0;
+    if (x.na) return `<div class="wd past" role="listitem"><span class="wd-l">${lab(x)}</span><span class="wd-t">Sin dato</span><span class="wd-r">no disponible</span></div>`;
     const wet = past ? x.mm >= 1 : (p ?? 0) >= 80 || x.mm >= 5;
     return `<div class="wd${x.rel === 0 ? ' today' : ''}${past ? ' past' : ''}${wet ? ' wet' : ''}" role="listitem" aria-label="${lab(x)}: ${x.text}, ${past ? 'llovió' : 'lluvia'} ${dec(x.mm)} mm${p == null || past ? '' : `, probabilidad ${p} %`}">
       <span class="wd-l">${lab(x)}</span><span class="wd-t">${x.text || '–'}</span>
