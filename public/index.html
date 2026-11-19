@@ -112,9 +112,21 @@
     .fab{left:10px;bottom:12px;padding:10px 14px;border-radius:999px;font-size:.9rem;gap:6px}
     .fab .fab-ic svg{width:18px;height:18px;display:block}
     @media (max-width:420px){ .fab .fab-t{font-size:.85rem} }
-    .photo-pick{display:flex;align-items:center;justify-content:center;gap:10px;min-height:88px;border:2px dashed var(--line,#C9D3DF);border-radius:14px;padding:10px;cursor:pointer;text-align:center;color:var(--muted,#5A6B7D);font-weight:600;overflow:hidden}
-    .photo-pick img{max-width:100%;max-height:180px;border-radius:10px;display:block}
-    .photo-pick.bad{border-color:#C62E2E}
+    .req{color:#C62E2E;font-weight:700;font-size:.8em;text-transform:uppercase;letter-spacing:.04em;margin-left:4px}
+    .photo{border:2px dashed #8FA3BC;border-radius:16px;background:rgb(27 43 139/.04);overflow:hidden;transition:border-color .2s}
+    .photo.bad{border-color:#C62E2E;background:rgb(198 46 46/.06)}
+    .photo.has{border-style:solid;border-color:var(--line,#DDE3EA);background:var(--surface,#fff)}
+    .photo-empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 12px;text-align:center}
+    .photo [hidden]{display:none!important}
+    .photo .photo-ic{width:40px;height:40px;stroke:var(--brand,#1B2B8B);fill:none;stroke-width:1.6}
+    .photo-t{margin:0;font-weight:600;color:var(--ink,#0F2238)}
+    .photo-btns{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:6px;width:100%}
+    .photo-btns .btn{flex:1 1 140px;justify-content:center;cursor:pointer;min-height:44px}
+    .photo-btns .photo-main{background:var(--brand,#1B2B8B);color:#fff!important;border-color:transparent;box-shadow:0 6px 16px rgb(27 43 139/.28)}
+    .photo-view{position:relative}
+    .photo-view img{display:block;width:100%;aspect-ratio:4/3;max-height:min(36dvh,240px);object-fit:cover;background:#E8EEF5}
+    .photo-acts{position:absolute;right:8px;bottom:8px;display:flex;gap:6px}
+    .photo-acts .btn{background:rgb(255 255 255/.94);backdrop-filter:blur(6px);cursor:pointer}
     #btn-push[aria-pressed=true]{background:var(--brand,#1B2B8B);color:#fff;border-color:transparent}
     #btn-full{display:inline-flex}
     .map-full .mapwrap{position:fixed;inset:0;height:100dvh;z-index:1300;top:0}
@@ -335,9 +347,20 @@
     <div class="field"><label for="r-level">Qué tan grave es</label>
       <select id="r-level"><option value="leve">Leve · charcos, se puede pasar</option><option value="moderado" selected>Moderado · agua a media llanta</option><option value="grave">Grave · no se puede pasar</option></select></div>
     <div class="field"><label for="r-desc">Qué está pasando</label><textarea id="r-desc" maxlength="400" placeholder="Ej. El agua cubre la vereda frente al parque y el bus no pasa."></textarea><span class="err" id="r-err"></span></div>
-    <div class="field"><span class="lbl">Fotografía <b style="color:var(--roja,#C62E2E)">(obligatoria)</b></span>
-      <label class="photo-pick" for="r-photo" id="r-photo-box"><img id="r-photo-prev" alt="" hidden><span id="r-photo-txt">Toma o elige una foto del lugar</span></label>
-      <input id="r-photo" type="file" accept="image/*" capture="environment" hidden><span class="err" id="r-photo-err"></span></div>
+    <div class="field"><span class="lbl">Fotografía <b class="req">obligatoria</b></span>
+      <div class="photo" id="r-photo-box">
+        <div class="photo-empty" id="r-photo-empty">
+          <svg class="i photo-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.6-2.4h6.8L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.2" r="3.6"/></svg>
+          <p class="photo-t">Agrega una foto del lugar</p>
+          <div class="photo-btns"><label class="btn photo-main" for="r-photo-cam">Tomar foto</label><label class="btn ghost" for="r-photo-gal">Elegir de la galería</label></div>
+        </div>
+        <div class="photo-view" id="r-photo-view" hidden>
+          <img id="r-photo-prev" alt="Vista previa de la foto del reporte">
+          <div class="photo-acts"><label class="btn soft sm" for="r-photo-cam">Cambiar</label><button type="button" class="btn ghost sm" id="r-photo-del">Quitar</button></div>
+        </div>
+      </div>
+      <input id="r-photo-cam" type="file" accept="image/*" capture="environment" hidden><input id="r-photo-gal" type="file" accept="image/*" hidden>
+      <span class="err" id="r-photo-err"></span></div>
     <p class="small muted" id="r-coords" style="margin-bottom:14px"></p>
     <div style="display:flex;gap:10px;justify-content:flex-end"><button type="button" class="btn ghost" id="r-cancel">Cancelar</button><button type="submit" class="btn">Enviar reporte</button></div>
   </form>

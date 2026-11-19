@@ -460,8 +460,9 @@ $('#r-cancel').addEventListener('click', closeSheet);
 $('#sheet-bg').addEventListener('click', e => { if (e.target === e.currentTarget) closeSheet(); });
 // Foto del reporte: se reduce en el teléfono (máx. 1280 px, JPEG) para que suba rápido con datos móviles.
 let photoData = null;
-function clearPhoto() { photoData = null; const i = $('#r-photo'); if (i) i.value = ''; $('#r-photo-prev').hidden = true; $('#r-photo-txt').hidden = false; $('#r-photo-err').textContent = ''; $('#r-photo-box').classList.remove('bad'); }
-$('#r-photo').addEventListener('change', async e => {
+function showPhoto(on) { $('#r-photo-view').hidden = !on; $('#r-photo-empty').hidden = on; $('#r-photo-box').classList.toggle('has', on); }
+function clearPhoto() { photoData = null; $('#r-photo-cam').value = ''; $('#r-photo-gal').value = ''; $('#r-photo-prev').removeAttribute('src'); showPhoto(false); $('#r-photo-err').textContent = ''; $('#r-photo-box').classList.remove('bad'); }
+async function onPhoto(e) {
   const f = e.target.files[0]; if (!f) return;
   try {
     const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' });
@@ -469,10 +470,13 @@ $('#r-photo').addEventListener('change', async e => {
     const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
     c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
     photoData = c.toDataURL('image/jpeg', 0.72);
-    $('#r-photo-prev').src = photoData; $('#r-photo-prev').hidden = false; $('#r-photo-txt').hidden = true;
+    $('#r-photo-prev').src = photoData; showPhoto(true);
     $('#r-photo-err').textContent = ''; $('#r-photo-box').classList.remove('bad');
-  } catch { photoData = null; $('#r-photo-err').textContent = 'No se pudo leer esa imagen. Prueba con otra foto.'; }
-});
+  } catch { photoData = null; showPhoto(false); $('#r-photo-err').textContent = 'No se pudo leer esa imagen. Prueba con otra foto.'; }
+  e.target.value = '';
+}
+$('#r-photo-cam').addEventListener('change', onPhoto); $('#r-photo-gal').addEventListener('change', onPhoto);
+$('#r-photo-del').addEventListener('click', clearPhoto);
 $('#report-form').addEventListener('submit', async e => {
   e.preventDefault(); $('#r-err').textContent = '';
   if (!photoData) { $('#r-photo-err').textContent = 'Agrega una fotografía: es obligatoria para comprobar el reporte.'; $('#r-photo-box').classList.add('bad'); return; }
