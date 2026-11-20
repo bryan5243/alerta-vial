@@ -492,32 +492,55 @@
 
 <div class="push-tip" id="push-tip" role="dialog" aria-label="Activar avisos" hidden><span class="pt-ic" id="pt-ic"></span><div class="pt-t"><b>¿Quieres que te avisemos?</b>Te notificamos si se aproxima lluvia o hay tormenta.</div><div class="pt-b"><button type="button" class="btn sm" id="pt-yes">Activar</button><button type="button" class="btn ghost sm" id="pt-no">Ahora no</button></div></div>
 <div class="sheet-bg" id="sheet-bg">
-  <form class="sheet" id="report-form" novalidate>
+  <form class="sheet rep" id="report-form" novalidate role="dialog" aria-modal="true" aria-labelledby="r-title">
     <div class="grab"></div>
-    <h2 style="margin-bottom:4px" id="r-title">Reportar inundación</h2>
-    <p class="muted small" style="margin-bottom:16px">Tu reporte lo revisa el equipo municipal antes de publicarse en el mapa.</p>
-    <div class="field"><span class="lbl">Qué quieres reportar</span>
-      <div class="seg r-type" role="radiogroup"><button type="button" class="on" data-rtype="inundacion" aria-pressed="true">Calle inundada</button><button type="button" data-rtype="desborde" aria-pressed="false">Desborde de río</button></div></div>
-    <div class="field"><label for="r-street">Calle o sector</label><input id="r-street" placeholder="Ej. Av. Quito y Colón" maxlength="120"></div>
-    <div class="field"><label for="r-level">Qué tan grave es</label>
-      <select id="r-level"><option value="leve">Leve · charcos, se puede pasar</option><option value="moderado" selected>Moderado · agua a media llanta</option><option value="grave">Grave · no se puede pasar</option></select></div>
-    <div class="field"><label for="r-desc">Qué está pasando</label><textarea id="r-desc" maxlength="400" placeholder="Ej. El agua cubre la vereda frente al parque y el bus no pasa."></textarea><span class="err" id="r-err"></span></div>
-    <div class="field"><span class="lbl">Fotografía <b class="req">obligatoria</b></span>
-      <div class="photo" id="r-photo-box">
-        <div class="photo-empty" id="r-photo-empty">
-          <svg class="i photo-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.6-2.4h6.8L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.2" r="3.6"/></svg>
-          <p class="photo-t">Agrega una foto del lugar</p>
-          <div class="photo-btns"><label class="btn photo-main" for="r-photo-cam">Tomar foto</label><label class="btn ghost" for="r-photo-gal">Elegir de la galería</label></div>
+    <div class="r-head">
+      <div class="r-steps" id="r-steps" aria-hidden="true"><i class="on"></i><i></i><i></i></div>
+      <span class="r-count" id="r-count">Paso 1 de 3</span>
+      <h2 id="r-title">¿Dónde está el problema?</h2>
+      <p class="muted small" id="r-sub">Tu reporte lo revisa el equipo municipal antes de publicarse en el mapa.</p>
+    </div>
+    <div class="r-body">
+      <section class="r-pane on" data-pane="0">
+        <button type="button" class="r-big" id="r-loc-gps"><span class="r-bic" id="r-ic-gps" aria-hidden="true"></span><span><b>Estoy aquí</b><small>Usar mi ubicación actual (GPS)</small></span></button>
+        <button type="button" class="r-big" id="r-loc-map"><span class="r-bic" id="r-ic-map" aria-hidden="true"></span><span><b>Marcar en el mapa</b><small>Toca el lugar exacto</small></span></button>
+        <p class="err" id="r-loc-err"></p>
+      </section>
+      <section class="r-pane" data-pane="1">
+        <div class="r-loc-ok" id="r-coords"></div>
+        <span class="lbl">Qué quieres reportar</span>
+        <div class="r-cards" role="radiogroup" aria-label="Tipo de reporte">
+          <button type="button" class="r-card on" data-rtype="inundacion" aria-pressed="true"><span class="r-cic" id="r-ic-flood" aria-hidden="true"></span><b>Calle inundada</b><small>Agua en la vía</small></button>
+          <button type="button" class="r-card" data-rtype="desborde" aria-pressed="false"><span class="r-cic" id="r-ic-river" aria-hidden="true"></span><b>Desborde de río</b><small>Agua fuera del cauce</small></button>
         </div>
-        <div class="photo-view" id="r-photo-view" hidden>
-          <img id="r-photo-prev" alt="Vista previa de la foto del reporte" style="display:block;width:100%;height:180px;max-height:30vh;object-fit:cover">
-          <div class="photo-acts"><label class="btn soft sm" for="r-photo-cam">Cambiar</label><button type="button" class="btn ghost sm" id="r-photo-del">Quitar</button></div>
+        <span class="lbl">Qué tan grave es</span>
+        <div class="r-lvls" role="radiogroup" aria-label="Gravedad">
+          <button type="button" class="r-lvl l1" data-lvl="leve" aria-pressed="false"><i></i><b>Leve</b><small>Charcos, se puede pasar</small></button>
+          <button type="button" class="r-lvl l2 on" data-lvl="moderado" aria-pressed="true"><i></i><b>Moderado</b><small>Agua a media llanta</small></button>
+          <button type="button" class="r-lvl l3" data-lvl="grave" aria-pressed="false"><i></i><b>Grave</b><small>No se puede pasar</small></button>
         </div>
-      </div>
-      <input id="r-photo-cam" type="file" accept="image/*" capture="environment" hidden><input id="r-photo-gal" type="file" accept="image/*" hidden>
-      <span class="err" id="r-photo-err"></span></div>
-    <p class="small muted" id="r-coords" style="margin-bottom:14px"></p>
-    <div style="display:flex;gap:10px;justify-content:flex-end"><button type="button" class="btn ghost" id="r-cancel">Cancelar</button><button type="submit" class="btn">Enviar reporte</button></div>
+        <select id="r-level" hidden><option value="leve">Leve</option><option value="moderado" selected>Moderado</option><option value="grave">Grave</option></select>
+      </section>
+      <section class="r-pane" data-pane="2">
+        <div class="field"><span class="lbl">Fotografía <b class="req">obligatoria</b></span>
+          <div class="photo" id="r-photo-box">
+            <div class="photo-empty" id="r-photo-empty">
+              <svg class="i photo-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.6-2.4h6.8L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.2" r="3.6"/></svg>
+              <p class="photo-t">Agrega una foto del lugar</p>
+              <div class="photo-btns"><label class="btn photo-main" for="r-photo-cam">Tomar foto</label><label class="btn ghost" for="r-photo-gal">Elegir de la galería</label></div>
+            </div>
+            <div class="photo-view" id="r-photo-view" hidden>
+              <img id="r-photo-prev" alt="Vista previa de la foto del reporte" style="display:block;width:100%;height:160px;max-height:26vh;object-fit:cover">
+              <div class="photo-acts"><label class="btn soft sm" for="r-photo-cam">Cambiar</label><button type="button" class="btn ghost sm" id="r-photo-del">Quitar</button></div>
+            </div>
+          </div>
+          <input id="r-photo-cam" type="file" accept="image/*" capture="environment" hidden><input id="r-photo-gal" type="file" accept="image/*" hidden>
+          <span class="err" id="r-photo-err"></span></div>
+        <div class="field"><label for="r-street">Calle o sector</label><input id="r-street" placeholder="Ej. Av. Quito y Colón" maxlength="120"></div>
+        <div class="field"><label for="r-desc">Qué está pasando</label><textarea id="r-desc" maxlength="400" rows="3" placeholder="Ej. El agua cubre la vereda frente al parque y el bus no pasa."></textarea><span class="err" id="r-err"></span></div>
+      </section>
+    </div>
+    <div class="r-foot"><button type="button" class="btn ghost" id="r-back">Cancelar</button><button type="button" class="btn" id="r-next" hidden>Siguiente</button><button type="submit" class="btn" id="r-send" hidden>Enviar reporte</button></div>
   </form>
 </div>
 

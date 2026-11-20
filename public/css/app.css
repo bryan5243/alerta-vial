@@ -762,3 +762,36 @@ button,a,.item,label.switch{-webkit-tap-highlight-color:transparent}
 .th-now.lv2{background:#ffe9d6} .th-now.lv2 i{background:#E36A17}
 .th-now.lv3{background:#fde0e0} .th-now.lv3 i{background:#C62E2E;animation:wxa2 1s infinite}
 @media (prefers-reduced-motion:reduce){.th-now.lv3 i{animation:none}}
+
+/* Reporte por pasos */
+.sheet.rep{max-height:min(92dvh,720px);display:flex;flex-direction:column;padding:16px 18px calc(14px + env(safe-area-inset-bottom));overflow:hidden}
+.rep .r-head{flex:none} .rep h2{font-size:1.25rem;margin:2px 0 4px} .rep .r-head p{margin:0 0 10px}
+.r-steps{display:flex;gap:6px;margin:2px 0 6px} .r-steps i{flex:1;height:5px;border-radius:4px;background:var(--surface-2);transition:background .3s} .r-steps i.on{background:var(--brand,#1B2B8B)}
+.r-count{font-size:.74rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.rep .r-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 2px 8px;-webkit-overflow-scrolling:touch}
+.r-pane{display:none;animation:rpane .28s var(--ease,ease)} .r-pane.on{display:block}
+@keyframes rpane{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
+.r-big{display:flex;align-items:center;gap:14px;width:100%;text-align:left;margin:0 0 10px;padding:16px;border:1.5px solid var(--line);border-radius:16px;background:var(--surface);font:inherit;color:var(--ink);cursor:pointer;transition:transform .15s,border-color .15s,background .15s}
+.r-big:active{transform:scale(.98)} .r-big:hover{border-color:var(--brand,#1B2B8B)}
+.r-big b{display:block;font-size:1rem} .r-big small{display:block;color:var(--muted);font-size:.84rem;margin-top:2px}
+.r-bic{flex:none;width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:color-mix(in srgb,var(--brand,#1B2B8B) 12%,transparent);color:var(--brand,#1B2B8B)} .r-bic svg{width:22px;height:22px}
+.r-big.busy{opacity:.6;pointer-events:none}
+.r-loc-ok{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:9px 12px;border-radius:12px;background:#e9f6ef;color:#1d6b45;font-size:.84rem;font-weight:600}
+.rep .lbl{display:block;font-size:.85rem;font-weight:700;margin:10px 0 8px;color:var(--ink)}
+.r-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.r-card{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:12px;border:1.5px solid var(--line);border-radius:14px;background:var(--surface);font:inherit;color:var(--ink);text-align:left;cursor:pointer;transition:all .15s}
+.r-card b{font-size:.95rem} .r-card small{color:var(--muted);font-size:.78rem} .r-cic{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;background:var(--surface-2);color:var(--brand,#1B2B8B);margin-bottom:4px} .r-cic svg{width:18px;height:18px}
+.r-card.on{border-color:var(--brand,#1B2B8B);background:color-mix(in srgb,var(--brand,#1B2B8B) 7%,var(--surface));box-shadow:0 0 0 2px color-mix(in srgb,var(--brand,#1B2B8B) 18%,transparent)}
+.r-lvls{display:grid;gap:8px}
+.r-lvl{display:grid;grid-template-columns:14px 1fr;column-gap:12px;align-items:center;padding:11px 14px;border:1.5px solid var(--line);border-radius:14px;background:var(--surface);font:inherit;color:var(--ink);text-align:left;cursor:pointer;transition:all .15s}
+.r-lvl i{grid-row:span 2;width:14px;height:14px;border-radius:50%;background:var(--c)} .r-lvl b{font-size:.95rem} .r-lvl small{color:var(--muted);font-size:.8rem}
+.r-lvl.l1{--c:#2A8C5A} .r-lvl.l2{--c:#E36A17} .r-lvl.l3{--c:#C62E2E}
+.r-lvl.on{border-color:var(--c);background:color-mix(in srgb,var(--c) 8%,var(--surface));box-shadow:0 0 0 2px color-mix(in srgb,var(--c) 22%,transparent)}
+.r-foot{flex:none;display:flex;gap:10px;justify-content:flex-end;padding-top:10px;border-top:1px solid var(--line)} .r-foot .btn{min-height:46px;flex:1} .r-foot .btn.ghost{flex:0 0 auto;min-width:96px}
+.rep .field{margin-bottom:12px}
+@media (prefers-reduced-motion:reduce){.r-pane{animation:none}}
+.r-foot [hidden]{display:none!important}
+body:has(#sheet-bg.open) .install,body:has(#sheet-bg.open) .push-tip,body:has(#plan-bg.open) .install{display:none!important}
+.r-lvls{grid-template-columns:repeat(3,1fr);gap:8px}
+.r-lvl{grid-template-columns:1fr;row-gap:2px;justify-items:start;padding:11px 10px}
+.r-lvl i{grid-row:auto;margin-bottom:4px} .r-lvl small{font-size:.74rem;line-height:1.25}

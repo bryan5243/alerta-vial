@@ -525,27 +525,60 @@ async function applyRadar() {
 }
 $('#btn-radar').addEventListener('click', () => { radarOn = !radarOn; $('#btn-radar').classList.toggle('on', radarOn); if (radarOn) applyRadar(); else { clearInterval(radarTimer); map.setRadar(null); } });
 
-// Reporte ciudadano
-$('#btn-report').addEventListener('click', () => { picking = true; $('#picking').classList.add('on'); if (isAppNav()) setSheet(false); else if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); });
-$('#pick-cancel').addEventListener('click', stopPick);
+// Reporte ciudadano, por pasos: 1) dónde  2) qué y qué tan grave  3) foto y detalles
+$('#r-ic-gps').innerHTML = ICON.nav; $('#r-ic-map').innerHTML = ICON.pin; $('#r-ic-flood').innerHTML = ICON.drop; $('#r-ic-river').innerHTML = ICON.wave;
+const R_TITLES = [['¿Dónde está el problema?', 'Tu reporte lo revisa el equipo municipal antes de publicarse en el mapa.'], ['¿Qué está pasando?', 'Elige el tipo de problema y qué tan grave es.'], ['Foto y detalles', 'La foto ayuda al equipo a comprobar el reporte.']];
+let rStep = 0;
+function repStep(n) {
+  rStep = n;
+  document.querySelectorAll('.r-pane').forEach(p => p.classList.toggle('on', +p.dataset.pane === n));
+  document.querySelectorAll('#r-steps i').forEach((i, k) => i.classList.toggle('on', k <= n));
+  $('#r-count').textContent = `Paso ${n + 1} de 3`; $('#r-title').textContent = R_TITLES[n][0]; $('#r-sub').textContent = R_TITLES[n][1];
+  $('#r-back').textContent = n === 0 ? 'Cancelar' : 'Atrás'; $('#r-next').hidden = n !== 1; $('#r-send').hidden = n !== 2;
+  $('#report-form .r-body').scrollTop = 0;
+}
+function openReport() {
+  pickPos = null; $('#r-loc-err').textContent = ''; repStep(0);
+  if (isAppNav()) setSheet(false);
+  $('#sheet-bg').classList.add('open');
+}
+function locationChosen(pos) {
+  pickPos = pos;
+  if (pickMarker) pickMarker.remove(); pickMarker = map.addMarker({ ...pos, cls: 'report', icon: 'report' });
+  $('#r-coords').innerHTML = `${ICON.pin}<span>Ubicación marcada · ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}</span>`;
+  $('#sheet-bg').classList.add('open'); repStep(1);
+}
+$('#btn-report').addEventListener('click', openReport);
+$('#r-loc-map').addEventListener('click', () => { $('#sheet-bg').classList.remove('open'); picking = true; $('#picking').classList.add('on'); if (!isAppNav() && window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); });
+$('#r-loc-gps').addEventListener('click', () => {
+  const b = $('#r-loc-gps'), err = $('#r-loc-err'); err.textContent = '';
+  if (!('geolocation' in navigator)) { err.textContent = 'Tu teléfono no permite usar el GPS aquí. Marca el lugar en el mapa.'; return; }
+  b.classList.add('busy'); b.querySelector('small').textContent = 'Buscando tu ubicación…';
+  navigator.geolocation.getCurrentPosition(p => { b.classList.remove('busy'); b.querySelector('small').textContent = 'Usar mi ubicación actual (GPS)'; const pos = { lat: p.coords.latitude, lng: p.coords.longitude }; map.panTo?.(pos); locationChosen(pos); },
+    () => { b.classList.remove('busy'); b.querySelector('small').textContent = 'Usar mi ubicación actual (GPS)'; err.textContent = 'No pudimos obtener tu ubicación. Revisa el permiso del GPS o marca el lugar en el mapa.'; },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 20000 });
+});
+$('#pick-cancel').addEventListener('click', () => { stopPick(); $('#sheet-bg').classList.add('open'); repStep(0); });
 function stopPick() { picking = false; $('#picking').classList.remove('on'); }
 function onMapClick(pos) {
   if (nav.onMapClick(pos)) return;
-  if (!picking) return; stopPick(); pickPos = pos;
-  if (pickMarker) pickMarker.remove(); pickMarker = map.addMarker({ ...pos, cls: 'report', icon: 'report' });
-  $('#r-coords').textContent = `Ubicación: ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
-  $('#sheet-bg').classList.add('open'); $('#r-street').focus();
+  if (!picking) return; stopPick(); locationChosen(pos);
 }
 let rType = 'inundacion';
 document.querySelectorAll('[data-rtype]').forEach(btn => btn.addEventListener('click', () => {
   rType = btn.dataset.rtype;
   document.querySelectorAll('[data-rtype]').forEach(x => { x.classList.toggle('on', x === btn); x.setAttribute('aria-pressed', x === btn); });
-  $('#r-title').textContent = rType === 'desborde' ? 'Reportar desborde de río' : 'Reportar calle inundada';
   $('#r-desc').placeholder = rType === 'desborde' ? 'Ej. El río se salió por la margen derecha y el agua llega a las casas.' : 'Ej. El agua cubre la vereda frente al parque y el bus no pasa.';
 }));
-const closeSheet = () => { clearPhoto(); $('#sheet-bg').classList.remove('open'); if (pickMarker) { pickMarker.remove(); pickMarker = null; } };
-$('#r-cancel').addEventListener('click', closeSheet);
+document.querySelectorAll('[data-lvl]').forEach(btn => btn.addEventListener('click', () => {
+  $('#r-level').value = btn.dataset.lvl;
+  document.querySelectorAll('[data-lvl]').forEach(x => { x.classList.toggle('on', x === btn); x.setAttribute('aria-pressed', x === btn); });
+}));
+$('#r-next').addEventListener('click', () => repStep(2));
+$('#r-back').addEventListener('click', () => { if (rStep === 0) closeSheet(); else repStep(rStep - 1); });
+const closeSheet = () => { clearPhoto(); stopPick(); $('#sheet-bg').classList.remove('open'); if (pickMarker) { pickMarker.remove(); pickMarker = null; } pickPos = null; };
 $('#sheet-bg').addEventListener('click', e => { if (e.target === e.currentTarget) closeSheet(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet-bg').classList.contains('open')) closeSheet(); });
 // Foto del reporte: se reduce en el teléfono (máx. 1280 px, JPEG) para que suba rápido con datos móviles.
 let photoData = null;
 function showPhoto(on) { $('#r-photo-view').hidden = !on; $('#r-photo-empty').hidden = on; $('#r-photo-box').classList.toggle('has', on); }
@@ -572,7 +605,7 @@ $('#report-form').addEventListener('submit', async e => {
   const r = await fetch('/api/public/reports', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const j = await r.json();
   if (!r.ok) { $('#r-err').textContent = j.error; return; }
-  closeSheet(); e.target.reset(); clearPhoto(); toast('Gracias. Tu reporte fue enviado y será revisado.', 'ok');
+  closeSheet(); e.target.reset(); clearPhoto(); document.querySelectorAll('[data-lvl]').forEach(x => { const on = x.dataset.lvl === 'moderado'; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on); }); toast('Gracias. Tu reporte fue enviado y será revisado.', 'ok');
 });
 
 load().catch(err => { console.error(err); toast('No se pudo cargar la información. Reintenta en unos segundos.', 'err'); });
