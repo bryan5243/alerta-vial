@@ -651,7 +651,7 @@ export async function getTide({ lat, lng }) {
 // Índice de riesgo 0–100 (inspirado en Amaru): combina varias señales independientes.
 //  lluvia actual 30 · pronóstico 24 h 25 · ríos 20 · reportes ciudadanos 15 · marea 10
 export function riskIndex({ weather: w, cfg, flood, reports = [], tide, rivers = [] }) {
-  const t = cfg.rainThresholdMm || 5, t3 = cfg.rainThresholdMm3h || 15;
+  const t = cfg.rainThresholdMm || 2.4, t3 = cfg.rainThresholdMm3h || 7;
   const clamp = x => Math.max(0, Math.min(1, x));
   const parts = [];
   const rainNow = w.ok ? clamp(Math.max(w.rainNow / (t * 3), w.rainPast3h / (t3 * 2), [0, 0.25, 0.5, 0.8, 1][w.intensity || 0])) : 0;
@@ -676,7 +676,7 @@ export function riskIndex({ weather: w, cfg, flood, reports = [], tide, rivers =
 // Nivel sugerido por el clima: normal | amarilla | naranja | roja
 export function levelFromWeather(w, cfg) {
   if (!w.ok) return 'normal';
-  const t = cfg.rainThresholdMm, t3 = cfg.rainThresholdMm3h, i = w.intensity || 0;
+  const t = +cfg.rainThresholdMm || 2.4, t3 = +cfg.rainThresholdMm3h || 7, i = w.intensity || 0;
   // Lo que inunda las calles no es solo la intensidad de ahora, sino cuánta agua cayó y por cuánto tiempo:
   // 6 h y 12 h de lluvia acumulada y horas seguidas lloviendo.
   const p3 = w.rainPast3h || 0, p6 = w.rainPast6h || 0, p12 = w.rainPast12h || 0, wet = w.wetHours || 0, raining = i >= 1;

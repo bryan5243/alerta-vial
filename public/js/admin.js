@@ -599,8 +599,8 @@ function secConfig() {
       <button class="btn">Guardar configuración</button></form></div>
     <div class="card"><h3 style="margin-bottom:12px">Clima automático (fuentes)</h3><form id="fw" novalidate>
       <div class="row"><div class="field"><label for="wlat">Estación · latitud</label><input id="wlat" type="number" step="any" value="${c.weather.lat}"></div><div class="field"><label for="wlng">Estación · longitud</label><input id="wlng" type="number" step="any" value="${c.weather.lng}"></div></div>
-      <div class="row"><div class="field"><label for="t1">Umbral lluvia (mm/h)</label><input id="t1" type="number" step="0.5" min="0" value="${c.weather.rainThresholdMm}"><span class="hint">Al superarlo: alerta naranja. El triple: roja.</span></div>
-      <div class="field"><label for="t3">Umbral acumulado 3 h (mm)</label><input id="t3" type="number" step="1" min="0" value="${c.weather.rainThresholdMm3h}"></div></div>
+      <div class="row"><div class="field"><label for="t1">Umbral lluvia (mm/h)</label><input id="t1" type="number" step="0.1" min="0" value="${c.weather.rainThresholdMm}"><span class="hint">Al superarlo: alerta naranja. El triple: roja.</span></div>
+      <div class="field"><label for="t3">Umbral acumulado 3 h (mm)</label><input id="t3" type="number" step="0.5" min="0" value="${c.weather.rainThresholdMm3h}"></div></div>
       <div class="row"><div class="field"><label for="metar">Estación del aeropuerto (código OACI)</label><input id="metar" maxlength="4" value="${esc(c.weather.metarStation ?? 'SERO')}" placeholder="SERO"><span class="hint">SERO = aeropuerto de Santa Rosa. Envía reportes reales (METAR) cuando está operando. Déjalo vacío para no usarlo.</span></div>
       <div class="field"><label for="owm">OpenWeatherMap API key (opcional)</label><input id="owm" value="${esc(c.weather.owmKey || '')}" placeholder="Gratis en openweathermap.org"><span class="hint">Suma otra fuente. Crea una cuenta gratuita en openweathermap.org, copia tu API key y pégala aquí (tarda hasta 2 h en activarse).</span></div></div>
       <button class="btn">Guardar clima</button></form></div>
