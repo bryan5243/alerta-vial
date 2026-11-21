@@ -568,14 +568,16 @@ async function suggestStreets(pos) {
     box.querySelectorAll('[data-sec]').forEach(b => b.onclick = () => { const i = $('#r-street'), v = i.value.trim(); if (!v.includes(b.dataset.sec)) i.value = v ? `${v} · Sector ${b.dataset.sec}` : `Sector ${b.dataset.sec}`; });
   };
   paint(local, '', true);
-  try {
-    const r = await nearStreets(pos.lat, pos.lng); if (my !== sugSeq) return;
+  // Se completa solo (la persona puede cambiarlo): intersección más cercana y sector
+  const fill = (r, loading) => {
+    if (my !== sugSeq) return;
     const st = r.streets.map(s => s.name), inter = st.length >= 2 ? [`${st[0]} y ${st[1]}`] : [];
-    paint([...inter, ...st, ...local], r.sector, false);
-    // Se completa solo (la persona puede cambiarlo): intersección más cercana y sector
+    paint([...inter, ...st, ...local], r.sector, loading);
     const inp = $('#r-street'), auto = inter[0] || st[0] || local[0] || '';
     if (!inp.value.trim() || inp.dataset.auto === '1') { inp.value = [auto, r.sector && `Sector ${r.sector}`].filter(Boolean).join(' · '); inp.dataset.auto = inp.value ? '1' : ''; }
-  } catch { if (my === sugSeq) paint(local, '', false); }
+  };
+  try { fill(await nearStreets(pos.lat, pos.lng, q => fill(q, true)), false); }
+  catch { if (my === sugSeq) paint(local, '', false); }
 }
 $('#btn-report').addEventListener('click', openReport);
 $('#r-loc-map').addEventListener('click', () => { $('#sheet-bg').classList.remove('open'); picking = true; $('#picking').classList.add('on'); if (!isAppNav() && window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); });
