@@ -2,6 +2,7 @@ import { createMap } from './map-provider.js';
 import { createGps, nearestOnLine, haversine, progressOn, isAhead } from './gps.js';
 import { createNav, setNoCar } from './nav.js';
 import { createWeatherFx } from './weather-fx.js';
+import { nearStreets } from './near-streets.js';
 import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, wxTime, toast, ICON, waveSvg, edgeFade, dec, rainHours, daysCards } from './common.js';
 
 const $ = s => document.querySelector(s);
@@ -546,7 +547,33 @@ function locationChosen(pos) {
   pickPos = pos;
   if (pickMarker) pickMarker.remove(); pickMarker = map.addMarker({ ...pos, cls: 'report', icon: 'report' });
   $('#r-coords').innerHTML = `${ICON.pin}<span>Ubicación marcada · ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}</span>`;
-  $('#sheet-bg').classList.add('open'); repStep(1);
+  $('#sheet-bg').classList.add('open'); repStep(1); suggestStreets(pos);
+}
+// Calles y sector cercanos al punto marcado: un toque los escribe en "Calle o sector"
+let sugSeq = 0;
+async function suggestStreets(pos) {
+  const box = $('#r-sug'), my = ++sugSeq; if ($('#r-street').dataset.auto === '1') { $('#r-street').value = ''; }
+  // Primero lo que ya conoce el sistema (puntos críticos y calles cercanas), al instante
+  const near = (arr, get) => (arr || []).map(x => ({ name: x.name, d: get(x) })).filter(x => x.name && x.d < 200);
+  const dist = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lng - b.lng) * 111320 * Math.cos(a.lat * Math.PI / 180));
+  const local = [...near(state?.points, p => dist(p, pos)), ...near(state?.streets, s => Math.min(...(s.coords || []).map(c => dist({ lat: c[0], lng: c[1] }, pos))))].sort((a, b) => a.d - b.d).map(x => x.name);
+  const paint = (names, sector, loading) => {
+    const uniq = [...new Set(names)].slice(0, 6);
+    box.innerHTML = (uniq.length || sector || loading ? `<span class="r-sug-t">${loading && !uniq.length ? 'Buscando calles cercanas…' : 'Calles cercanas · toca para usar'}</span>` : '')
+      + uniq.map(n => `<button type="button" class="r-chip" data-sug="${esc(n)}">${esc(n)}</button>`).join('')
+      + (sector ? `<button type="button" class="r-chip sec" data-sec="${esc(sector)}">${ICON.pin} Sector ${esc(sector)}</button>` : '');
+    box.querySelectorAll('[data-sug]').forEach(b => b.onclick = () => { $('#r-street').value = b.dataset.sug; $('#r-street').dataset.auto = ''; });
+    box.querySelectorAll('[data-sec]').forEach(b => b.onclick = () => { const i = $('#r-street'), v = i.value.trim(); if (!v.includes(b.dataset.sec)) i.value = v ? `${v} · Sector ${b.dataset.sec}` : `Sector ${b.dataset.sec}`; });
+  };
+  paint(local, '', true);
+  try {
+    const r = await nearStreets(pos.lat, pos.lng); if (my !== sugSeq) return;
+    const st = r.streets.map(s => s.name), inter = st.length >= 2 ? [`${st[0]} y ${st[1]}`] : [];
+    paint([...inter, ...st, ...local], r.sector, false);
+    // Se completa solo (la persona puede cambiarlo): intersección más cercana y sector
+    const inp = $('#r-street'), auto = inter[0] || st[0] || local[0] || '';
+    if (!inp.value.trim() || inp.dataset.auto === '1') { inp.value = [auto, r.sector && `Sector ${r.sector}`].filter(Boolean).join(' · '); inp.dataset.auto = inp.value ? '1' : ''; }
+  } catch { if (my === sugSeq) paint(local, '', false); }
 }
 $('#btn-report').addEventListener('click', openReport);
 $('#r-loc-map').addEventListener('click', () => { $('#sheet-bg').classList.remove('open'); picking = true; $('#picking').classList.add('on'); if (!isAppNav() && window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); });
@@ -665,3 +692,4 @@ async function loadDays() {
 }
 loadDays(); setInterval(loadDays, 30 * 60 * 1000);
 document.addEventListener('click', e => { if (e.target.closest('[data-days-retry]')) { daysData = null; document.querySelectorAll('[data-days]').forEach(el => { el.innerHTML = daysCards(null); }); loadDays(); } });
+$('#r-street').addEventListener('input', e => { e.target.dataset.auto = ''; });

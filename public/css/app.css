@@ -795,3 +795,8 @@ body:has(#sheet-bg.open) .install,body:has(#sheet-bg.open) .push-tip,body:has(#p
 .r-lvls{grid-template-columns:repeat(3,1fr);gap:8px}
 .r-lvl{grid-template-columns:1fr;row-gap:2px;justify-items:start;padding:11px 10px}
 .r-lvl i{grid-row:auto;margin-bottom:4px} .r-lvl small{font-size:.74rem;line-height:1.25}
+
+.r-sug{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px} .r-sug:empty{display:none}
+.r-sug-t{width:100%;font-size:.76rem;color:var(--muted);font-weight:600}
+.r-chip{display:inline-flex;align-items:center;gap:4px;max-width:100%;padding:7px 11px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);font:inherit;font-size:.84rem;color:var(--ink);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r-chip:active{transform:scale(.97)} .r-chip.sec{background:#e9f6ef;border-color:#bfe3cf;color:#1d6b45} .r-chip svg{width:14px;height:14px}
