@@ -101,30 +101,47 @@ async function computeStatus() {
     : gaugeSev.includes('SEVERE') || over >= 1 ? 'naranja' : gaugeSev.includes('ABOVE_NORMAL') || high >= 1 ? 'amarilla' : 'normal';
   const suggested = maxLevel(maxLevel(levelFromWeather(weather, db.config.weather), risk.level), riverLevel);
   // Durante una simulación el nivel publicado sigue al clima simulado, aunque la alerta esté en manual.
-  const effective = db.alert.mode === 'manual' && !simOn() ? db.alert.level : suggested;
-  syncAutoPoints(db, effective);
-  return { weather, suggested, effective, risk, tide, flood };
+  const effective = db.alert.mode === 'manual' && !simOn() ? db.alert.level : stepDown(db, suggested);
+  const drain = syncAutoPoints(db, effective);
+  return { weather, suggested, effective, risk, tide, flood, drain };
+}
+// Al dejar de llover el semáforo no cae de golpe: baja un color cada cierto tiempo (por defecto 45 min),
+// porque el agua tarda en irse. Si vuelve a llover, sube de inmediato.
+function stepDown(db, suggested, now = Date.now()) {
+  const a = db.alert, cur = a.autoLevel && LV[a.autoLevel] != null ? a.autoLevel : suggested;
+  const hold = (+db.config.weather?.stepDownMin || 45) * 60e3;
+  let next = cur;
+  if (LV[suggested] >= LV[cur]) { next = suggested; a.autoStepAt = now; }
+  else if (now - (a.autoStepAt || 0) >= hold) { next = Object.keys(LV).find(k => LV[k] === LV[cur] - 1); a.autoStepAt = now; }
+  if (next !== a.autoLevel) { a.autoLevel = next; save(); }
+  return next;
 }
 // Puntos automáticos (y sus vías alternas): se encienden solos con naranja/roja. Cuando el semáforo baja a
 // amarilla o verde, también se apagan los que se encendieron a mano durante la alerta, para que no queden
 // vías alternas publicadas sin peligro.
-function syncAutoPoints(db, effective) {
-  const prev = db.alert.lastEffective;
-  if (prev === effective) return;
-  if (prev && LV[prev] >= 2 && LV[effective] < 2) {
+function syncAutoPoints(db, effective, now = Date.now()) {
+  const a = db.alert, drainMs = (+(db.config.weather?.drainHours ?? 3) || 0) * 3600e3;
+  // Mientras hay naranja o roja se anota la hora; los puntos críticos siguen activos hasta que pase el tiempo
+  // de drenaje (por defecto 3 h) desde la última vez que hubo naranja/roja: el agua tarda en bajar.
+  if (LV[effective] >= 2) { if (!a.lastHighAt || now - a.lastHighAt > 60e3) { a.lastHighAt = now; save(); } }
+  const until = a.lastHighAt ? a.lastHighAt + drainMs : 0, draining = LV[effective] < 2 && until > now;
+  if (LV[effective] < 2 && a.lastHighAt && until <= now && !a.drainDone) {
     let n = 0; for (const p of db.points) if (p.auto && p.active) { p.active = false; n++; }
-    if (n) console.log(`Alerta bajó a ${effective}: ${n} punto(s) automáticos apagados con sus vías alternas.`);
+    if (n) console.log(`Pasó el tiempo de drenaje: ${n} punto(s) automáticos apagados con sus vías alternas.`);
+    a.drainDone = true; save();
   }
-  db.alert.lastEffective = effective; save();
+  if (LV[effective] >= 2 && a.drainDone) { a.drainDone = false; save(); }
+  if (a.lastEffective !== effective) { a.lastEffective = effective; save(); }
+  return { draining, until: draining ? new Date(until).toISOString() : null };
 }
 
 // ---------- API pública ----------
 app.get('/api/public/state', async (req, res) => {
   const db = load();
-  const { weather, suggested, effective, risk, tide, flood } = await computeStatus();
+  const { weather, suggested, effective, risk, tide, flood, drain } = await computeStatus();
   const f = featuresCfg(db); const on = (k, list) => (f[k] ? list : []);
-  // Un punto con "auto" se enciende solo cuando la alerta es naranja o roja.
-  const pointOn = p => p.active || (p.auto && LV[effective] >= 2);
+  // Un punto con "auto" se enciende con naranja o roja y sigue encendido mientras el agua drena.
+  const pointOn = p => p.active || (p.auto && (LV[effective] >= 2 || drain?.draining));
   // Una vía alterna vinculada a un punto o calle solo se muestra mientras ese peligro esté activo.
   const routeOn = r => {
     if (!r.active) return false;
@@ -136,7 +153,7 @@ app.get('/api/public/state', async (req, res) => {
     config: { city: db.config.city, center: db.config.center, zoom: db.config.zoom,
       mapProvider: db.config.mapProvider, baseStyle: db.config.baseStyle || 'osm', googleMapsKey: db.config.googleMapsKey || '',
       mapVersion: db.config.mapVersion || 0, rainThresholdMm: db.config.weather.rainThresholdMm, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: f, noCar: noCarCfg(db) },
-    alert: { ...db.alert, effective, suggested },
+    alert: { ...db.alert, effective, suggested, draining: !!drain?.draining, drainUntil: drain?.until || null },
     weather: { ...weather, hourly: weather.hourly?.slice(0, 25) },
     risk, tide, flood,
     layers: on('layers', (db.layers || []).filter(l => l.active !== false)),
@@ -241,6 +258,8 @@ app.put('/api/admin/config', auth, (req, res) => {
     lat: +(c.weather.lat ?? db.config.weather.lat), lng: +(c.weather.lng ?? db.config.weather.lng),
     rainThresholdMm: +(c.weather.rainThresholdMm ?? db.config.weather.rainThresholdMm),
     rainThresholdMm3h: +(c.weather.rainThresholdMm3h ?? db.config.weather.rainThresholdMm3h),
+    stepDownMin: Math.max(5, Math.min(360, +(c.weather.stepDownMin ?? db.config.weather.stepDownMin ?? 45) || 45)),
+    drainHours: Math.max(0, Math.min(48, +(c.weather.drainHours ?? db.config.weather.drainHours ?? 3) || 0)),
     metarStation: String(c.weather.metarStation ?? db.config.weather.metarStation ?? 'SERO').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4),
     owmKey: String(c.weather.owmKey ?? db.config.weather.owmKey ?? '').trim().slice(0, 64) };
   save();
