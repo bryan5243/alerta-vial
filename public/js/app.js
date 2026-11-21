@@ -558,11 +558,13 @@ async function suggestStreets(pos) {
   const dist = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lng - b.lng) * 111320 * Math.cos(a.lat * Math.PI / 180));
   const local = [...near(state?.points, p => dist(p, pos)), ...near(state?.streets, s => Math.min(...(s.coords || []).map(c => dist({ lat: c[0], lng: c[1] }, pos))))].sort((a, b) => a.d - b.d).map(x => x.name);
   const paint = (names, sector, loading) => {
-    const uniq = [...new Set(names)].slice(0, 6);
-    box.innerHTML = (uniq.length || sector || loading ? `<span class="r-sug-t">${loading && !uniq.length ? 'Buscando calles cercanas…' : 'Calles cercanas · toca para usar'}</span>` : '')
+    const uniq = [...new Set(names)].slice(0, 6), none = !loading && !uniq.length && !sector;
+    box.innerHTML = `<span class="r-sug-t">${loading ? (uniq.length ? 'Calles cercanas · buscando más…' : '<i class="r-spin"></i> Buscando calles cercanas…') : none ? 'No encontramos el nombre de la calle. Escríbelo o' : 'Calles cercanas · toca para usar'}</span>`
+      + (none ? `<button type="button" class="r-chip" id="r-sug-retry">Buscar otra vez</button>` : '')
       + uniq.map(n => `<button type="button" class="r-chip" data-sug="${esc(n)}">${esc(n)}</button>`).join('')
       + (sector ? `<button type="button" class="r-chip sec" data-sec="${esc(sector)}">${ICON.pin} Sector ${esc(sector)}</button>` : '');
     box.querySelectorAll('[data-sug]').forEach(b => b.onclick = () => { $('#r-street').value = b.dataset.sug; $('#r-street').dataset.auto = ''; });
+    box.querySelector('#r-sug-retry')?.addEventListener('click', () => suggestStreets(pos));
     box.querySelectorAll('[data-sec]').forEach(b => b.onclick = () => { const i = $('#r-street'), v = i.value.trim(); if (!v.includes(b.dataset.sec)) i.value = v ? `${v} · Sector ${b.dataset.sec}` : `Sector ${b.dataset.sec}`; });
   };
   paint(local, '', true);

@@ -79,6 +79,7 @@ function simulatedWeather(real) {
   return Object.assign(w, describe(w));
 }
 import { startLightning } from './lightning.js';
+import { nearStreets } from './near.js';
 { const c0 = load().config; if (c0.lightningEnabled !== false) startLightning({ lat: c0.weather?.lat ?? c0.center?.lat, lng: c0.weather?.lng ?? c0.center?.lng }); }
 async function computeStatus() {
   const db = load();
@@ -427,6 +428,11 @@ function validate(name, item) {
   return null;
 }
 
+app.get('/api/public/near', async (req, res) => {
+  const lat = +req.query.lat, lng = +req.query.lng;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return res.status(400).json({ error: 'Coordenadas inválidas' });
+  try { res.json(await nearStreets(lat, lng)); } catch { res.json({ streets: [], sector: '' }); }
+});
 app.get('/api/public/forecast-days', async (req, res) => res.json(await getDays(load().config.weather)));
 
 // ---------- Notificaciones push ----------

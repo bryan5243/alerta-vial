@@ -30,11 +30,28 @@ async function photonSector(lat, lng) {
     return { sector: p.district || p.locality || p.suburb || '', street: p.street || '' };
   } catch { return { sector: '', street: '' }; }
 }
+async function nominatim(lat, lng) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=17&addressdetails=1&accept-language=es`, { signal: AbortSignal.timeout(7000) });
+    if (!r.ok) return {};
+    const a = (await r.json()).address || {};
+    return { street: a.road || a.pedestrian || '', sector: a.neighbourhood || a.suburb || a.quarter || a.city_district || '' };
+  } catch { return {}; }
+}
+// 1) El servidor del sistema (más confiable). 2) Si no responde o no encuentra nada, el teléfono consulta directo.
+async function fromServer(lat, lng) {
+  try {
+    const r = await fetch(`/api/public/near?lat=${lat}&lng=${lng}`, { signal: AbortSignal.timeout(14000) });
+    if (!r.ok) return null; const j = await r.json();
+    return j && (j.streets?.length || j.sector) ? j : null;
+  } catch { return null; }
+}
 export async function nearStreets(lat, lng) {
   const k = `${lat.toFixed(4)},${lng.toFixed(4)}`; if (cache.has(k)) return cache.get(k);
-  const [streets, ph] = await Promise.all([overpassStreets(lat, lng), photonSector(lat, lng)]);
-  if (ph.street && !streets.some(s => s.name === ph.street)) streets.unshift({ name: ph.street, dist: 0 });
-  const out = { streets, sector: ph.sector };
+  const srv = await fromServer(lat, lng); if (srv) { cache.set(k, srv); return srv; }
+  const [streets, ph, nm] = await Promise.all([overpassStreets(lat, lng), photonSector(lat, lng), nominatim(lat, lng)]);
+  for (const s of [ph.street, nm.street]) if (s && !streets.some(x => x.name === s)) streets.unshift({ name: s, dist: 0 });
+  const out = { streets, sector: nm.sector || ph.sector };
   if (streets.length || ph.sector) cache.set(k, out);
   return out;
 }
