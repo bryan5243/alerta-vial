@@ -42,7 +42,7 @@ function omQuery(lat, lng, models) {
   url.search = new URLSearchParams({ latitude: lat, longitude: lng,
     current: 'precipitation,rain,showers,temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_gusts_10m,weather_code,cloud_cover,is_day,uv_index,shortwave_radiation',
     daily: 'uv_index_max,sunrise,sunset', hourly: 'precipitation,precipitation_probability,cape,weather_code',
-    past_hours: 3, forecast_hours: 24, timezone: 'America/Guayaquil', ...(models ? { models } : {}) });
+    past_hours: 12, forecast_hours: 24, timezone: 'America/Guayaquil', ...(models ? { models } : {}) });
   return url;
 }
 // Saca los datos de un modelo de la respuesta (sufijo = respuesta con varios modelos)
@@ -68,7 +68,8 @@ function omParse(model, j, sfx) {
     uvMax: g(D, 'uv_index_max')?.[0] ?? null, sunrise: g(D, 'sunrise')?.[0] ?? null, sunset: g(D, 'sunset')?.[0] ?? null } : null;
   return { model, name: MODELS[model], ok: true, observedAt: cur.time, temperature: useCur ? cur.temperature_2m : undefined, apparent: useCur ? cur.apparent_temperature : undefined, humidity: useCur ? cur.relative_humidity_2m : undefined, wind: useCur ? cur.wind_speed_10m : undefined, gust: useCur ? cur.wind_gusts_10m : undefined, cloudCover: useCur ? cur.cloud_cover : undefined, sun,
     weatherCode: code, rainNow, intensity: storm ? 4 : mmInt(rainNow),
-    rainPast3h: sum(hours.slice(Math.max(0, nowIdx - 3), nowIdx + 1)), rainNext3h: sum(hours.slice(nowIdx + 1, nowIdx + 4)),
+    rainPast3h: sum(hours.slice(Math.max(0, nowIdx - 3), nowIdx + 1)), rainPast6h: sum(hours.slice(Math.max(0, nowIdx - 6), nowIdx + 1)), rainPast12h: sum(hours.slice(Math.max(0, nowIdx - 12), nowIdx + 1)),
+    wetHours: (() => { let n = 0; for (let i = nowIdx; i >= 0 && (hours[i]?.precipitation ?? 0) >= 0.5; i--) n++; return n; })(), rainNext3h: sum(hours.slice(nowIdx + 1, nowIdx + 4)),
     rainNext24h: sum(hours.slice(nowIdx + 1, nowIdx + 25)),
     probNext3h: hours.some(h => h.probability != null) ? Math.max(0, ...hours.slice(nowIdx, nowIdx + 4).map(h => h.probability || 0)) : null,
     maxProbability24h: hours.some(h => h.probability != null) ? Math.max(0, ...hours.slice(nowIdx + 1, nowIdx + 25).map(h => h.probability || 0)) : null,
@@ -317,6 +318,40 @@ async function owmSource(lat, lng, key) {
   return d;
 }
 
+// Lluvia acumulada que el propio servidor ha visto pasar (muestras de lo que decide el clima, mm/h en el tiempo).
+// Sirve cuando las fuentes no traen el pasado (MET Norway y wttr.in no lo traen; Open-Meteo sí, pero a veces está bloqueado).
+const rainLog = [];
+export function logRain(mm, now = Date.now()) {
+  const last = rainLog.at(-1);
+  if (last && now - last.t < 45 * 1000) return;
+  rainLog.push({ t: now, mm: Math.max(0, +mm || 0) });
+  const cut = now - 13 * 3600e3; while (rainLog.length && rainLog[0].t < cut) rainLog.shift();
+}
+export function rainFromLog(hours, now = Date.now()) {
+  let sum = 0;
+  for (let i = 1; i < rainLog.length; i++) {
+    const a = rainLog[i - 1], b = rainLog[i]; if (b.t < now - hours * 3600e3) continue;
+    const dt = Math.min(b.t - a.t, 30 * 60 * 1000) / 3600e3; sum += (a.mm + b.mm) / 2 * dt;
+  }
+  return r1(sum);
+}
+export function wetHoursFromLog(now = Date.now()) {
+  let end = null, start = null;
+  for (let i = rainLog.length - 1; i >= 0; i--) {
+    const x = rainLog[i];
+    if (x.mm >= 0.5) { if (end == null) end = x.t; start = x.t; }
+    else if (end != null && (rainLog[i + 1]?.t ?? now) - x.t > 20 * 60 * 1000) break;
+  }
+  return end != null && now - end < 30 * 60 * 1000 ? r1((end - start) / 3600e3) : 0;
+}
+function applyRainLog(w, now = Date.now()) {
+  logRain(w.intensity > 0 ? w.rainNow : 0, now);
+  const h = n => rainFromLog(n, now);
+  w.rainPast3h = Math.max(w.rainPast3h || 0, h(3)); w.rainPast6h = Math.max(w.rainPast6h || 0, h(6)); w.rainPast12h = Math.max(w.rainPast12h || 0, h(12));
+  w.wetHours = Math.max(w.wetHours || 0, Math.floor(wetHoursFromLog(now)));
+  return w;
+}
+
 // Combina modelos y observaciones. `extra` son fuentes locales (equipo, reportes) que arma el servidor.
 export async function getWeather({ lat, lng, metarStation = 'SERO', owmKey = '' } = {}, extra = []) {
   const key = `${lat},${lng},${metarStation},${owmKey ? 1 : 0}`;
@@ -334,7 +369,8 @@ export async function getWeather({ lat, lng, metarStation = 'SERO', owmKey = '' 
     remote = { models: [...omModels, metno], metar, owm, radar, wttr, at: new Date().toISOString() };
     cache = { at: Date.now(), key, data: remote };
   }
-  return combine({ ...remote, lightning: lightningSnapshot() }, extra);
+  const w = combine({ ...remote, lightning: lightningSnapshot() }, extra);
+  return w.ok ? applyRainLog(w) : w;
 }
 
 export function combine({ models, metar, owm, radar, wttr, lightning, at }, extra = []) {
@@ -369,7 +405,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
     observedAt: (intensity > 0 ? top.at : base?.observedAt) || at,
     temperature: base?.temperature ?? okM.find(m => m.temperature != null)?.temperature ?? owm?.temperature, cloudCover: Math.max(base?.cloudCover ?? 0, owm?.cloudCover ?? 0, intensity ? 95 : 0),
     rainNow: intensity ? r1(Math.max(...live.map(s => (s.intensity ? s.rainNow || 0 : 0)))) : 0,
-    rainPast3h: Math.max(pick('rainPast3h'), intensity >= 2 ? INT_MM[intensity] : 0),
+    rainPast3h: Math.max(pick('rainPast3h'), intensity >= 2 ? INT_MM[intensity] : 0), rainPast6h: pick('rainPast6h'), rainPast12h: pick('rainPast12h'), wetHours: pick('wetHours'),
     rainNext3h: pick('rainNext3h'), rainNext24h: pick('rainNext24h'),
     probNext3h: null, maxProbability24h: null,
     // Si nadie confirma lluvia, el ícono no puede decir "llovizna": se muestra nublado (3) o el cielo del modelo.
@@ -641,8 +677,13 @@ export function riskIndex({ weather: w, cfg, flood, reports = [], tide, rivers =
 export function levelFromWeather(w, cfg) {
   if (!w.ok) return 'normal';
   const t = cfg.rainThresholdMm, t3 = cfg.rainThresholdMm3h, i = w.intensity || 0;
-  if (w.rainNow >= t * 3 || w.rainPast3h >= t3 * 2 || (i >= 4 && w.rainNow >= t)) return 'roja';
-  if (w.rainNow >= t || w.rainPast3h >= t3 || i >= 3) return 'naranja';
+  // Lo que inunda las calles no es solo la intensidad de ahora, sino cuánta agua cayó y por cuánto tiempo:
+  // 6 h y 12 h de lluvia acumulada y horas seguidas lloviendo.
+  const p3 = w.rainPast3h || 0, p6 = w.rainPast6h || 0, p12 = w.rainPast12h || 0, wet = w.wetHours || 0, raining = i >= 1;
+  if (w.rainNow >= t * 3 || p3 >= t3 * 2 || p6 >= t3 * 3 || p12 >= t3 * 5 || (i >= 4 && w.rainNow >= t)) return 'roja';
+  if (w.rainNow >= t || p3 >= t3 || p6 >= t3 * 1.6 || p12 >= t3 * 2.7 || i >= 3
+    || (raining && wet >= 3 && p6 >= t3 * 0.9)        // lleva horas lloviendo y ya acumuló bastante
+    || (raining && p3 >= t3 * 0.6 && w.rainNow >= t / 2)) return 'naranja'; // sigue lloviendo con buena cantidad en las últimas 3 h
   // Lluvia confirmada en curso, o lluvia casi segura (≥ 80 % y varios modelos con ≥ la mitad del umbral) en las próximas 3 h: amarilla.
   if (i >= 1 || ((w.probNext3h ?? 0) >= 80 && w.rainNext3h >= t / 2)) return 'amarilla';
   return 'normal';
