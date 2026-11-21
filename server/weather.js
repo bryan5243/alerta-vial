@@ -291,7 +291,8 @@ async function wttrSource(lat, lng) {
     const j = await getJson(`https://wttr.in/${lat},${lng}?format=j1`, 10000);
     const hour = +new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'America/Guayaquil' }).slice(0, 2) || 0;
     const p = parseWttr(j, hour);
-    d = { ...base, ok: true, at: new Date().toISOString(), intensity: p.intensity, rainNow: p.intensity ? Math.max(p.mm, INT_MM[p.intensity] / 2) : 0, thunderChance: p.chance, thunderNow: p.thunderNow,
+    // wttr.in es un modelo (pronóstico): sus mm solo respaldan a otra fuente; por sí solo no enciende "lloviendo" (salvo tormenta en curso).
+    d = { ...base, ok: true, at: new Date().toISOString(), mm: p.mm, intensity: p.thunderNow ? 4 : 0, rainNow: p.thunderNow ? Math.max(p.mm, INT_MM[4] / 2) : 0, thunderChance: p.chance, thunderNow: p.thunderNow,
       detail: `${p.mm} mm ahora · probabilidad de tormenta eléctrica ${p.chance} %${p.thunderNow ? ' · tormenta ahora' : ''}` };
   } catch (e) { d = { ...base, ok: false, intensity: 0, error: e.message }; }
   wttrCache = { at: Date.now(), key: ck, data: d };
@@ -377,7 +378,10 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
   const okM = models.filter(m => m.ok), base = okM.find(m => m.model === 'best_match') || okM.find(m => m.model === 'met_no') || okM[0];
   // Como Amaru: las señales tienen que coincidir. Un modelo solo no basta: hace falta que al menos
   // un tercio de los modelos (3 de 9) vean lluvia medible. Y si el mejor modelo dice cielo casi despejado, los modelos no cuentan.
-  const need = okM.length >= 2 ? 2 : 1; // dos modelos que coincidan; si Open-Meteo no responde y solo queda uno, ese uno basta
+  // Dos modelos que coincidan. Si Open-Meteo no responde y queda un solo modelo (MET Norway, que es pronóstico),
+  // solo cuenta si otra fuente lo respalda (wttr.in, radar o aeropuerto): así no marca "lluvia leve" con sol.
+  const corro = (wttr?.ok && wttr.mm >= MIN_MM) || (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || metar.near));
+  const need = okM.length >= 2 ? 2 : corro ? 1 : 2;
   const kth = arr => { const v = arr.slice().sort((x, y) => y - x); return v.length >= need ? v[need - 1] : 0; };
   const clear = (base?.cloudCover ?? 100) < 50;
   const raining = okM.filter(m => m.intensity > 0);
