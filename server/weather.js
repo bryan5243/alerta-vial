@@ -654,7 +654,7 @@ export function riskIndex({ weather: w, cfg, flood, reports = [], tide, rivers =
   const t = cfg.rainThresholdMm || 2.4, t3 = cfg.rainThresholdMm3h || 7;
   const clamp = x => Math.max(0, Math.min(1, x));
   const parts = [];
-  const rainNow = w.ok ? clamp(Math.max(w.rainNow / (t * 3), w.rainPast3h / (t3 * 2), [0, 0.25, 0.5, 0.8, 1][w.intensity || 0])) : 0;
+  const rainNow = w.ok ? clamp(Math.max(w.rainNow / (t * 3), (w.intensity ? w.rainPast3h : 0) / (t3 * 2), [0, 0.25, 0.5, 0.8, 1][w.intensity || 0])) : 0; // el acumulado solo pesa mientras llueve
   parts.push({ key: 'lluvia', label: 'Lluvia actual', max: 30, value: Math.round(rainNow * 30), ok: w.ok });
   const fc = w.ok ? clamp((w.rainNext24h || 0) / (t3 * 3)) * clamp((w.maxProbability24h ?? 100) / 100 + 0.3) : 0;
   parts.push({ key: 'pronostico', label: 'Pronóstico 24 h', max: 25, value: Math.round(fc * 25), ok: w.ok });
@@ -680,6 +680,9 @@ export function levelFromWeather(w, cfg) {
   // Lo que inunda las calles no es solo la intensidad de ahora, sino cuánta agua cayó y por cuánto tiempo:
   // 6 h y 12 h de lluvia acumulada y horas seguidas lloviendo.
   const p3 = w.rainPast3h || 0, p6 = w.rainPast6h || 0, p12 = w.rainPast12h || 0, wet = w.wetHours || 0, raining = i >= 1;
+  // Los acumulados solo cuentan mientras sigue lloviendo: cuando para, el semáforo baja de a un color (stepDown en index.js)
+  // y los puntos críticos se mantienen durante el drenaje. Antes 12 h de acumulado dejaban la roja fija aunque ya no lloviera.
+  if (!raining) return (w.probNext3h ?? 0) >= 80 && w.rainNext3h >= t / 2 ? 'amarilla' : 'normal';
   if (w.rainNow >= t * 3 || p3 >= t3 * 2 || p6 >= t3 * 3 || p12 >= t3 * 5 || (i >= 4 && w.rainNow >= t)) return 'roja';
   if (w.rainNow >= t || p3 >= t3 || p6 >= t3 * 1.6 || p12 >= t3 * 2.7 || i >= 3
     || (raining && wet >= 3 && p6 >= t3 * 0.9)        // lleva horas lloviendo y ya acumuló bastante
