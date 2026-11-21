@@ -93,7 +93,13 @@ async function computeStatus() {
   if (simOn()) weather = simulatedWeather(weather);
   const risk = riskIndex({ weather, cfg: db.config.weather, flood, reports: db.reports || [], tide, rivers: (db.rivers || []).filter(r => r.active !== false) });
   // Nivel sugerido: el mayor entre la regla de lluvia y el índice de riesgo combinado.
-  const suggested = maxLevel(levelFromWeather(weather, db.config.weather), risk.level);
+  // Un río crecido o desbordado sube el nivel por sí solo (antes solo sumaba hasta 20 puntos al índice y no alcanzaba ni la amarilla).
+  const activeRivers = (db.rivers || []).filter(r => r.active !== false);
+  const over = activeRivers.filter(r => r.status === 'desbordado').length, high = activeRivers.filter(r => r.status === 'crecido').length;
+  const gaugeSev = flood?.ok ? (flood.gauges || []).map(g => g.severity) : [];
+  const riverLevel = gaugeSev.includes('EXTREME') || over >= 2 || (over >= 1 && (weather?.intensity || 0) >= 2) ? 'roja'
+    : gaugeSev.includes('SEVERE') || over >= 1 ? 'naranja' : gaugeSev.includes('ABOVE_NORMAL') || high >= 1 ? 'amarilla' : 'normal';
+  const suggested = maxLevel(maxLevel(levelFromWeather(weather, db.config.weather), risk.level), riverLevel);
   // Durante una simulación el nivel publicado sigue al clima simulado, aunque la alerta esté en manual.
   const effective = db.alert.mode === 'manual' && !simOn() ? db.alert.level : suggested;
   syncAutoPoints(db, effective);
