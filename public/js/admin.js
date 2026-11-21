@@ -50,7 +50,7 @@ function renderShell() {
   const pend = (db.reports || []).filter(r => r.status === 'pendiente').length;
   root.innerHTML = `<div class="app">
     <nav class="side" aria-label="Secciones">
-      <div class="brand"><img src="/img/emovtt-logo-blanco.png" alt="EMOVTT Santa Rosa EP"><div>ALERTA VIAL<small>ADMINISTRACIÓN</small></div></div>
+      <div class="brand"><img src="/img/emovtt-logo-blanco.png" alt="EMOVTT Santa Rosa EP"><div>SISTEMA DE ALERTA VIAL<small>ADMINISTRACIÓN</small></div></div>
       ${NAV.map(([k, l, i, sh]) => `<button class="navbtn ${k === section ? 'on' : ''}" data-s="${k}">${i}<span class="t"><span class="long">${l}</span><span class="short">${sh}</span></span>${k === 'reports' && pend ? `<span class="n">${pend}</span>` : ''}</button>`).join('')}
       <div class="spacer"></div>
       <a class="navbtn" href="/" target="_blank">${ICON.eye}<span class="t"><span class="long">Ver mapa público</span><span class="short">Mapa</span></span></a>
@@ -473,13 +473,28 @@ function secReports() {
           ${r.status !== 'verificado' ? `<button class="btn soft sm" data-rs="verificado" data-id="${r.id}">${ICON.check} Verificar y publicar</button>` : ''}
           ${r.status === 'verificado' ? `<button class="btn soft sm" data-rs="retirado" data-id="${r.id}">${ICON.check} Retirar (el agua bajó)</button>` : ''}
           ${r.status !== 'descartado' && r.status !== 'retirado' ? `<button class="btn ghost sm" data-rs="descartado" data-id="${r.id}">Descartar</button>` : ''}
-          <button class="btn ghost sm" data-topoint="${r.id}">${ICON.pin} Crear punto crítico</button>
+          ${r.pointId && db.points.some(p => p.id === r.pointId) ? `<span class="chip naranja">${ICON.pin} Ya es punto crítico</span>`
+            : r.status !== 'descartado' ? `<button class="btn sm" data-crit="${r.id}" title="Verifica el reporte, crea un punto crítico que se activa solo con alerta naranja o roja y genera su vía alterna">${ICON.pin} Punto crítico + vía alterna</button>` : ''}
+          <button class="btn ghost sm" data-topoint="${r.id}">Editar como punto</button>
           <button class="btn danger sm" data-rdel="${r.id}">${ICON.trash}</button></div></div></div>`).join('') : emptyBox('No hay reportes ciudadanos todavía.')}</div>`);
   setTools([]); drawMode = null; drawAll(true);
   q('[data-rs]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); await api(`/api/admin/reports/${b.dataset.id}`, { method: 'PUT', body: { status: b.dataset.rs } }); toast(`Reporte ${b.dataset.rs}`, 'ok'); refresh(); });
   q('[data-rdel]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); if (!await confirmBox({ title: 'Eliminar reporte', text: 'El reporte se borrará definitivamente. Si solo quieres ocultarlo del mapa, usa "Retirar" o "Descartar".', ok: 'Eliminar' })) return; await api(`/api/admin/reports/${b.dataset.rdel}`, { method: 'DELETE' }); refresh(); });
   q('[data-topoint]').forEach(b => b.onclick = ev => { ev.stopPropagation(); const r = db.reports.find(x => x.id === b.dataset.topoint); editing = { name: r.street, lat: r.lat, lng: r.lng, type: 'inundacion', severity: r.level === 'grave' ? 'alta' : r.level === 'moderado' ? 'media' : 'baja', description: r.description }; section = 'points'; renderShell(); });
   q('[data-focus]').forEach(b => b.onclick = () => { const r = db.reports.find(x => x.id === b.dataset.focus); map?.panTo(r, 16); });
+  // Un clic: el reporte aprobado pasa a punto crítico automático (se enciende con naranja/roja) con su vía alterna
+  q('[data-crit]').forEach(b => b.onclick = async ev => {
+    ev.stopPropagation(); const r = db.reports.find(x => x.id === b.dataset.crit); if (!r) return;
+    b.disabled = true; b.textContent = 'Creando punto…';
+    try {
+      const sev = r.level === 'grave' ? 'alta' : r.level === 'moderado' ? 'media' : 'baja';
+      const p = await api('/api/admin/points', { method: 'POST', body: { name: r.street || `Reporte ciudadano ${new Date(r.createdAt).toLocaleDateString('es-EC')}`, lat: r.lat, lng: r.lng,
+        type: r.type === 'desborde' ? 'riesgo' : 'inundacion', severity: sev, description: r.description || 'Creado a partir de un reporte ciudadano.', auto: true, active: false, source: 'reporte' } });
+      await api(`/api/admin/reports/${r.id}`, { method: 'PUT', body: { status: r.status === 'pendiente' ? 'verificado' : r.status, pointId: p.id } });
+      db.points.push(p); toast(`Punto crítico creado: se activará solo con alerta naranja o roja. Generando vía alterna…`, 'ok');
+      await genAuto([p], b);
+    } catch (e) { toast(e.message || 'No se pudo crear el punto crítico.', 'err'); b.disabled = false; b.textContent = 'Punto crítico + vía alterna'; }
+  });
 }
 
 /* ================= CAPAS ================= */

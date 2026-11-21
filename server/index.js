@@ -375,6 +375,7 @@ app.put('/api/admin/reports/:id', auth, (req, res) => {
   const r = (db.reports || []).find(x => x.id === req.params.id);
   if (!r) return res.status(404).json({ error: 'No se encontró el reporte.' });
   if (['pendiente', 'verificado', 'descartado', 'retirado'].includes(req.body.status)) r.status = req.body.status;
+  if (typeof req.body.pointId === 'string') r.pointId = req.body.pointId.slice(0, 40); // punto crítico creado a partir de este reporte
   r.reviewedAt = new Date().toISOString();
   if (r.status === 'retirado') r.clearedAt = r.reviewedAt;
   save();
