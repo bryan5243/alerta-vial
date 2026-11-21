@@ -464,17 +464,19 @@ function secRecs() {
 function secReports() {
   const reps = [...(db.reports || [])].sort((a, b) => (a.status === 'pendiente' ? -1 : 1) - (b.status === 'pendiente' ? -1 : 1) || b.createdAt.localeCompare(a.createdAt));
   const chip = s => ({ pendiente: 'amarilla', verificado: 'normal', descartado: 'neutral', retirado: 'neutral' })[s];
-  const act = reps.filter(r => r.type === 'desborde' && r.status === 'verificado');
-  col(`<p class="small muted">Reportes enviados por la ciudadanía desde el mapa público. Los <b>verificados</b> aparecen en el mapa; los pendientes y descartados no. Un <b>desborde verificado</b> queda animado en el mapa público hasta que pulses <b>Retirar</b>.</p>
+  const hasPt = r => r.pointId && db.points.some(p => p.id === r.pointId);
+  const act = reps.filter(r => r.type === 'desborde' && r.status === 'verificado' && !hasPt(r));
+  const loose = reps.filter(r => r.status === 'verificado' && !hasPt(r));
+  col(`<p class="small muted">Reportes enviados por la ciudadanía desde el mapa público. Al <b>aceptar</b> un reporte se convierte en <b>punto crítico automático</b> con su vía alterna: no se muestra en el mapa como reporte, aparece solo cuando la alerta sube a <b>naranja o roja</b> y se apaga cuando baja la lluvia y pasa el tiempo de drenaje. Vuelve a aparecer en la próxima lluvia fuerte.</p>
+    ${loose.length ? `<div class="card" style="border-color:var(--naranja);background:#FFF6E8;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:200px"><b>${loose.length} reporte${loose.length > 1 ? 's' : ''} verificado${loose.length > 1 ? 's' : ''} todavía se ve${loose.length > 1 ? 'n' : ''} como reporte.</b> <span class="small muted">Conviértelos en puntos críticos automáticos.</span></span><button class="btn sm" id="crit-all">${ICON.pin} Convertir todos</button></div>` : ''}
     ${act.length ? `<div class="card" style="border-color:#1E88E5;background:#EEF6FE"><b>${act.length} desborde${act.length > 1 ? 's' : ''} activo${act.length > 1 ? 's' : ''} en el mapa público.</b> <span class="small muted">Retíralo cuando el agua haya bajado.</span></div>` : ''}
     <div class="list">${reps.length ? reps.map(r => `<div class="item" data-focus="${r.id}" style="cursor:pointer"><span class="dot ${r.level}" style="margin-top:6px"></span>
       <div style="flex:1"><div class="title">${r.type === 'desborde' ? `<span class="chip roja">Desborde de río</span> ` : ''}${esc(r.street || 'Sin calle indicada')} <span class="chip ${chip(r.status)}">${r.status}</span></div><div class="meta">${esc(r.description)}</div>${r.photo ? `<a href="${esc(r.photo)}" target="_blank" rel="noopener"><img src="${esc(r.photo)}" alt="Foto del reporte" loading="lazy" style="display:block;margin-top:8px;width:100%;max-width:240px;border-radius:10px;border:1px solid var(--line,#DDE3EA)"></a>` : '<div class="meta" style="color:var(--naranja)">Sin fotografía</div>'}<div class="meta">${r.level} · ${ago(r.createdAt)} · ${fmtTime(r.createdAt)}</div>
         <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
-          ${r.status !== 'verificado' ? `<button class="btn soft sm" data-rs="verificado" data-id="${r.id}">${ICON.check} Verificar y publicar</button>` : ''}
-          ${r.status === 'verificado' ? `<button class="btn soft sm" data-rs="retirado" data-id="${r.id}">${ICON.check} Retirar (el agua bajó)</button>` : ''}
-          ${r.status !== 'descartado' && r.status !== 'retirado' ? `<button class="btn ghost sm" data-rs="descartado" data-id="${r.id}">Descartar</button>` : ''}
-          ${r.pointId && db.points.some(p => p.id === r.pointId) ? `<span class="chip naranja">${ICON.pin} Ya es punto crítico</span>`
-            : r.status !== 'descartado' ? `<button class="btn sm" data-crit="${r.id}" title="Verifica el reporte, crea un punto crítico que se activa solo con alerta naranja o roja y genera su vía alterna">${ICON.pin} Punto crítico + vía alterna</button>` : ''}
+          ${hasPt(r) ? `<span class="chip naranja">${ICON.pin} Punto crítico automático · se activa con naranja/roja</span>`
+            : r.status !== 'descartado' ? `<button class="btn sm" data-crit="${r.id}" title="Crea un punto crítico que se activa solo con alerta naranja o roja, genera su vía alterna y deja de mostrarse como reporte">${ICON.check} Aceptar como punto crítico</button>` : ''}
+          ${r.status === 'verificado' && !hasPt(r) ? `<button class="btn soft sm" data-rs="retirado" data-id="${r.id}">Retirar (el agua bajó)</button>` : ''}
+          ${r.status !== 'descartado' && r.status !== 'retirado' && !hasPt(r) ? `<button class="btn ghost sm" data-rs="descartado" data-id="${r.id}">Descartar</button>` : ''}
           <button class="btn ghost sm" data-topoint="${r.id}">Editar como punto</button>
           <button class="btn danger sm" data-rdel="${r.id}">${ICON.trash}</button></div></div></div>`).join('') : emptyBox('No hay reportes ciudadanos todavía.')}</div>`);
   setTools([]); drawMode = null; drawAll(true);
@@ -486,15 +488,22 @@ function secReports() {
   q('[data-crit]').forEach(b => b.onclick = async ev => {
     ev.stopPropagation(); const r = db.reports.find(x => x.id === b.dataset.crit); if (!r) return;
     b.disabled = true; b.textContent = 'Creando punto…';
-    try {
-      const sev = r.level === 'grave' ? 'alta' : r.level === 'moderado' ? 'media' : 'baja';
-      const p = await api('/api/admin/points', { method: 'POST', body: { name: r.street || `Reporte ciudadano ${new Date(r.createdAt).toLocaleDateString('es-EC')}`, lat: r.lat, lng: r.lng,
-        type: r.type === 'desborde' ? 'riesgo' : 'inundacion', severity: sev, description: r.description || 'Creado a partir de un reporte ciudadano.', auto: true, active: false, source: 'reporte' } });
-      await api(`/api/admin/reports/${r.id}`, { method: 'PUT', body: { status: r.status === 'pendiente' ? 'verificado' : r.status, pointId: p.id } });
-      db.points.push(p); toast(`Punto crítico creado: se activará solo con alerta naranja o roja. Generando vía alterna…`, 'ok');
-      await genAuto([p], b);
-    } catch (e) { toast(e.message || 'No se pudo crear el punto crítico.', 'err'); b.disabled = false; b.textContent = 'Punto crítico + vía alterna'; }
+    try { const p = await reportToPoint(r); toast('Reporte aceptado: ahora es punto crítico automático (aparece con alerta naranja o roja). Generando vía alterna…', 'ok'); await genAuto([p], b); }
+    catch (e) { toast(e.message || 'No se pudo crear el punto crítico.', 'err'); b.disabled = false; b.textContent = 'Aceptar como punto crítico'; }
   });
+  if (id('crit-all')) id('crit-all').onclick = async () => {
+    const b = id('crit-all'); b.disabled = true; b.textContent = 'Convirtiendo…'; const pts = [];
+    try { for (const r of loose) pts.push(await reportToPoint(r)); toast(`${pts.length} reporte(s) convertidos en puntos críticos automáticos. Generando vías alternas…`, 'ok'); await genAuto(pts, b); }
+    catch (e) { toast(e.message || 'No se pudo convertir todos los reportes.', 'err'); refresh(); }
+  };
+}
+// Un reporte aceptado pasa a ser punto crítico automático: se enciende solo con naranja/roja y deja de verse como reporte
+async function reportToPoint(r) {
+  const sev = r.level === 'grave' ? 'alta' : r.level === 'moderado' ? 'media' : 'baja';
+  const p = await api('/api/admin/points', { method: 'POST', body: { name: r.street || `Reporte ciudadano ${new Date(r.createdAt).toLocaleDateString('es-EC')}`, lat: r.lat, lng: r.lng,
+    type: r.type === 'desborde' ? 'riesgo' : 'inundacion', severity: sev, description: r.description || 'Creado a partir de un reporte ciudadano.', auto: true, active: false, source: 'reporte' } });
+  await api(`/api/admin/reports/${r.id}`, { method: 'PUT', body: { status: 'verificado', pointId: p.id } });
+  r.status = 'verificado'; r.pointId = p.id; db.points.push(p); return p;
 }
 
 /* ================= CAPAS ================= */

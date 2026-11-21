@@ -212,7 +212,9 @@ app.post('/api/public/reports', (req, res) => {
 app.get('/api/public/reports', (req, res) => {
   const db = load();
   const f = featuresCfg(db);
-  res.json((db.reports || []).filter(r => r.status === 'verificado' && (r.type === 'desborde' ? f.rivers : f.reports)));
+  // Un reporte ya convertido en punto crítico no se muestra como reporte: lo representa el punto (solo con naranja/roja)
+  const ids = new Set((db.points || []).map(p => p.id));
+  res.json((db.reports || []).filter(r => r.status === 'verificado' && !(r.pointId && ids.has(r.pointId)) && (r.type === 'desborde' ? f.rivers : f.reports)));
 });
 
 // Radar RainViewer: devolvemos las plantillas de tiles más recientes (sin key).
