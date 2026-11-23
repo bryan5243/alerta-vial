@@ -38,9 +38,9 @@ function connect() {
   const url = HOSTS[st.host % HOSTS.length];
   let ws; try { ws = new WS(url); } catch (e) { st.error = e.message; return schedule(); }
   st.ws = ws;
-  ws.onopen = () => { st.open = true; st.since = Date.now(); st.retry = 0; st.error = ''; try { ws.send(JSON.stringify({ time: 0 })); } catch {} };
+  ws.onopen = () => { st.fails = 0; st.open = true; st.since = Date.now(); st.retry = 0; st.error = ''; try { ws.send(JSON.stringify({ time: 0 })); } catch {} };
   ws.onmessage = ev => { try { addStrike(parseMsg(typeof ev.data === 'string' ? ev.data : Buffer.from(ev.data).toString())); } catch {} };
-  ws.onerror = e => { st.error = `sin conexión con la red de rayos${e?.message ? ` (${e.message})` : ''}; se reintenta solo`; };
+  ws.onerror = () => { st.fails = (st.fails || 0) + 1; st.error = st.fails >= 4 ? 'la red Blitzortung no acepta la conexión de este servidor (hace falta su autorización). Las tormentas se detectan con el radar, el aeropuerto y el equipo' : 'sin conexión con la red de rayos; se reintenta solo'; };
   ws.onclose = () => { st.open = false; st.ws = null; st.host++; schedule(); };
 }
 function schedule() { clearTimeout(st.timer); st.retry++; st.timer = setTimeout(connect, Math.min(60000, 2000 * 2 ** Math.min(st.retry, 5))); st.timer.unref?.(); }
