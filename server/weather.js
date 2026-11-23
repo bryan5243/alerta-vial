@@ -169,9 +169,15 @@ async function metarSource(station) {
   const base = { id: 'metar', kind: 'observación', name: `Aeropuerto Santa Rosa (${station})` };
   let d;
   try {
-    const j = await getJson(`https://aviationweather.gov/api/data/metar?ids=${station}&format=json&hours=3`);
-    const last = (Array.isArray(j) ? j : []).map(x => ({ raw: x.rawOb || '', at: x.obsTime ? new Date(x.obsTime * 1000) : new Date(x.reportTime || 0) }))
-      .filter(x => x.raw).sort((a, b) => b.at - a.at)[0];
+    // Dos servidores a la vez (aviationweather.gov y el de NOAA); gana el reporte más reciente que llegue.
+    const fromAwc = getJson(`https://aviationweather.gov/api/data/metar?ids=${station}&format=json&hours=3`, 12000)
+      .then(j => (Array.isArray(j) ? j : []).map(x => ({ raw: x.rawOb || '', at: x.obsTime ? new Date(x.obsTime * 1000) : new Date(x.reportTime || 0) })));
+    const fromNoaa = fetch(`https://tgftp.nws.noaa.gov/data/observations/metar/stations/${station}.TXT`, { signal: AbortSignal.timeout(12000) })
+      .then(r => { if (!r.ok) throw new Error(`NOAA ${r.status}`); return r.text(); })
+      .then(t => { const [d, raw] = t.trim().split('\n'); return [{ raw: (raw || '').trim(), at: new Date(d.trim().replace(/\//g, '-').replace(' ', 'T') + ':00Z') }]; });
+    const all = (await Promise.allSettled([fromAwc, fromNoaa])).flatMap(r => r.status === 'fulfilled' ? r.value : []);
+    if (!all.length) throw new Error('no respondió a tiempo (se probaron 2 servidores)');
+    const last = all.filter(x => x.raw && !isNaN(x.at)).sort((a, b) => b.at - a.at)[0];
     if (!last) throw new Error('el aeropuerto no envió reportes en las últimas 3 h');
     const ageMin = Math.round((Date.now() - last.at) / 60000), p = parseMetar(last.raw);
     const fresh = ageMin <= 90;
@@ -179,7 +185,7 @@ async function metarSource(station) {
       near: fresh && !!p.near, cb: fresh && /\b(FEW|SCT|BKN|OVC)\d{3}(CB|TCU)\b/.test(last.raw), ts: fresh && /\b(VC)?TS/.test(last.raw.replace(/^\S+\s+\S+\s+/, '')),
       detail: `${p.text} · reporte de hace ${ageMin} min`, error: fresh ? undefined : `último reporte hace ${ageMin} min` };
   } catch (e) { d = { ...base, ok: false, intensity: 0, error: e.message }; }
-  metarCache = { at: Date.now(), data: d };
+  metarCache = { at: d.ok ? Date.now() : Date.now() - TTL + 3 * 60e3, data: d }; // si falla, se reintenta en 3 min
   return d;
 }
 
