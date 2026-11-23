@@ -374,14 +374,26 @@ export async function getWeather({ lat, lng, metarStation = 'SERO', owmKey = '' 
   return w.ok ? applyRainLog(w) : w;
 }
 
+const obsDryPre = (radar, metar) => (radar?.ok && !radar.intensity && !radar.near) || (metar?.ok && !metar.intensity && !metar.near);
 export function combine({ models, metar, owm, radar, wttr, lightning, at }, extra = []) {
+  // wttr.in es pronóstico: su "tormenta ahora" solo cuenta si el detector de rayos o el aeropuerto la confirman.
+  if (wttr?.ok && wttr.intensity && !(lightning?.strikes15 > 0 || metar?.ts)) wttr = { ...wttr, intensity: 0, rainNow: 0, detail: `${wttr.detail} · sin rayos detectados: no cuenta como tormenta` };
   const okM = models.filter(m => m.ok), base = okM.find(m => m.model === 'best_match') || okM.find(m => m.model === 'met_no') || okM[0];
   // Como Amaru: las señales tienen que coincidir. Un modelo solo no basta: hace falta que al menos
   // un tercio de los modelos (3 de 9) vean lluvia medible. Y si el mejor modelo dice cielo casi despejado, los modelos no cuentan.
   // Dos modelos que coincidan. Si Open-Meteo no responde y queda un solo modelo (MET Norway, que es pronóstico),
   // solo cuenta si otra fuente lo respalda (wttr.in, radar o aeropuerto): así no marca "lluvia leve" con sol.
-  const corro = (wttr?.ok && wttr.mm >= MIN_MM) || (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || metar.near));
-  const need = okM.length >= 2 ? 2 : corro ? 1 : 2;
+  // Los modelos y wttr.in son PRONÓSTICOS: dos pronósticos de acuerdo no prueban que esté lloviendo (por eso marcaba
+  // lluvia con el cielo solo nublado). El respaldo tiene que ser una observación real: radar o aeropuerto.
+  const corro = (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || metar.near));
+  // Observación que dice "no llueve": radar sin ecos cerca o aeropuerto sin precipitación
+  const obsDry = !corro && ((radar?.ok && !radar.intensity && !radar.near) || (metar?.ok && !metar.intensity && !metar.near));
+  // Con Open-Meteo (9 modelos) hacen falta 3 que coincidan; si solo responden 1-2 modelos, no confirman lluvia sin una observación.
+  // Si una observación dice que no llueve, hace falta que la mitad de los modelos vea lluvia.
+  // Excepción: si el modelo y wttr.in coinciden en lluvia moderada o más (≥ 2,5 mm/h), se acepta aunque no haya radar (no es una simple llovizna de pronóstico).
+  const fcStrong = !obsDryPre(radar, metar) && wttr?.ok && wttr.mm >= 2.5 && okM.some(m => m.rainNow >= 2.5);
+  let need = okM.length >= 6 ? 3 : okM.length >= 3 ? 2 : corro || fcStrong ? 1 : 99;
+  if (obsDry) need = Math.max(need, Math.ceil(okM.length / 2), 3);
   const kth = arr => { const v = arr.slice().sort((x, y) => y - x); return v.length >= need ? v[need - 1] : 0; };
   const clear = (base?.cloudCover ?? 100) < 50;
   const raining = okM.filter(m => m.intensity > 0);
@@ -391,7 +403,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
   const modelSrc = { id: 'modelos', kind: 'pronóstico', name: `${provs} · ${okM.length} de ${models.length} modelos`, ok: okM.length > 0,
     at: base?.observedAt, intensity: mInt, rainNow: mRain,
     detail: !okM.length ? `Sin conexión con los pronósticos (${[...new Set(models.map(m => m.error).filter(Boolean))].join(' · ')})`
-      : `${stale ? `Dato de Open-Meteo de hace ${stale.staleMin} min (${stale.staleWhy}) · ` : ''}${raining.length} de ${okM.length} modelos ven lluvia medible${raining.length ? ` (${raining.map(m => m.name).join(', ')})` : ''}; hacen falta ${need}${clear && raining.length ? ' · no cuenta: el cielo está casi despejado' : ''} · nubosidad ${base?.cloudCover ?? '—'} %`,
+      : `${stale ? `Dato de Open-Meteo de hace ${stale.staleMin} min (${stale.staleWhy}) · ` : ''}${raining.length} de ${okM.length} modelos ven lluvia medible${raining.length ? ` (${raining.map(m => m.name).join(', ')})` : ''}; ${need > okM.length ? (okM.length < 3 ? 'con tan pocos modelos hace falta que el radar o el aeropuerto confirmen' : 'el radar/aeropuerto no ven lluvia: hace falta la mitad de los modelos') : `hacen falta ${need}`}${obsDry && need <= okM.length ? ' (radar/aeropuerto secos)' : ''}${clear && raining.length ? ' · no cuenta: el cielo está casi despejado' : ''} · nubosidad ${base?.cloudCover ?? '—'} %`,
     error: okM.length ? undefined : models[0]?.error, models: models.map(m => ({ name: m.name, ok: m.ok, rainNow: m.rainNow ?? 0, intensity: m.intensity || 0, error: m.error, stale: m.stale ? m.staleMin : undefined })) };
   const sources = [modelSrc, metar, owm, radar, wttr, lightning, ...extra].filter(Boolean);
   const live = sources.filter(s => s.ok);
@@ -624,7 +636,7 @@ export function describe(w) {
   const mmInt = w.rainNow >= 8 ? 3 : w.rainNow >= 2.5 ? 2 : w.rainNow >= MIN_MM ? 1 : 0;
   const intensity = Math.max(codeInt, mmInt);
   const condition = codeTxt || (mmInt === 3 ? 'Lluvia fuerte' : mmInt === 2 ? 'Lluvia moderada' : mmInt === 1 ? 'Lluvia leve'
-    : w.probNext3h >= NOTICE_PROB ? 'Lluvia probable' : (w.cloudCover ?? 0) >= 70 ? 'Nublado' : (w.cloudCover ?? 0) >= 30 ? 'Parcialmente nublado' : 'Despejado');
+    : (w.cloudCover ?? 0) >= 70 ? 'Nublado' : (w.cloudCover ?? 0) >= 30 ? 'Parcialmente nublado' : 'Despejado');
   return { raining: intensity > 0, intensity, condition };
 }
 
