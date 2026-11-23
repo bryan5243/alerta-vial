@@ -86,7 +86,7 @@ async function computeStatus() {
   const db = load();
   let [weather, tide, flood] = await Promise.all([
     getWeather({ ...db.config.weather, metarStation: db.config.weather.metarStation ?? 'SERO', owmKey: process.env.OWM_KEY || db.config.weather.owmKey || '' },
-      localSources({ observed: db.alert.observed, reports: db.reports || [] })),
+      localSources({ observed: db.alert.observed })),
     getTide(db.config.weather),
     db.config.floodEnabled === true
       ? getFloodForecast({ ...db.config.center, apiKey: process.env.GOOGLE_FLOOD_KEY || db.config.googleFloodKey || '' })
@@ -94,7 +94,7 @@ async function computeStatus() {
   ]);
   if (!simOn()) noteObservation(weather); // diario del clima (para mostrar "Ayer")
   if (simOn()) weather = simulatedWeather(weather);
-  const risk = riskIndex({ weather, cfg: db.config.weather, flood, reports: db.reports || [], tide, rivers: (db.rivers || []).filter(r => r.active !== false) });
+  const risk = riskIndex({ weather, cfg: db.config.weather, flood, reports: [], tide, rivers: (db.rivers || []).filter(r => r.active !== false) });
   // Nivel sugerido: el mayor entre la regla de lluvia y el índice de riesgo combinado.
   // Un río crecido o desbordado sube el nivel por sí solo (antes solo sumaba hasta 20 puntos al índice y no alcanzaba ni la amarilla).
   const activeRivers = (db.rivers || []).filter(r => r.active !== false);
@@ -105,7 +105,7 @@ async function computeStatus() {
   const suggested = maxLevel(maxLevel(levelFromWeather(weather, db.config.weather), risk.level), riverLevel);
   // Durante una simulación el nivel publicado sigue al clima simulado, aunque la alerta esté en manual.
   const effective = db.alert.mode === 'manual' && !simOn() ? db.alert.level : stepDown(db, suggested);
-  const drain = syncAutoPoints(db, effective);
+  const drain = syncAutoPoints(db, effective, Date.now(), weather);
   return { weather, suggested, effective, risk, tide, flood, drain };
 }
 // Al dejar de llover el semáforo no cae de golpe: baja un color cada cierto tiempo (por defecto 45 min),
@@ -122,8 +122,11 @@ function stepDown(db, suggested, now = Date.now()) {
 // Puntos automáticos (y sus vías alternas): se encienden solos con naranja/roja. Cuando el semáforo baja a
 // amarilla o verde, también se apagan los que se encendieron a mano durante la alerta, para que no queden
 // vías alternas publicadas sin peligro.
-function syncAutoPoints(db, effective, now = Date.now()) {
-  const a = db.alert, drainMs = (+(db.config.weather?.drainHours ?? 3) || 0) * 3600e3;
+function syncAutoPoints(db, effective, now = Date.now(), weather = null) {
+  const a = db.alert;
+  // Hora de la última lluvia confirmada (para los puntos que vienen de reportes ciudadanos)
+  if (weather?.intensity > 0 && (!a.lastRainAt || now - a.lastRainAt > 60e3)) { a.lastRainAt = now; save(); }
+  const drainMs = (+(db.config.weather?.drainHours ?? 3) || 0) * 3600e3;
   // Mientras hay naranja o roja se anota la hora; los puntos críticos siguen activos hasta que pase el tiempo
   // de drenaje (por defecto 3 h) desde la última vez que hubo naranja/roja: el agua tarda en bajar.
   if (LV[effective] >= 2) { if (!a.lastHighAt || now - a.lastHighAt > 60e3) { a.lastHighAt = now; save(); } }
@@ -135,8 +138,11 @@ function syncAutoPoints(db, effective, now = Date.now()) {
   }
   if (LV[effective] >= 2 && a.drainDone) { a.drainDone = false; save(); }
   if (a.lastEffective !== effective) { a.lastEffective = effective; save(); }
-  return { draining, until: draining ? new Date(until).toISOString() : null };
+  // Puntos creados desde reportes (nivel medio): encendidos con naranja/roja y hasta 2 h después de que para la lluvia.
+  const repEnd = a.lastHighAt && now - a.lastHighAt < 12 * 3600e3 ? Math.max(a.lastHighAt, a.lastRainAt || 0) + REPORT_DRAIN_MS : 0;
+  return { draining, until: draining ? new Date(until).toISOString() : null, reportOn: LV[effective] >= 2 || repEnd > now };
 }
+const REPORT_DRAIN_MS = 2 * 3600e3, REPORT_TTL_MS = 3600e3;
 
 // ---------- API pública ----------
 app.get('/api/public/state', async (req, res) => {
@@ -144,7 +150,7 @@ app.get('/api/public/state', async (req, res) => {
   const { weather, suggested, effective, risk, tide, flood, drain } = await computeStatus();
   const f = featuresCfg(db); const on = (k, list) => (f[k] ? list : []);
   // Un punto con "auto" se enciende con naranja o roja y sigue encendido mientras el agua drena.
-  const pointOn = p => p.active || (p.auto && (LV[effective] >= 2 || drain?.draining));
+  const pointOn = p => p.active || (p.auto && (p.source === 'reporte' ? drain?.reportOn : (LV[effective] >= 2 || drain?.draining)));
   // Una vía alterna vinculada a un punto o calle solo se muestra mientras ese peligro esté activo.
   const routeOn = r => {
     if (!r.active) return false;
@@ -199,7 +205,7 @@ app.post('/api/public/reports', (req, res) => {
   const db = load();
   db.reports ||= [];
   const report = { id: nextId('rep'), lat, lng, street: String(street || '').slice(0, 120),
-    description: String(description).slice(0, 400), level: ['leve', 'moderado', 'grave'].includes(level) ? level : 'moderado',
+    description: String(description).slice(0, 400), level: 'moderado', // la ciudadanía ya no elige gravedad: todo reporte aceptado es un punto crítico de nivel medio
     type: type === 'desborde' ? 'desborde' : 'inundacion',
     status: 'pendiente', createdAt: new Date().toISOString() };
   report.photo = `/photos/${report.id}.jpg`;
@@ -216,7 +222,7 @@ app.get('/api/public/reports', (req, res) => {
   const f = featuresCfg(db);
   // Un reporte ya convertido en punto crítico no se muestra como reporte: lo representa el punto (solo con naranja/roja)
   const ids = new Set((db.points || []).map(p => p.id));
-  res.json((db.reports || []).filter(r => r.status === 'verificado' && !(r.pointId && ids.has(r.pointId)) && (r.type === 'desborde' ? f.rivers : f.reports)));
+  res.json((db.reports || []).filter(r => r.status === 'verificado' && Date.now() - new Date(r.createdAt) < REPORT_TTL_MS && !(r.pointId && ids.has(r.pointId)) && (r.type === 'desborde' ? f.rivers : f.reports)));
 });
 
 // Radar RainViewer: devolvemos las plantillas de tiles más recientes (sin key).

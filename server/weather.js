@@ -685,9 +685,7 @@ export function riskIndex({ weather: w, cfg, flood, reports = [], tide, rivers =
   const local = Math.max(0, ...rivers.map(r => ({ desbordado: 1, crecido: 0.6 })[r.status] || 0));
   const river = Math.max(local, flood?.ok ? Math.max(0, ...(flood.gauges || []).map(g => sevScore[g.severity] || 0)) : 0);
   parts.push({ key: 'rios', label: 'Ríos', max: 20, value: Math.round(river * 20), ok: !!flood?.ok || rivers.length > 0 });
-  const recent = reports.filter(r => r.status !== 'descartado' && Date.now() - new Date(r.createdAt) < 3 * 3600e3);
-  const rep = clamp(recent.reduce((s, r) => s + ({ leve: 0.15, moderado: 0.3, grave: 0.5 }[r.level] || 0.2) * (r.status === 'verificado' ? 1.5 : 1), 0));
-  parts.push({ key: 'reportes', label: 'Reportes (3 h)', max: 15, value: Math.round(rep * 15), ok: true });
+  // Los reportes ciudadanos ya no cambian el clima ni el semáforo: sirven para marcar calles (puntos críticos de nivel medio).
   const tideV = tide?.ok ? clamp((tide.relative - 0.5) * 2) : 0;
   parts.push({ key: 'marea', label: 'Marea', max: 10, value: Math.round(tideV * 10), ok: !!tide?.ok });
   const value = parts.reduce((s, p) => s + p.value, 0);

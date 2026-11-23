@@ -513,13 +513,9 @@
           <button type="button" class="r-card on" data-rtype="inundacion" aria-pressed="true"><span class="r-cic" id="r-ic-flood" aria-hidden="true"></span><b>Calle inundada</b><small>Agua en la vía</small></button>
           <button type="button" class="r-card" data-rtype="desborde" aria-pressed="false"><span class="r-cic" id="r-ic-river" aria-hidden="true"></span><b>Desborde de río</b><small>Agua fuera del cauce</small></button>
         </div>
-        <span class="lbl">Qué tan grave es</span>
-        <div class="r-lvls" role="radiogroup" aria-label="Gravedad">
-          <button type="button" class="r-lvl l1" data-lvl="leve" aria-pressed="false"><i></i><b>Leve</b><small>Charcos, se puede pasar</small></button>
-          <button type="button" class="r-lvl l2 on" data-lvl="moderado" aria-pressed="true"><i></i><b>Moderado</b><small>Agua a media llanta</small></button>
-          <button type="button" class="r-lvl l3" data-lvl="grave" aria-pressed="false"><i></i><b>Grave</b><small>No se puede pasar</small></button>
-        </div>
-        <select id="r-level" hidden><option value="leve">Leve</option><option value="moderado" selected>Moderado</option><option value="grave">Grave</option></select>
+        <span class="lbl">Calle o intersección</span>
+        <div class="r-place" id="r-place-box"><span class="r-place-t" id="r-place" aria-live="polite"><i class="r-spin"></i> Buscando la calle…</span><button type="button" class="linklike" id="r-place-edit">Cambiar</button></div>
+        <div class="field" id="r-street-wrap" hidden><input id="r-street" placeholder="Ej. Av. Quito y Colón" maxlength="120" aria-label="Calle o sector"><div class="r-sug" id="r-sug" aria-live="polite"></div></div>
       </section>
       <section class="r-pane" data-pane="2">
         <div class="field"><span class="lbl">Fotografía <b class="req">obligatoria</b></span>
@@ -536,7 +532,6 @@
           </div>
           <input id="r-photo-cam" type="file" accept="image/*" capture="environment" hidden><input id="r-photo-gal" type="file" accept="image/*" hidden>
           <span class="err" id="r-photo-err"></span></div>
-        <div class="field"><label for="r-street">Calle o sector</label><input id="r-street" placeholder="Ej. Av. Quito y Colón" maxlength="120"><div class="r-sug" id="r-sug" aria-live="polite"></div></div>
         <div class="field"><label for="r-desc">Qué está pasando</label><textarea id="r-desc" maxlength="400" rows="3" placeholder="Ej. El agua cubre la vereda frente al parque y el bus no pasa."></textarea><span class="err" id="r-err"></span></div>
       </section>
     </div>

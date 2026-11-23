@@ -528,7 +528,7 @@ $('#btn-radar').addEventListener('click', () => { radarOn = !radarOn; $('#btn-ra
 
 // Reporte ciudadano, por pasos: 1) dónde  2) qué y qué tan grave  3) foto y detalles
 $('#r-ic-gps').innerHTML = ICON.nav; $('#r-ic-map').innerHTML = ICON.pin; $('#r-ic-flood').innerHTML = ICON.drop; $('#r-ic-river').innerHTML = ICON.wave;
-const R_TITLES = [['¿Dónde está el problema?', 'Tu reporte lo revisa el equipo municipal antes de publicarse en el mapa.'], ['¿Qué está pasando?', 'Elige el tipo de problema y qué tan grave es.'], ['Foto y detalles', 'La foto ayuda al equipo a comprobar el reporte.']];
+const R_TITLES = [['¿Dónde está el problema?', 'Tu reporte lo revisa el equipo municipal antes de publicarse en el mapa.'], ['¿Qué está pasando?', 'Elige el tipo de problema. La calle se completa sola.'], ['Foto y detalles', 'La foto ayuda al equipo a comprobar el reporte.']];
 let rStep = 0;
 function repStep(n) {
   rStep = n;
@@ -546,13 +546,14 @@ function openReport() {
 function locationChosen(pos) {
   pickPos = pos;
   if (pickMarker) pickMarker.remove(); pickMarker = map.addMarker({ ...pos, cls: 'report', icon: 'report' });
-  $('#r-coords').innerHTML = `${ICON.pin}<span>Ubicación marcada · ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}</span>`;
+  $('#r-coords').innerHTML = `${ICON.pin}<span>Ubicación marcada</span>`;
   $('#sheet-bg').classList.add('open'); repStep(1); suggestStreets(pos);
 }
 // Calles y sector cercanos al punto marcado: un toque los escribe en "Calle o sector"
 let sugSeq = 0;
 async function suggestStreets(pos) {
   const box = $('#r-sug'), my = ++sugSeq; if ($('#r-street').dataset.auto === '1') { $('#r-street').value = ''; }
+  showStreetEdit(false); $('#r-place').innerHTML = '<i class="r-spin"></i> Buscando la calle…';
   // Primero lo que ya conoce el sistema (puntos críticos y calles cercanas), al instante
   const near = (arr, get) => (arr || []).map(x => ({ name: x.name, d: get(x) })).filter(x => x.name && x.d < 200);
   const dist = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lng - b.lng) * 111320 * Math.cos(a.lat * Math.PI / 180));
@@ -575,9 +576,11 @@ async function suggestStreets(pos) {
     paint([...inter, ...st, ...local], r.sector, loading);
     const inp = $('#r-street'), auto = inter[0] || st[0] || local[0] || '';
     if (!inp.value.trim() || inp.dataset.auto === '1') { inp.value = [auto, r.sector && `Sector ${r.sector}`].filter(Boolean).join(' · '); inp.dataset.auto = inp.value ? '1' : ''; }
+    if (inp.value) $('#r-place').innerHTML = `${ICON.pin}<b>${esc(inp.value)}</b>`;
+    else if (!loading) showStreetEdit(true); // no se encontró la calle: se pide escribirla
   };
   try { fill(await nearStreets(pos.lat, pos.lng, q => fill(q, true)), false); }
-  catch { if (my === sugSeq) paint(local, '', false); }
+  catch { if (my === sugSeq) { paint(local, '', false); if (!$('#r-street').value) showStreetEdit(true); } }
 }
 $('#btn-report').addEventListener('click', openReport);
 $('#r-loc-map').addEventListener('click', () => { $('#sheet-bg').classList.remove('open'); picking = true; $('#picking').classList.add('on'); if (!isAppNav() && window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); });
@@ -601,10 +604,9 @@ document.querySelectorAll('[data-rtype]').forEach(btn => btn.addEventListener('c
   document.querySelectorAll('[data-rtype]').forEach(x => { x.classList.toggle('on', x === btn); x.setAttribute('aria-pressed', x === btn); });
   $('#r-desc').placeholder = rType === 'desborde' ? 'Ej. El río se salió por la margen derecha y el agua llega a las casas.' : 'Ej. El agua cubre la vereda frente al parque y el bus no pasa.';
 }));
-document.querySelectorAll('[data-lvl]').forEach(btn => btn.addEventListener('click', () => {
-  $('#r-level').value = btn.dataset.lvl;
-  document.querySelectorAll('[data-lvl]').forEach(x => { x.classList.toggle('on', x === btn); x.setAttribute('aria-pressed', x === btn); });
-}));
+// Calle automática: se muestra como texto; "Cambiar" abre el campo y las sugerencias
+const showStreetEdit = on => { $('#r-street-wrap').hidden = !on; $('#r-place-box').hidden = on; if (on) $('#r-street').focus({ preventScroll: true }); };
+$('#r-place-edit').addEventListener('click', () => showStreetEdit(true));
 $('#r-next').addEventListener('click', () => repStep(2));
 $('#r-back').addEventListener('click', () => { if (rStep === 0) closeSheet(); else repStep(rStep - 1); });
 const closeSheet = () => { clearPhoto(); stopPick(); $('#sheet-bg').classList.remove('open'); if (pickMarker) { pickMarker.remove(); pickMarker = null; } pickPos = null; };
@@ -632,11 +634,11 @@ $('#r-photo-del').addEventListener('click', clearPhoto);
 $('#report-form').addEventListener('submit', async e => {
   e.preventDefault(); $('#r-err').textContent = '';
   if (!photoData) { $('#r-photo-err').textContent = 'Agrega una fotografía: es obligatoria para comprobar el reporte.'; $('#r-photo-box').classList.add('bad'); return; }
-  const body = { ...pickPos, type: rType, street: $('#r-street').value, level: $('#r-level').value, description: $('#r-desc').value, photo: photoData };
+  const body = { ...pickPos, type: rType, street: $('#r-street').value, description: $('#r-desc').value, photo: photoData };
   const r = await fetch('/api/public/reports', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const j = await r.json();
   if (!r.ok) { $('#r-err').textContent = j.error; return; }
-  closeSheet(); e.target.reset(); clearPhoto(); document.querySelectorAll('[data-lvl]').forEach(x => { const on = x.dataset.lvl === 'moderado'; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on); }); toast('Gracias. Tu reporte fue enviado y será revisado.', 'ok');
+  closeSheet(); e.target.reset(); clearPhoto(); toast('Gracias. Tu reporte fue enviado y será revisado.', 'ok');
 });
 
 load().catch(err => { console.error(err); toast('No se pudo cargar la información. Reintenta en unos segundos.', 'err'); });
