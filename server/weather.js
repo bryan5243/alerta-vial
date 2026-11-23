@@ -741,6 +741,16 @@ async function daysFromMetno({ lat, lng }) {
   const day = k => new Date(new Date(today + 'T12:00:00Z').getTime() + k * 864e5).toISOString().slice(0, 10);
   return [mk(day(-1), -1), mk(day(0), 0), mk(day(1), 1), mk(day(2), 2)];
 }
+export { INT_TXT, WMO_TXT };
+// Ayer desde el archivo de pronósticos de Open-Meteo (otro servidor que el de pronóstico; puede responder aunque aquel limite)
+export async function yesterdayFromArchive({ lat, lng }, date) {
+  const url = new URL('https://historical-forecast-api.open-meteo.com/v1/forecast');
+  url.search = new URLSearchParams({ latitude: lat, longitude: lng, timezone: 'America/Guayaquil', start_date: date, end_date: date,
+    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum' });
+  const D = (await getJson(url, 8000)).daily || {};
+  if (!D.time?.length || D.temperature_2m_max?.[0] == null) throw new Error('sin datos');
+  return { date, rel: -1, code: D.weather_code?.[0], text: WMO_TXT[D.weather_code?.[0]] || '', tMax: D.temperature_2m_max[0], tMin: D.temperature_2m_min?.[0], mm: r1(D.precipitation_sum?.[0]) };
+}
 export async function getDays({ lat, lng }) {
   const key = `${lat},${lng}`;
   if (daysCache.data && daysCache.key === key && Date.now() - daysCache.at < 30 * 60 * 1000) return daysCache.data;

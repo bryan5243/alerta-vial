@@ -689,8 +689,19 @@ if (pushOk) {
   });
 }
 // Pronóstico de ayer, hoy y los próximos 2 días (se pide aparte y se guarda 30 min en el servidor)
+// El teléfono también anota el día de hoy: si el servidor se reinició y no tiene "Ayer", se usa lo que este teléfono vio.
+function dayMemo(d) {
+  if (!d?.ok || !d.days?.length) return d;
+  let log = {}; try { log = JSON.parse(localStorage.getItem('av_daylog') || '{}') || {}; } catch {}
+  const t = d.days.find(x => x.rel === 0);
+  if (t && !t.na) { const o = log[t.date]; log[t.date] = !o ? { ...t } : { ...o, tMax: Math.max(o.tMax ?? -99, t.tMax ?? -99), tMin: Math.min(o.tMin ?? 99, t.tMin ?? 99), ...(t.mm >= (o.mm ?? 0) ? { mm: t.mm, code: t.code, text: t.text } : {}) }; }
+  for (const k of Object.keys(log).sort().slice(0, -10)) delete log[k];
+  try { localStorage.setItem('av_daylog', JSON.stringify(log)); } catch {}
+  const days = d.days.map(x => (x.rel === -1 && x.na && log[x.date]) ? { ...log[x.date], rel: -1, prob: null, saved: true } : x);
+  return { ...d, days };
+}
 async function loadDays() {
-  try { const r = await fetch('/api/public/forecast-days', { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw 0; daysData = await r.json(); try { localStorage.setItem('av_days', JSON.stringify(daysData)); } catch {} }
+  try { const r = await fetch('/api/public/forecast-days', { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw 0; daysData = dayMemo(await r.json()); try { localStorage.setItem('av_days', JSON.stringify(daysData)); } catch {} }
   catch { try { daysData ||= JSON.parse(localStorage.getItem('av_days') || 'null'); } catch {} daysData ||= { ok: false, days: [] }; }
   document.querySelectorAll('[data-days]').forEach(el => { el.innerHTML = daysCards(daysData); });
 }

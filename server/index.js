@@ -80,6 +80,7 @@ function simulatedWeather(real) {
 }
 import { startLightning } from './lightning.js';
 import { nearStreets } from './near.js';
+import { noteObservation, withHistory } from './daylog.js';
 { const c0 = load().config; if (c0.lightningEnabled !== false) startLightning({ lat: c0.weather?.lat ?? c0.center?.lat, lng: c0.weather?.lng ?? c0.center?.lng }); }
 async function computeStatus() {
   const db = load();
@@ -91,6 +92,7 @@ async function computeStatus() {
       ? getFloodForecast({ ...db.config.center, apiKey: process.env.GOOGLE_FLOOD_KEY || db.config.googleFloodKey || '' })
       : Promise.resolve({ ok: false, disabled: true, gauges: [] }),
   ]);
+  if (!simOn()) noteObservation(weather); // diario del clima (para mostrar "Ayer")
   if (simOn()) weather = simulatedWeather(weather);
   const risk = riskIndex({ weather, cfg: db.config.weather, flood, reports: db.reports || [], tide, rivers: (db.rivers || []).filter(r => r.active !== false) });
   // Nivel sugerido: el mayor entre la regla de lluvia y el índice de riesgo combinado.
@@ -435,7 +437,7 @@ app.get('/api/public/near', async (req, res) => {
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return res.status(400).json({ error: 'Coordenadas inválidas' });
   try { res.json(await nearStreets(lat, lng)); } catch { res.json({ streets: [], sector: '' }); }
 });
-app.get('/api/public/forecast-days', async (req, res) => res.json(await getDays(load().config.weather)));
+app.get('/api/public/forecast-days', async (req, res) => { const cfg = load().config.weather; res.json(await withHistory(await getDays(cfg), cfg)); });
 
 // ---------- Notificaciones push ----------
 app.get('/api/public/push-key', (req, res) => res.json({ key: push.publicKey() }));

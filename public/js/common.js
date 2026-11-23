@@ -118,6 +118,6 @@ export function daysCards(d) {
     return `<div class="wd${x.rel === 0 ? ' today' : ''}${past ? ' past' : ''}${wet ? ' wet' : ''}" role="listitem" aria-label="${lab(x)}: ${x.text}, ${past ? 'llovió' : 'lluvia'} ${dec(x.mm)} mm${p == null || past ? '' : `, probabilidad ${p} %`}">
       <span class="wd-l">${lab(x)}</span><span class="wd-t">${x.text || '–'}</span>
       <span class="wd-temp"><b>${x.tMax == null ? '–' : Math.round(x.tMax)}°</b> <small>${x.tMin == null ? '' : Math.round(x.tMin) + '°'}</small></span>
-      <span class="wd-r">${past ? `${dec(x.mm)} mm` : p == null ? `${dec(x.mm)} mm` : `${p}% · ${dec(x.mm)} mm`}</span>${past ? '<span class="wd-n">ya ocurrió</span>' : ''}</div>`;
+      <span class="wd-r">${past ? `${dec(x.mm)} mm` : p == null ? `${dec(x.mm)} mm` : `${p}% · ${dec(x.mm)} mm`}</span>${past ? `<span class="wd-n">${x.saved ? 'registrado' : 'ya ocurrió'}</span>` : ''}</div>`;
   }).join('')}</div>`;
 }
