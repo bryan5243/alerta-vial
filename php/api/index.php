@@ -142,6 +142,10 @@ function push_tick(?array $st = null): array {
   $st = $st ?? compute_status();
   return push_check_and_notify($st, level_msgs(db_load())[$st['effective']] ?? null, (bool)sim_on());
 }
+// Tras un cambio en la alerta desde el panel (simulación, lluvia marcada, modo, nivel) se revisan los avisos al instante
+function push_tick_now(): void {
+  register_shutdown_function(function () { if (function_exists('fastcgi_finish_request')) fastcgi_finish_request(); try { push_tick(); } catch (Throwable $e) { error_log('AlertaVial avisos: ' . $e->getMessage()); } });
+}
 function push_tick_maybe(array $st): void {
   $c = cache_get('pushtick'); if ($c && now_ms() - ($c['at'] ?? 0) < 300000) return;
   if (function_exists('fastcgi_finish_request')) fastcgi_finish_request();
@@ -326,7 +330,7 @@ function admin_routes(string $method, array $seg): void {
     unset($p); db_save(); out(['ok' => true, 'turnedOff' => $n]);
   }
   // "Volver al clima real": apaga todas las pruebas de una vez y publica lo que dice el clima real
-  if ($r === 'reset-real' && $method === 'POST') {
+  if ($r === 'reset-real' && $method === 'POST') { push_tick_now();
     $done = []; if (sim_on()) $done[] = 'simulación de lluvia'; @unlink(data_dir() . '/cache/sim.json');
     db_lock(); $db = &db(); $a = &$db['alert'];
     if (!empty($a['observed'])) { $done[] = 'lluvia marcada por el equipo'; unset($a['observed']); }
@@ -356,21 +360,21 @@ function admin_routes(string $method, array $seg): void {
     $counts = []; foreach (['points', 'streets', 'routes', 'rivers', 'zones', 'layers', 'reports'] as $k) $counts[$k] = count($b[$k] ?? []);
     out(['ok' => true, 'counts' => $counts]);
   }
-  if ($r === 'observed' && $method === 'PUT') {
+  if ($r === 'observed' && $method === 'PUT') { push_tick_now();
     db_lock(); $db = &db(); $i = (int)round((float)($b['intensity'] ?? 0));
     if (!$i) unset($db['alert']['observed']);
     else $db['alert']['observed'] = ['intensity' => max(1, min(4, $i)), 'at' => now_iso(), 'until' => gmdate('Y-m-d\TH:i:s', time() + (int)max(15, min(720, (float)($b['minutes'] ?? 0) ?: 120)) * 60) . '.000Z'];
     db_save(); out($db['alert']['observed'] ?? ['intensity' => 0]);
   }
   if ($r === 'simulation' && $method === 'GET') out(sim_on() ?: ['active' => false]);
-  if ($r === 'simulation' && $method === 'PUT') {
+  if ($r === 'simulation' && $method === 'PUT') { push_tick_now();
     if (empty($b['active'])) { @unlink(data_dir() . '/cache/sim.json'); db_lock(); $db = &db(); unset($db['alert']['autoLevel']); $db['alert']['autoStepAt'] = now_ms(); db_save(); out(['active' => false]); }
     $n = fn($v, $max) => max(0, min($max, (float)$v));
     $s = ['active' => true, 'preset' => s_val($b['preset'] ?? 'manual', 30), 'rainNow' => $n($b['rainNow'] ?? 0, 200), 'rainPast3h' => $n($b['rainPast3h'] ?? 0, 500), 'rainNext3h' => $n($b['rainNext3h'] ?? 0, 500),
       'probNext3h' => $n($b['probNext3h'] ?? 0, 100), 'weatherCode' => (int)round($n($b['weatherCode'] ?? 0, 99)), 'until' => now_ms() + (int)max(1, min(240, (float)($b['minutes'] ?? 0) ?: 30)) * 60000];
     cache_put('sim', $s); out($s);
   }
-  if ($r === 'alert' && $method === 'PUT') {
+  if ($r === 'alert' && $method === 'PUT') { push_tick_now();
     db_lock(); $db = &db();
     if (!empty($b['mode'])) $db['alert']['mode'] = $b['mode'] === 'manual' ? 'manual' : 'auto';
     // Al pasar a automático: el semáforo sigue de inmediato al pronóstico y se apaga la simulación de lluvia

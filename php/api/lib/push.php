@@ -88,12 +88,16 @@ function push_send_all(array $msg): array {
 
 // Decide qué avisar según el estado actual. Solo avisa cuando algo EMPIEZA o EMPEORA (no repite cada 5 minutos).
 function push_check_and_notify(array $st, ?string $levelMessage, bool $simulated): array {
-  $p = push_store(); $L = $p['last']; $now = now_ms(); $pre = $simulated ? 'Prueba: ' : ''; $out = [];
+  // Las simulaciones llevan su propio registro (lastSim) y no tienen espera entre avisos: cada prueba avisa,
+  // y una prueba no bloquea el aviso de una lluvia real durante 2 h.
+  $p = push_store(); $now = now_ms(); $pre = $simulated ? 'Prueba: ' : ''; $out = [];
+  $slot = $simulated ? 'lastSim' : 'last'; $L = $simulated ? ($p['lastSim'] ?? ['init' => true]) : $p['last'];
+  if (!$simulated && isset($p['lastSim'])) { db_lock(); $db = &db(); unset($db['push']['lastSim']); db_save(); }
   $NAME = ['amarilla' => 'Alerta amarilla', 'naranja' => 'Alerta naranja', 'roja' => 'Alerta roja']; $COOL = 2 * 3600000;
   $w = $st['weather'] ?? []; $ol = $w['outlook']['level'] ?? null;
   $storm = ($w['intensity'] ?? 0) >= 4; foreach ($w['outlook']['reasons'] ?? [] as $r) if (preg_match('/prevé tormenta|reporta tormenta/u', (string)$r)) $storm = true;
   $rainy = $ol === 'lloviendo' || ($w['intensity'] ?? 0) > 0; $soon = $ol === 'probable';
-  $can = fn($k) => empty($L[$k . 'At']) || $now - $L[$k . 'At'] > $COOL;
+  $can = fn($k) => $simulated || empty($L[$k . 'At']) || $now - $L[$k . 'At'] > $COOL;
   $msgs = [];
   $first = ($L['init'] ?? false) !== true; $L['init'] = true;
   $lv = LV[$st['effective']] ?? 0; $prev = $L['level'] ?? 0;
@@ -106,7 +110,7 @@ function push_check_and_notify(array $st, ?string $levelMessage, bool $simulated
   if (!$first && $rainy && empty($L['rain']) && $can('rain')) $msgs['rain'] = ['title' => $pre . 'Está lloviendo en Santa Rosa', 'body' => 'Revisa las calles inundadas y las vías alternas antes de salir.', 'tag' => 'lluvia', 'level' => 'amarilla'];
   $L['rain'] = $rainy;
   foreach ($msgs as $k => $m) $L[$k . 'At'] = $now;
-  if (json_encode($L) !== json_encode($p['last'])) { db_lock(); $db = &db(); $db['push']['last'] = $L; db_save(); }
+  if (json_encode($L) !== json_encode($p[$slot] ?? null)) { db_lock(); $db = &db(); $db['push'][$slot] = $L; db_save(); }
   foreach ($msgs as $k => $m) { $out[] = ['k' => $k] + $m; if ($p['subs']) push_send_all($m); }
   return $out;
 }
