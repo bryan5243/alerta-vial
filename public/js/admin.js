@@ -40,6 +40,9 @@ const NAV = [
   ['alert', 'Alerta', ICON.warn, 'Alerta'], ['points', 'Puntos críticos', ICON.pin, 'Puntos'], ['streets', 'Calles', ICON.drop, 'Calles'],
   ['routes', 'Vías alternas', ICON.route, 'Vías'], ['rivers', 'Ríos', ICON.wave, 'Ríos'], ['zones', 'Desbordes', ICON.drop, 'Desbordes'], ['recommendations', 'Recomendaciones', ICON.info, 'Consejos'], ['reports', 'Reportes', ICON.inbox, 'Reportes'], ['layers', 'Capas', ICON.layers, 'Capas'], ['navsim', 'Simular navegación', ICON.nav, 'Simular'], ['config', 'Configuración', ICON.settings, 'Ajustes'],
 ];
+// En el celular la barra de abajo muestra 4 secciones principales y "Más" abre las demás
+const MAIN_NAV = new Set(['alert', 'points', 'reports', 'routes']);
+const ICON_MORE = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg>';
 const HAS_MAP = { points: 1, streets: 1, routes: 1, rivers: 1, zones: 1, reports: 1, config: 1, layers: 1 };
 
 async function boot() {
@@ -51,16 +54,26 @@ function renderShell() {
   root.innerHTML = `<div class="app">
     <nav class="side" aria-label="Secciones">
       <div class="brand"><img src="/img/emovtt-logo-blanco.png" alt="EMOVTT Santa Rosa EP"><div>SISTEMA DE ALERTA VIAL<small>ADMINISTRACIÓN</small></div></div>
-      ${NAV.map(([k, l, i, sh]) => `<button class="navbtn ${k === section ? 'on' : ''}" data-s="${k}">${i}<span class="t"><span class="long">${l}</span><span class="short">${sh}</span></span>${k === 'reports' && pend ? `<span class="n">${pend}</span>` : ''}</button>`).join('')}
+      ${NAV.map(([k, l, i, sh]) => `<button class="navbtn ${k === section ? 'on' : ''} ${MAIN_NAV.has(k) ? '' : 'sec'}" data-s="${k}">${i}<span class="t"><span class="long">${l}</span><span class="short">${sh}</span></span>${k === 'reports' && pend ? `<span class="n">${pend}</span>` : ''}</button>`).join('')}
+      <button class="navbtn more ${MAIN_NAV.has(section) ? '' : 'on'}" id="nav-more" aria-haspopup="dialog" aria-expanded="false">${ICON_MORE}<span class="t">${MAIN_NAV.has(section) ? 'Más' : esc(NAV.find(n => n[0] === section)?.[3] || 'Más')}</span></button>
       <div class="spacer"></div>
-      <a class="navbtn" href="/" target="_blank">${ICON.eye}<span class="t"><span class="long">Ver mapa público</span><span class="short">Mapa</span></span></a>
-      <button class="navbtn" id="logout">${ICON.logout}<span class="t">Salir</span></button>
+      <a class="navbtn sec" href="/" target="_blank">${ICON.eye}<span class="t"><span class="long">Ver mapa público</span><span class="short">Mapa</span></span></a>
+      <button class="navbtn sec" id="logout">${ICON.logout}<span class="t">Salir</span></button>
     </nav>
+    <div class="more-bg" id="more-bg" hidden><div class="more-sheet" role="dialog" aria-label="Más secciones"><div class="more-grab"></div><p class="more-t">Más secciones</p><div class="more-grid">
+      ${NAV.filter(([k]) => !MAIN_NAV.has(k)).map(([k, l, i]) => `<button class="more-it ${k === section ? 'on' : ''}" data-s="${k}">${i}<span>${l}</span></button>`).join('')}
+      <a class="more-it" href="/" target="_blank">${ICON.eye}<span>Ver mapa público</span></a>
+      <button class="more-it" id="logout2">${ICON.logout}<span>Salir</span></button></div></div></div>
     <div class="content">
       <div class="topbar"><h2 id="title"></h2><span class="chip ${db.alert.effective}" id="top-level">${LEVELS[db.alert.effective]}</span><div class="spacer"></div><span class="small muted" id="top-weather"></span></div>
       <div class="work ${HAS_MAP[section] ? '' : 'nomap'}"><div class="col" id="col"></div>${HAS_MAP[section] ? `<div class="mapcol"><div id="map"></div><div class="draw-tools" id="tools"></div><div class="draw-hint" id="hint"></div></div>` : ''}</div>
     </div></div>`;
-  root.querySelectorAll('.navbtn[data-s]').forEach(b => b.addEventListener('click', () => { section = b.dataset.s; editing = null; cancelDraw(); renderShell(); }));
+  root.querySelectorAll('.navbtn[data-s], .more-it[data-s]').forEach(b => b.addEventListener('click', () => { section = b.dataset.s; editing = null; cancelDraw(); renderShell(); }));
+  const moreBg = document.getElementById('more-bg'), moreBtn = document.getElementById('nav-more');
+  const moreOpen = on => { moreBg.hidden = !on; moreBtn.setAttribute('aria-expanded', on); requestAnimationFrame(() => moreBg.classList.toggle('open', on)); };
+  moreBtn.addEventListener('click', () => moreOpen(moreBg.hidden));
+  moreBg.addEventListener('click', e => { if (e.target === moreBg) moreOpen(false); });
+  document.getElementById('logout2').addEventListener('click', () => document.getElementById('logout').click());
   document.getElementById('logout').addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }).catch(() => {}); token = null; sessionStorage.removeItem('av_token'); renderLogin(); });
   topWeather();
   map = null;

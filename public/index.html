@@ -235,6 +235,10 @@
   }
   @media (min-width:901px){ #btn-full{display:none} .legend{bottom:26px} .peek{display:none} .toast-wrap{bottom:calc(96px + env(safe-area-inset-bottom))} }
   @media (min-width:1181px){ .legend{max-width:calc(100% - 330px)} }
+  /* Escritorio: la barra de escala va encima de la leyenda (antes se tapaban) */
+  @media (min-width:901px){ .leaflet-bottom.leaflet-left .leaflet-control-scale{margin-bottom:74px!important} }
+  /* Celulares angostos (320–360 px): el título entra en una sola línea */
+  @media (max-width:360px){ .brand h1{font-size:1rem;letter-spacing:.3px} .brand img{height:28px} }
   @media (min-width:901px) and (min-height:561px){ .band-more{display:none} }
   /* Pantallas bajas (celular en horizontal, laptops pequeñas): encabezado y alerta compactos para dejar espacio al mapa */
   @media (max-height:560px){
