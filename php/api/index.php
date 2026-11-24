@@ -311,6 +311,23 @@ function admin_routes(string $method, array $seg): void {
     foreach ($db['points'] as &$p) if (!empty($p['auto']) && !empty($p['active'])) { $p['active'] = false; $n++; }
     unset($p); db_save(); out(['ok' => true, 'turnedOff' => $n]);
   }
+  // "Volver al clima real": apaga todas las pruebas de una vez y publica lo que dice el clima real
+  if ($r === 'reset-real' && $method === 'POST') {
+    $done = []; if (sim_on()) $done[] = 'simulación de lluvia'; @unlink(data_dir() . '/cache/sim.json');
+    db_lock(); $db = &db(); $a = &$db['alert'];
+    if (!empty($a['observed'])) { $done[] = 'lluvia marcada por el equipo'; unset($a['observed']); }
+    if (($a['mode'] ?? '') === 'manual') { $done[] = 'modo manual'; $a['mode'] = 'auto'; }
+    unset($a['autoLevel']); $a['autoStepAt'] = now_ms(); unset($a); db_save();
+    $st = compute_status(); $off = 0;
+    db_lock(); $db = &db();
+    if (LV[$st['effective']] < 2) {
+      $db['alert']['lastHighAt'] = null; $db['alert']['lastRainAt'] = null; $db['alert']['drainDone'] = true;
+      foreach ($db['points'] as &$p) if (!empty($p['auto']) && !empty($p['active'])) { $p['active'] = false; $off++; }
+      unset($p); if ($off) $done[] = "$off punto(s) crítico(s) encendidos";
+    }
+    $db['alert']['updatedAt'] = now_iso(); db_save();
+    out(['ok' => true, 'done' => $done, 'effective' => $st['effective']]);
+  }
   // "Actualizar mapa": sube un número de versión; los teléfonos lo notan y renuevan sus archivos y cuadros guardados.
   if ($r === 'map-refresh' && $method === 'POST') { db_lock(); $db = &db(); $db['config']['mapVersion'] = now_ms(); db_save(); out(['ok' => true, 'mapVersion' => $db['config']['mapVersion']]); }
   if ($r === 'push/test' && $method === 'POST') out(push_send_all(['title' => 'Prueba de avisos', 'body' => 'Si ves esto, las notificaciones funcionan en este teléfono.', 'tag' => 'prueba']));
