@@ -340,9 +340,12 @@ function admin_routes(string $method, array $seg): void {
   if ($r === 'alert' && $method === 'PUT') {
     db_lock(); $db = &db();
     if (!empty($b['mode'])) $db['alert']['mode'] = $b['mode'] === 'manual' ? 'manual' : 'auto';
+    // Al pasar a automático: el semáforo sigue de inmediato al pronóstico y se apaga la simulación de lluvia
+    $simStopped = false;
+    if (($b['mode'] ?? '') === 'auto') { $simStopped = (bool)sim_on(); @unlink(data_dir() . '/cache/sim.json'); unset($db['alert']['autoLevel']); $db['alert']['autoStepAt'] = now_ms(); }
     if (!empty($b['level']) && isset(LV[$b['level']])) $db['alert']['level'] = $b['level'];
     if (array_key_exists('message', $b)) $db['alert']['message'] = s_val($b['message'], 300);
-    $db['alert']['updatedAt'] = now_iso(); db_save(); out($db['alert']);
+    $db['alert']['updatedAt'] = now_iso(); db_save(); out($db['alert'] + ['simStopped' => $simStopped]);
   }
   // Reportes ciudadanos
   if ($seg && $seg[0] === 'reports' && count($seg) === 2) {
