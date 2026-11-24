@@ -92,7 +92,11 @@ function push_check_and_notify(array $st, ?string $levelMessage, bool $simulated
   // y una prueba no bloquea el aviso de una lluvia real durante 2 h.
   $p = push_store(); $now = now_ms(); $pre = $simulated ? 'Prueba: ' : ''; $out = [];
   $slot = $simulated ? 'lastSim' : 'last'; $L = $simulated ? ($p['lastSim'] ?? ['init' => true]) : $p['last'];
-  if (!$simulated && isset($p['lastSim'])) { db_lock(); $db = &db(); unset($db['push']['lastSim']); db_save(); }
+  if (!$simulated && isset($p['lastSim'])) {
+    // Terminó una simulación con lluvia: se avisa que la prueba acabó
+    if (!empty($p['lastSim']['rain'])) { $m = ['title' => 'Prueba: Paró la lluvia', 'body' => 'Terminó la simulación. Vuelve el clima real.', 'tag' => 'lluvia', 'level' => 'normal']; $out[] = ['k' => 'stop'] + $m; if ($p['subs']) push_send_all($m); }
+    db_lock(); $db = &db(); unset($db['push']['lastSim']); db_save();
+  }
   $NAME = ['amarilla' => 'Alerta amarilla', 'naranja' => 'Alerta naranja', 'roja' => 'Alerta roja']; $COOL = 2 * 3600000;
   $w = $st['weather'] ?? []; $ol = $w['outlook']['level'] ?? null;
   $storm = ($w['intensity'] ?? 0) >= 4; foreach ($w['outlook']['reasons'] ?? [] as $r) if (preg_match('/prevé tormenta|reporta tormenta/u', (string)$r)) $storm = true;
@@ -107,8 +111,14 @@ function push_check_and_notify(array $st, ?string $levelMessage, bool $simulated
   $L['storm'] = $storm;
   if (!$first && !$storm && $soon && empty($L['soon']) && !$rainy && $can('soon')) $msgs['soon'] = ['title' => $pre . 'Se aproxima lluvia', 'body' => ($w['outlook']['text'] ?? '') ?: 'Es probable un aguacero en las próximas horas. Lleva paraguas.', 'tag' => 'lluvia', 'level' => 'amarilla'];
   $L['soon'] = $soon;
-  if (!$first && $rainy && empty($L['rain']) && $can('rain')) $msgs['rain'] = ['title' => $pre . 'Está lloviendo en Santa Rosa', 'body' => 'Revisa las calles inundadas y las vías alternas antes de salir.', 'tag' => 'lluvia', 'level' => 'amarilla'];
-  $L['rain'] = $rainy;
+  if (!$first && $rainy && empty($L['rain']) && $can('rain')) $msgs['rain'] = ['title' => $pre . (min(3, (int)($w['intensity'] ?? 0)) ? ['Lluvia', 'Lluvia leve', 'Lluvia moderada', 'Lluvia fuerte'][min(3, (int)$w['intensity'])] : 'Está lloviendo') . ' en Santa Rosa', 'body' => 'Revisa las calles inundadas y las vías alternas antes de salir.', 'tag' => 'lluvia', 'level' => 'amarilla'];
+  // Empezó a llover (ya en el bloque de arriba), la lluvia aumentó (moderada o fuerte) o paró
+  $INT = ['Lluvia', 'Lluvia leve', 'Lluvia moderada', 'Lluvia fuerte']; $it = min(3, (int)($w['intensity'] ?? 0)); $prevInt = $L['int'] ?? 0;
+  if (!$first && $rainy && !empty($L['rain']) && !$storm && $it >= 2 && $it > $prevInt && $can('heavier'))
+    $msgs['heavier'] = ['title' => $pre . 'La lluvia aumentó: ' . mb_strtolower($INT[$it]), 'body' => $it >= 3 ? 'Las calles bajas se inundan rápido. Evítalas y usa las vías alternas.' : 'Pueden empezar a inundarse las calles bajas. Revisa el mapa antes de salir.', 'tag' => 'lluvia', 'level' => $it >= 3 ? 'roja' : 'naranja'];
+  if (!$first && !$rainy && !empty($L['rain']) && $can('stop'))
+    $msgs['stop'] = ['title' => $pre . 'Paró la lluvia', 'body' => 'Las calles pueden seguir con agua un rato. Revisa el mapa antes de salir.', 'tag' => 'lluvia', 'level' => 'normal'];
+  $L['rain'] = $rainy; $L['int'] = $rainy ? $it : 0;
   foreach ($msgs as $k => $m) $L[$k . 'At'] = $now;
   if (json_encode($L) !== json_encode($p[$slot] ?? null)) { db_lock(); $db = &db(); $db['push'][$slot] = $L; db_save(); }
   foreach ($msgs as $k => $m) { $out[] = ['k' => $k] + $m; if ($p['subs']) push_send_all($m); }
