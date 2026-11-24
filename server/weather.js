@@ -78,6 +78,21 @@ function omParse(model, j, sfx) {
     thunderCode6h: hours.slice(nowIdx, nowIdx + 7).some(h => h.code >= 95),
     hourly: hours.slice(nowIdx, nowIdx + 25).map(({ cape, code, ...h }) => h) };
 }
+// Puente: si Open-Meteo bloquea la IP de este servidor (Render comparte IP con muchas apps), los mismos datos
+// se piden a la versión PHP en cPanel, donde Open-Meteo sí responde. Así las dos páginas muestran el mismo pronóstico.
+const OM_RELAY = process.env.OM_RELAY ?? 'https://www.emovttsr.gob.ec/alertavial/api/public/om-relay';
+let relay = { at: 0, models: null };
+async function relayModels(lat, lng) {
+  if (!OM_RELAY) return null;
+  if (relay.models && Date.now() - relay.at < OM_TTL) return relay.models;
+  try {
+    const j = await getJson(OM_RELAY, 10000);
+    if (Math.abs(j.latitude - lat) > 0.15 || Math.abs(j.longitude - lng) > 0.15) return null; // otro punto: no sirve
+    const models = Object.keys(MODELS).map(m => ({ ...omParse(m, j, true), via: 'cPanel' }));
+    if (!models.some(m => m.ok)) return null;
+    relay = { at: Date.now(), models }; return models;
+  } catch { return null; }
+}
 async function openMeteoAll(lat, lng) {
   const ids = Object.keys(MODELS), key = `${lat},${lng}`, now = Date.now();
   if (om.models && om.key === key && now - om.at < OM_TTL) return om.models;
@@ -89,13 +104,14 @@ async function openMeteoAll(lat, lng) {
     }
     return ids.map(m => ({ model: m, name: MODELS[m], ok: false, error, intensity: 0 }));
   };
-  if (now < om.blockedUntil && om.key === key) return fail(om.error);
+  if (now < om.blockedUntil && om.key === key) return (await relayModels(lat, lng)) || fail(om.error);
   let models;
   try {
     const j = await getJson(omQuery(lat, lng, ids.join(',')), 10000);
     models = ids.map(m => omParse(m, j, true));
   } catch (e) {
-    if (/demasiadas consultas/.test(e.message)) { om = { ...om, key, models: null, blockedUntil: now + OM_BLOCK, error: e.message }; return fail(e.message); }
+    if (/demasiadas consultas/.test(e.message)) { om = { ...om, key, models: null, blockedUntil: now + OM_BLOCK, error: e.message }; return (await relayModels(lat, lng)) || fail(e.message); }
+    { const r = await relayModels(lat, lng); if (r) { om = { ...om, key, at: now, models: r, error: '', good: r, goodAt: now }; return r; } }
     // Si la consulta combinada no funciona por otro motivo, al menos se intenta el mejor modelo solo
     try { models = [omParse('best_match', await getJson(omQuery(lat, lng)), false), ...ids.slice(1).map(m => ({ model: m, name: MODELS[m], ok: false, error: e.message, intensity: 0 }))]; }
     catch (e2) { om = { ...om, key, models: null, error: e2.message }; return fail(e2.message); }
@@ -428,7 +444,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
   const raining = okM.filter(m => m.intensity > 0);
   const mInt = clear ? 0 : kth(okM.map(m => m.intensity)), mRain = mInt ? r1(kth(okM.map(m => m.rainNow))) : 0;
   const omOk = okM.filter(m => m.model !== 'met_no').length, stale = okM.find(m => m.stale);
-  const provs = [omOk && 'Open-Meteo', okM.some(m => m.model === 'met_no') && 'MET Norway'].filter(Boolean).join(' + ') || 'Open-Meteo + MET Norway';
+  const provs = [omOk && (okM.some(m => m.via) ? 'Open-Meteo vía cPanel' : 'Open-Meteo'), okM.some(m => m.model === 'met_no') && 'MET Norway'].filter(Boolean).join(' + ') || 'Open-Meteo + MET Norway';
   const modelSrc = { id: 'modelos', kind: 'pronóstico', name: `${provs} · ${okM.length} de ${models.length} modelos`, ok: okM.length > 0,
     at: base?.observedAt, intensity: mInt, rainNow: mRain,
     detail: !okM.length ? `Sin conexión con los pronósticos (${[...new Set(models.map(m => m.error).filter(Boolean))].join(' · ')})`
