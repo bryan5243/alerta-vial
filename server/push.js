@@ -35,17 +35,22 @@ export async function sendAll({ title, body, tag, level }) {
 }
 
 const LV = { normal: 0, amarilla: 1, naranja: 2, roja: 3 };
+const INT_TXT = ['Lluvia', 'Lluvia leve', 'Lluvia moderada', 'Lluvia fuerte'];
 const NAME = { amarilla: 'Alerta amarilla', naranja: 'Alerta naranja', roja: 'Alerta roja' };
 const COOLDOWN = 2 * 3600 * 1000;
 // Decide qué avisar según el estado actual. Solo avisa cuando algo EMPIEZA o EMPEORA (no repite cada 5 minutos).
 export async function checkAndNotify(st, { levelMessage, simulated } = {}) {
-  const p = store(), now = Date.now();
+  const p = store(), now = Date.now(), out0 = [];
   // Las simulaciones llevan su propio registro y no tienen espera entre avisos: así cada prueba avisa,
   // y una prueba no bloquea el aviso de una lluvia real durante 2 h (antes compartían el mismo registro).
-  if (!simulated && p.lastSim) delete p.lastSim;
+  if (!simulated && p.lastSim) {
+    // Terminó una simulación con lluvia: se avisa que la prueba acabó (para probar el aviso de "paró la lluvia")
+    if (p.lastSim.rain) { const m = { title: 'Prueba: Paró la lluvia', body: 'Terminó la simulación. Vuelve el clima real.', tag: 'lluvia', level: 'normal' }; out0.push({ k: 'stop', ...m }); if (p.subs.length) await sendAll(m); }
+    delete p.lastSim; save();
+  }
   const L = simulated ? (p.lastSim ||= { init: true }) : p.last;
   const pre = simulated ? 'Prueba: ' : '';
-  const out = [];
+  const out = out0;
   const w = st.weather || {}, ol = w.outlook?.level;
   const storm = (w.intensity >= 4) || (w.outlook?.reasons || []).some(r => /prevé tormenta|reporta tormenta/.test(r));
   const rainy = ol === 'lloviendo' || w.intensity > 0;
@@ -63,7 +68,11 @@ export async function checkAndNotify(st, { levelMessage, simulated } = {}) {
   // 3) Se aproxima lluvia / empezó a llover
   if (!first && !storm && soon && !L.soon && !rainy && can('soon')) await fire('soon', { title: `${pre}Se aproxima lluvia`, body: w.outlook?.text || 'Es probable un aguacero en las próximas horas. Lleva paraguas.', tag: 'lluvia', level: 'amarilla' });
   L.soon = !!soon;
-  if (!first && rainy && !L.rain && can('rain')) await fire('rain', { title: `${pre}Está lloviendo en Santa Rosa`, body: 'Revisa las calles inundadas y las vías alternas antes de salir.', tag: 'lluvia', level: 'amarilla' });
-  L.rain = !!rainy; save();
+  // 4) Empezó a llover, la lluvia aumentó (moderada o fuerte) o paró
+  const it = Math.min(3, w.intensity || 0), prevInt = L.int ?? 0;
+  if (!first && rainy && !L.rain && can('rain')) await fire('rain', { title: `${pre}${it ? INT_TXT[it] : 'Está lloviendo'} en Santa Rosa`, body: 'Revisa las calles inundadas y las vías alternas antes de salir.', tag: 'lluvia', level: it >= 2 ? 'naranja' : 'amarilla' });
+  else if (!first && rainy && L.rain && !storm && it >= 2 && it > prevInt && can('heavier')) await fire('heavier', { title: `${pre}La lluvia aumentó: ${INT_TXT[it].toLowerCase()}`, body: it >= 3 ? 'Las calles bajas se inundan rápido. Evítalas y usa las vías alternas.' : 'Pueden empezar a inundarse las calles bajas. Revisa el mapa antes de salir.', tag: 'lluvia', level: it >= 3 ? 'roja' : 'naranja' });
+  if (!first && !rainy && L.rain && can('stop')) await fire('stop', { title: `${pre}Paró la lluvia`, body: 'Las calles pueden seguir con agua un rato. Revisa el mapa antes de salir.', tag: 'lluvia', level: 'normal' });
+  L.rain = !!rainy; L.int = rainy ? it : 0; save();
   return out;
 }
