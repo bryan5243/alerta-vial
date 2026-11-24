@@ -325,7 +325,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   window.addEventListener('appinstalled', () => { hide(); toast('El Sistema de Alerta Vial quedó instalado en tu teléfono.', 'ok'); });
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !/crios|fxios/i.test(navigator.userAgent);
   if (ios && !standalone) {
-    $('#ins-d').innerHTML = 'Toca <svg class="ins-share" viewBox="0 0 24 24"><path d="M12 3v12m-4-8 4-4 4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg> <b>Compartir</b> y luego <b>Agregar a inicio</b>.';
+    $('#ins-d').innerHTML = 'Toca <svg class="ins-share" viewBox="0 0 24 24"><path d="M12 3v12m-4-8 4-4 4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg> <b>Compartir</b> y luego <b>Agregar a inicio</b>. Así también puedes recibir los avisos de lluvia.';
     $('#ins-go').textContent = 'Entendido'; setTimeout(show, 4000);
   }
   $('#ins-go').addEventListener('click', async () => {
@@ -526,6 +526,43 @@ document.querySelector('.panel').addEventListener('click', e => {
 });
 $('#btn-fit').addEventListener('click', goHome);
 
+// Mi ubicación (como Google Maps): el primer toque busca tu posición y centra el mapa con el punto azul;
+// el punto se sigue actualizando y cada toque vuelve a centrar. Si mueves el mapa con el dedo, el botón queda sin relleno.
+const locBtn = $('#btn-loc'); let locWatch = null, locMk = null, locLast = null, locCentered = false, locDragHooked = false, locTimer = null;
+locBtn.innerHTML = ICON.locate;
+const locState = s => { locBtn.dataset.state = s; locBtn.setAttribute('aria-pressed', s === 'on'); };
+function locStop() {
+  if (locWatch != null) navigator.geolocation.clearWatch(locWatch); locWatch = null; clearTimeout(locTimer);
+  locMk?.remove(); locMk = null; locLast = null; locCentered = false; locState('off');
+}
+function locHookDrag() {
+  if (locDragHooked || !map?.raw) return; locDragHooked = true;
+  const off = () => { if (locCentered) { locCentered = false; if (locLast) locState('seen'); } };
+  if (map.provider === 'google') map.raw.addListener('dragstart', off); else map.raw.on('dragstart', off);
+}
+function locCenter() { if (!locLast) return; map.panTo(locLast, Math.max(17, map.raw?.getZoom?.() || 17)); locCentered = true; locState('on'); }
+locBtn.addEventListener('click', () => {
+  if (!('geolocation' in navigator)) return toast('Tu navegador no permite ver tu ubicación.', 'err');
+  if (!window.isSecureContext) return toast('Tu ubicación solo funciona con https.', 'err');
+  locHookDrag();
+  if (locLast) { locCenter(); return; }
+  if (locWatch != null) return;
+  locState('wait');
+  locTimer = setTimeout(() => { if (!locLast && locWatch != null) toast('Buscando tu ubicación… sal a un lugar abierto si tarda.', 'ok'); }, 8000);
+  locWatch = navigator.geolocation.watchPosition(p => {
+    const first = !locLast;
+    locLast = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, heading: p.coords.heading };
+    if (!locMk) locMk = map.addUser(locLast); else locMk.update(locLast);
+    if (first) { clearTimeout(locTimer); locCenter(); } else if (locCentered) map.setCenter(locLast);
+  }, e => {
+    const had = !!locLast; locStop();
+    if (!had) toast(e.code === 1 ? 'Permite el acceso a tu ubicación para verte en el mapa (en los ajustes del navegador).' : 'No se pudo obtener tu ubicación. Revisa que el GPS esté encendido.', 'err');
+  }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+});
+// Al navegar con GPS, el modo navegación tiene su propio punto: se apaga este para no ver dos.
+new MutationObserver(() => { if (document.body.classList.contains('gps-on') && locWatch != null) locStop(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+document.addEventListener('visibilitychange', () => { if (document.hidden && locWatch != null) { navigator.geolocation.clearWatch(locWatch); locWatch = null; locMk?.remove(); locMk = null; locLast = null; locCentered = false; locState('off'); } });
+
 // Radar RainViewer
 async function applyRadar() {
   if (!radarFrames.length) { const r = await (await fetch('/api/public/radar')).json(); radarFrames = r.frames || []; if (!radarFrames.length) { toast('El radar de lluvia no está disponible ahora.', 'err'); radarOn = false; $('#btn-radar').classList.remove('on'); return; } }
@@ -688,8 +725,25 @@ async function pushToggle() {
     toast('Avisos activados: te avisaremos si hay tormenta o se acerca lluvia.', 'ok'); pushRefresh();
   } catch { toast('No se pudieron activar los avisos en este navegador.', 'err'); }
 }
+// Donde el navegador no permite avisos (iPhone fuera de la pantalla de inicio, navegadores dentro de WhatsApp/Facebook),
+// la campana sigue visible y explica cómo activarlos, en vez de desaparecer.
+const iosWeb = /iphone|ipad|ipod/i.test(navigator.userAgent) && !(matchMedia('(display-mode: standalone)').matches || navigator.standalone);
+const inApp = /FBAN|FBAV|Instagram|WhatsApp|Line\/|TikTok|; wv\)/i.test(navigator.userAgent);
+function pushHelp() {
+  const t = $('#pt-t'), yes = $('#pt-yes'), no = $('#pt-no');
+  if (iosWeb) t.innerHTML = '<b>Avisos en iPhone</b>Apple solo permite avisos si agregas el sistema a tu pantalla de inicio: toca <svg class="ins-share" viewBox="0 0 24 24"><path d="M12 3v12m-4-8 4-4 4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg> <b class="in">Compartir</b> → <b class="in">Agregar a inicio</b>. Ábrelo desde ese ícono y toca la campana.';
+  else if (inApp) t.innerHTML = '<b>Ábrelo en tu navegador</b>Dentro de WhatsApp o Facebook no se pueden activar avisos. Toca ⋮ y elige <b class="in">Abrir en Chrome</b> (o Safari), y luego toca la campana.';
+  else if (!window.isSecureContext) t.innerHTML = '<b>Avisos no disponibles</b>Los avisos solo funcionan cuando la página se abre con https.';
+  else t.innerHTML = '<b>Avisos no disponibles</b>Este navegador no permite avisos. Prueba con Chrome, Edge, Firefox o Safari actualizado.';
+  yes.textContent = 'Entendido'; no.hidden = true; tip.dataset.help = '1'; tip.hidden = false;
+}
+pushBtn.hidden = false; pushBtn.innerHTML = ICON.bell; $('#pt-ic').innerHTML = ICON.bell;
+if (!pushOk) {
+  pushBtn.setAttribute('aria-label', 'Cómo activar los avisos de lluvia'); pushBtn.title = 'Cómo activar los avisos de lluvia y tormenta';
+  pushBtn.addEventListener('click', pushHelp);
+  $('#pt-yes').addEventListener('click', () => { tip.hidden = true; });
+}
 if (pushOk) {
-  pushBtn.hidden = false; pushBtn.innerHTML = ICON.bell; $('#pt-ic').innerHTML = ICON.bell;
   pushBtn.addEventListener('click', pushToggle);
   $('#pt-yes').addEventListener('click', () => { tip.hidden = true; pushToggle(); });
   $('#pt-no').addEventListener('click', () => { tip.hidden = true; try { localStorage.setItem('av_push_no', String(Date.now())); } catch {} });
