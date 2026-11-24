@@ -104,8 +104,11 @@ async function computeStatus() {
     : gaugeSev.includes('SEVERE') || over >= 1 ? 'naranja' : gaugeSev.includes('ABOVE_NORMAL') || high >= 1 ? 'amarilla' : 'normal';
   const suggested = maxLevel(maxLevel(levelFromWeather(weather, db.config.weather), risk.level), riverLevel);
   // Durante una simulación el nivel publicado sigue al clima simulado, aunque la alerta esté en manual.
-  const effective = db.alert.mode === 'manual' && !simOn() ? db.alert.level : stepDown(db, suggested);
-  const drain = syncAutoPoints(db, effective, Date.now(), weather);
+  // La simulación es solo una prueba: muestra el nivel simulado pero no deja huella (ni bajada gradual ni drenaje).
+  // Antes, al terminar una simulación en roja, el semáforo se quedaba en roja y bajaba de a un color cada 45 min.
+  const sim = !!simOn();
+  const effective = sim ? suggested : db.alert.mode === 'manual' ? db.alert.level : stepDown(db, suggested);
+  const drain = sim ? { draining: false, until: null, reportOn: LV[effective] >= 2 } : syncAutoPoints(db, effective, Date.now(), weather);
   return { weather, suggested, effective, risk, tide, flood, drain };
 }
 // Al dejar de llover el semáforo no cae de golpe: baja un color cada cierto tiempo (por defecto 45 min),
@@ -315,7 +318,7 @@ app.put('/api/admin/observed', auth, (req, res) => {
 app.get('/api/admin/simulation', auth, (req, res) => res.json(simOn() || { active: false }));
 app.put('/api/admin/simulation', auth, (req, res) => {
   const b = req.body || {};
-  if (!b.active) { simulation = null; return res.json({ active: false }); }
+  if (!b.active) { simulation = null; const db = load(); delete db.alert.autoLevel; db.alert.autoStepAt = Date.now(); save(); return res.json({ active: false }); }
   const n = (v, max) => Math.max(0, Math.min(max, +v || 0));
   simulation = { active: true, preset: String(b.preset || 'manual').slice(0, 30), rainNow: n(b.rainNow, 200), rainPast3h: n(b.rainPast3h, 500), rainNext3h: n(b.rainNext3h, 500),
     probNext3h: n(b.probNext3h, 100), weatherCode: Math.round(n(b.weatherCode, 99)), until: Date.now() + Math.max(1, Math.min(240, +b.minutes || 30)) * 60000 };
