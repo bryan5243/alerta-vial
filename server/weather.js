@@ -321,7 +321,7 @@ async function wttrSource(lat, lng) {
 
 // OpenWeatherMap (opcional): solo si hay API key
 async function owmSource(lat, lng, key) {
-  const base = { id: 'owm', kind: 'observación', name: 'OpenWeatherMap' };
+  const base = { id: 'owm', kind: 'pronóstico', name: 'OpenWeatherMap' }; // su "clima actual" sale de un modelo, no de una estación en la ciudad
   if (!key) return { ...base, ok: false, disabled: true, intensity: 0, error: 'sin API key' };
   const ck = `${lat},${lng},${key}`;
   if (owmCache.data && owmCache.key === ck && Date.now() - owmCache.at < TTL) return owmCache.data;
@@ -413,6 +413,8 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
   // Los modelos y wttr.in son PRONÓSTICOS: dos pronósticos de acuerdo no prueban que esté lloviendo (por eso marcaba
   // lluvia con el cielo solo nublado). El respaldo tiene que ser una observación real: radar o aeropuerto.
   const corro = (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || metar.near));
+  // OpenWeatherMap: su "clima actual" es un modelo (marcaba lluvia con cielo seco). Su lluvia solo cuenta si el radar o el aeropuerto la confirman.
+  if (owm?.ok && owm.intensity && !corro) owm = { ...owm, intensity: 0, rainNow: 0, detail: `${owm.detail} · el radar y el aeropuerto no ven lluvia: no cuenta` };
   // Observación que dice "no llueve": radar sin ecos cerca o aeropuerto sin precipitación
   const obsDry = !corro && ((radar?.ok && !radar.intensity && !radar.near) || (metar?.ok && !metar.intensity && !metar.near));
   // Con Open-Meteo (9 modelos) hacen falta 3 que coincidan; si solo responden 1-2 modelos, no confirman lluvia sin una observación.
