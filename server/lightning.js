@@ -2,6 +2,7 @@
 // Solo se guardan los rayos cercanos a la ciudad (60 km, últimos 30 min) y solo se muestran datos derivados
 // ("N rayos a X km"), nunca la lista cruda. Uso no comercial. Se desactiva con config.lightningEnabled = false.
 import { createRequire } from 'node:module';
+import { glmState, startGlm } from './glm.js';
 // Node 20 (el de Render) no trae WebSocket: se usa el paquete "ws"
 const WS = globalThis.WebSocket || (() => { try { return createRequire(import.meta.url)('ws'); } catch { return null; } })();
 // Blitzortung manda los mensajes comprimidos (LZW): se descomprimen antes de leerlos
@@ -45,17 +46,24 @@ function connect() {
 }
 function schedule() { clearTimeout(st.timer); st.retry++; st.timer = setTimeout(connect, Math.min(60000, 2000 * 2 ** Math.min(st.retry, 5))); st.timer.unref?.(); }
 export function startLightning(center) {
+  startGlm(center); // satélite GOES: no necesita permiso
   if (st.center || !center) return;
   st.center = { lat: +center.lat, lng: +center.lng }; connect();
 }
 // Resumen para el clima: rayos recientes cerca de la ciudad
 export function lightningSnapshot(now = Date.now()) {
-  const base = { id: 'rayos', kind: 'observación', name: 'Detector de rayos (Blitzortung)', intensity: 0, rainNow: 0 };
-  if (!st.center) return null;
-  if (!st.open) return { ...base, ok: false, error: st.error || 'conectando con la red de rayos…' };
-  const within = (km, ms) => st.strikes.filter(s => s.km <= km && now - s.t <= ms);
-  const n15 = within(15, 15 * 60e3), n10 = within(15, 10 * 60e3).length, n30 = within(30, 30 * 60e3).length, n60 = within(60, 30 * 60e3).length;
-  const nearest = st.strikes.length ? Math.min(...st.strikes.filter(s => now - s.t <= 30 * 60e3).map(s => s.km), Infinity) : Infinity;
-  return { ...base, ok: true, at: new Date(st.lastMsg || now).toISOString(), strikes15: n15.length, strikes10: n10, strikes30: n30, strikes60: n60, nearestKm: Number.isFinite(nearest) ? Math.round(nearest) : null,
-    detail: n60 ? `${n60} rayo${n60 > 1 ? 's' : ''} en los últimos 30 min a menos de 60 km${Number.isFinite(nearest) ? ` · el más cercano a ${Math.round(nearest)} km` : ''}` : 'Sin rayos detectados en 60 km (últimos 30 min)' };
+  const g = glmState(now), bz = st.center && st.open;
+  const src = [g?.ok && 'satélite GOES', bz && 'Blitzortung'].filter(Boolean);
+  const base = { id: 'rayos', kind: 'observación', name: `Detector de rayos (${src.length ? src.join(' + ') : 'satélite GOES'})`, intensity: 0, rainNow: 0 };
+  if (!st.center && !g) return null;
+  if (!src.length) return { ...base, ok: false, error: g?.error || st.error || 'conectando con el satélite…' };
+  // Rayos de las dos fuentes (el satélite y la red terrestre pueden ver el mismo rayo: se toma la que vea más)
+  const recent = (arr, km, ms) => arr.filter(s => s.km <= km && now - s.t <= ms).length;
+  const both = (km, ms) => Math.max(bz ? recent(st.strikes, km, ms) : 0, g?.ok ? recent(g.strikes, km, ms) : 0);
+  const n15 = both(15, 15 * 60e3), n10 = both(15, 10 * 60e3), n30 = both(30, 30 * 60e3), n60 = both(60, 30 * 60e3);
+  const all = [...(bz ? st.strikes : []), ...(g?.ok ? g.strikes : [])].filter(s => now - s.t <= 30 * 60e3);
+  const nearest = all.length ? Math.min(...all.map(s => s.km)) : Infinity;
+  const delay = g?.ok && !bz && g.delayMin != null ? ` · dato del satélite de hace ${g.delayMin} min` : '';
+  return { ...base, ok: true, at: new Date(now).toISOString(), strikes15: n15, strikes10: n10, strikes30: n30, strikes60: n60, nearestKm: Number.isFinite(nearest) ? Math.round(nearest) : null,
+    detail: (n60 ? `${n60} rayo${n60 > 1 ? 's' : ''} en los últimos 30 min a menos de 60 km${Number.isFinite(nearest) ? ` · el más cercano a ${Math.round(nearest)} km` : ''}` : 'Sin rayos detectados en 60 km (últimos 30 min)') + delay };
 }
