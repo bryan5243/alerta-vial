@@ -102,6 +102,7 @@ function secAlert() {
     <div class="level-band ${a.effective}" style="border-radius:16px"><div class="lvl-icon">${a.effective === 'normal' ? ICON.check : ICON.warn}</div><div><div class="lvl-label">Publicado ahora: ${LEVELS[a.effective]}</div><div class="lvl-msg">${esc(lm[a.effective] || '')}${a.message ? ` · ${esc(a.message)}` : ''} · ${w.simulated ? 'Simulación de prueba' : a.mode === 'auto' ? 'Modo automático' : 'Manual'}</div></div><div class="wave">${waveSvg}</div></div>
     ${kpiRow()}
     <div class="alert-grid"><div class="ag-main">
+    ${testsCard(a, w)}
     ${drainCard(a)}
     ${obsCard(a)}
     <div class="card">
@@ -177,6 +178,20 @@ function obsCard(a) {
       ${o ? `<button type="button" class="btn ghost" id="obs-off">Ya no llueve</button>` : ''}</div>
   </div>`;
 }
+// Pruebas encendidas (simulación, lluvia marcada, modo manual, nivel arrastrado): un solo botón las apaga todas
+function testsCard(a, w) {
+  const on = [];
+  if (w.simulated) on.push('simulación de lluvia');
+  if (a.observed && new Date(a.observed.until) > Date.now()) on.push('lluvia marcada por el equipo');
+  if (a.mode === 'manual') on.push(`modo manual (${LEVELS[a.level]})`);
+  if (!on.length && a.effective !== a.suggested) on.push(`nivel ${LEVELS[a.effective]} que baja de a poco (el clima ahora sugiere ${LEVELS[a.suggested]})`);
+  if (!on.length) return '';
+  return `<div class="card tests-card" style="border-color:var(--naranja,#E36A17)">
+    <div class="section-head"><h3>${ICON.warn} El mapa no muestra solo el clima real</h3></div>
+    <p class="small muted" style="margin:6px 0 12px">Activo ahora: <b>${on.map(esc).join(', ')}</b>. Pulsa el botón para apagar todas las pruebas y publicar lo que dicen las fuentes del clima en este momento.</p>
+    <div class="sim-foot"><button type="button" class="btn" id="reset-real">Apagar todas las pruebas</button></div>
+  </div>`;
+}
 // Tiempo de drenaje: el equipo puede darlo por terminado si el agua bajó antes de lo previsto
 function drainCard(a) {
   if (!a.draining) return '';
@@ -188,6 +203,11 @@ function drainCard(a) {
   </div>`;
 }
 function bindObs() {
+  const rr = id('reset-real'); if (rr) rr.onclick = async () => {
+    if (!await confirmBox({ title: 'Volver al clima real', text: 'Se apagan la simulación de lluvia, la lluvia marcada por el equipo y el modo manual. El semáforo pasa a lo que dicen las fuentes del clima ahora.', ok: 'Apagar pruebas', tone: 'warn', icon: ICON.check })) return;
+    try { const r = await api('/api/admin/reset-real', { method: 'POST' }); toast(`Clima real: ${LEVELS[r.effective]}${r.done.length ? ' · apagado: ' + r.done.join(', ') : ''}`, 'ok'); } catch {}
+    refresh();
+  };
   const de = id('drain-end'); if (de) de.onclick = async () => {
     if (!await confirmBox({ title: 'Apagar puntos críticos', text: 'Los puntos críticos automáticos y sus vías alternas dejarán de verse en el mapa. Se encenderán otra vez solos con la próxima alerta naranja o roja.', ok: 'Apagar puntos', tone: 'warn', icon: ICON.check })) return;
     try { const r = await api('/api/admin/drain-end', { method: 'POST' }); toast(r.turnedOff ? `Listo: ${r.turnedOff} punto(s) apagados` : 'Listo: drenaje terminado', 'ok'); } catch {}

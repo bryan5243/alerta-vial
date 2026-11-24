@@ -261,6 +261,24 @@ app.post('/api/admin/drain-end', auth, async (req, res) => {
   let n = 0; for (const p of db.points) if (p.auto && p.active) { p.active = false; n++; }
   save(); res.json({ ok: true, turnedOff: n });
 });
+// "Volver al clima real": apaga todas las pruebas de una vez (simulación de lluvia, lluvia marcada por el equipo,
+// modo manual, nivel que se arrastraba y puntos que quedaron encendidos por las pruebas) y publica lo que dice el clima real.
+app.post('/api/admin/reset-real', auth, async (req, res) => {
+  const db = load(), a = db.alert, done = [];
+  if (simOn()) done.push('simulación de lluvia'); simulation = null;
+  if (a.observed) { done.push('lluvia marcada por el equipo'); delete a.observed; }
+  if (a.mode === 'manual') { done.push('modo manual'); a.mode = 'auto'; }
+  delete a.autoLevel; a.autoStepAt = Date.now(); save();
+  const st = await computeStatus();
+  let off = 0;
+  if (LV[st.effective] < 2) {
+    a.lastHighAt = null; a.lastRainAt = null; a.drainDone = true;
+    for (const p of db.points) if (p.auto && p.active) { p.active = false; off++; }
+    if (off) done.push(`${off} punto(s) crítico(s) encendidos`);
+  }
+  a.updatedAt = new Date().toISOString(); save();
+  res.json({ ok: true, done, effective: st.effective });
+});
 // "Actualizar mapa": sube un número de versión; todos los teléfonos que abren el mapa lo notan y renuevan sus archivos y cuadros guardados.
 app.post('/api/admin/map-refresh', auth, (req, res) => { const db = load(); db.config.mapVersion = Date.now(); save(); res.json({ ok: true, mapVersion: db.config.mapVersion }); });
 app.put('/api/admin/config', auth, (req, res) => {
