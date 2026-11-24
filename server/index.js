@@ -326,11 +326,15 @@ app.put('/api/admin/alert', auth, (req, res) => {
   const db = load();
   const { level, mode, message } = req.body || {};
   if (mode) db.alert.mode = mode === 'manual' ? 'manual' : 'auto';
+  // Al pasar a automático: el semáforo sigue de inmediato al pronóstico (sin arrastrar el nivel anterior)
+  // y se apaga la simulación de lluvia si estaba encendida.
+  let simStopped = false;
+  if (mode === 'auto') { simStopped = !!simOn(); simulation = null; delete db.alert.autoLevel; db.alert.autoStepAt = Date.now(); }
   if (level && ['normal', 'amarilla', 'naranja', 'roja'].includes(level)) db.alert.level = level;
   if (message !== undefined) db.alert.message = String(message).slice(0, 300);
   db.alert.updatedAt = new Date().toISOString();
   save();
-  res.json(db.alert);
+  res.json({ ...db.alert, simStopped });
 });
 
 // CRUD genérico para points / streets / routes / recommendations
