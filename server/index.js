@@ -244,10 +244,20 @@ app.get('/api/public/radar', async (req, res) => {
 // ---------- API administrativa ----------
 app.get('/api/admin/state', auth, async (req, res) => {
   const db = load();
-  const { weather, suggested, effective, risk, tide } = await computeStatus();
-  res.json({ ...db, push: undefined, pushCount: push.subCount(), config: { ...db.config, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: featuresCfg(db), noCar: noCarCfg(db) }, alert: { ...db.alert, effective, suggested }, weather: { ...weather, hourly: weather.hourly?.slice(0, 25) }, risk, tide, reports: db.reports || [], layers: db.layers || [], rivers: db.rivers || [], zones: db.zones || [] });
+  const { weather, suggested, effective, risk, tide, drain } = await computeStatus();
+  const pts = db.points.filter(p => p.auto && (p.source === 'reporte' ? drain?.reportOn : drain?.draining) && LV[effective] < 2).length;
+  res.json({ ...db, push: undefined, pushCount: push.subCount(), config: { ...db.config, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: featuresCfg(db), noCar: noCarCfg(db) }, alert: { ...db.alert, effective, suggested, draining: !!(drain?.draining || (LV[effective] < 2 && drain?.reportOn)), drainUntil: drain?.until || null, drainPoints: pts }, weather: { ...weather, hourly: weather.hourly?.slice(0, 25) }, risk, tide, reports: db.reports || [], layers: db.layers || [], rivers: db.rivers || [], zones: db.zones || [] });
 });
 
+// "El agua ya bajó": termina el tiempo de drenaje antes de lo previsto y apaga los puntos críticos automáticos
+// (también los que vienen de reportes). Vuelven a encenderse solos con la próxima alerta naranja o roja.
+app.post('/api/admin/drain-end', auth, async (req, res) => {
+  const db = load(), { effective } = await computeStatus();
+  if (LV[effective] >= 2) return res.status(400).json({ error: 'La alerta sigue en naranja o roja: los puntos críticos deben seguir activos.' });
+  const a = db.alert; a.lastHighAt = null; a.lastRainAt = null; a.drainDone = true;
+  let n = 0; for (const p of db.points) if (p.auto && p.active) { p.active = false; n++; }
+  save(); res.json({ ok: true, turnedOff: n });
+});
 // "Actualizar mapa": sube un número de versión; todos los teléfonos que abren el mapa lo notan y renuevan sus archivos y cuadros guardados.
 app.post('/api/admin/map-refresh', auth, (req, res) => { const db = load(); db.config.mapVersion = Date.now(); save(); res.json({ ok: true, mapVersion: db.config.mapVersion }); });
 app.put('/api/admin/config', auth, (req, res) => {

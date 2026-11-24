@@ -348,7 +348,7 @@ function render(reports) {
   $('#band-icon').innerHTML = lvl === 'normal' ? ICON.check : ICON.warn;
   $('#band-label').textContent = LEVELS[lvl];
   const lvlMsg = config.levelMessages?.[lvl] || LEVEL_DESC[lvl];
-  $('#band-msg').innerHTML = `${weather.simulated ? '<span class="sim-tag">Simulación de prueba</span>' : ''}${esc(lvlMsg)}${alert.message ? `<span class="lvl-extra">${esc(alert.message)}</span>` : ''}${alert.draining ? `<span class="lvl-extra">Ya no llueve, pero el agua aún no baja: los puntos críticos siguen activos hasta las ${new Date(alert.drainUntil).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' })}.</span>` : ''}`;
+  $('#band-msg').innerHTML = `${weather.simulated ? '<span class="sim-tag">Simulación de prueba</span>' : ''}${esc(lvlMsg)}${alert.message ? `<span class="lvl-extra">${esc(alert.message)}</span>` : ''}${alert.draining ? `<span class="lvl-extra">Ya no llueve, pero el agua aún no baja: los puntos críticos siguen activos hasta las ${new Date(alert.drainUntil).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' }).replace(/\.$/, '')}.</span>` : ''}`;
 
   // Clima
   const w = weather; renderWx(w);

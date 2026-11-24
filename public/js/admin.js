@@ -102,6 +102,7 @@ function secAlert() {
     <div class="level-band ${a.effective}" style="border-radius:16px"><div class="lvl-icon">${a.effective === 'normal' ? ICON.check : ICON.warn}</div><div><div class="lvl-label">Publicado ahora: ${LEVELS[a.effective]}</div><div class="lvl-msg">${esc(lm[a.effective] || '')}${a.message ? ` · ${esc(a.message)}` : ''} · ${w.simulated ? 'Simulación de prueba' : a.mode === 'auto' ? 'Modo automático' : 'Manual'}</div></div><div class="wave">${waveSvg}</div></div>
     ${kpiRow()}
     <div class="alert-grid"><div class="ag-main">
+    ${drainCard(a)}
     ${obsCard(a)}
     <div class="card">
       <h3 style="margin-bottom:12px">Modo de activación</h3>
@@ -173,7 +174,22 @@ function obsCard(a) {
       ${o ? `<button type="button" class="btn ghost" id="obs-off">Ya no llueve</button>` : ''}</div>
   </div>`;
 }
+// Tiempo de drenaje: el equipo puede darlo por terminado si el agua bajó antes de lo previsto
+function drainCard(a) {
+  if (!a.draining) return '';
+  const until = a.drainUntil ? wxTime(a.drainUntil) : '';
+  return `<div class="card drain-card">
+    <div class="section-head"><h3>${ICON.cloud} El agua aún está bajando</h3>${until ? `<span class="chip naranja">Puntos activos hasta ${until}</span>` : ''}</div>
+    <p class="small muted" style="margin:6px 0 12px">Ya no llueve, pero los puntos críticos automáticos${a.drainPoints ? ` (${a.drainPoints})` : ''} y sus vías alternas siguen publicados mientras drena el agua. Si en la calle ya está despejado, apágalos ahora; se volverán a encender solos con la próxima alerta naranja o roja.</p>
+    <div class="sim-foot"><button type="button" class="btn" id="drain-end">El agua ya bajó: apagar puntos</button></div>
+  </div>`;
+}
 function bindObs() {
+  const de = id('drain-end'); if (de) de.onclick = async () => {
+    if (!await confirmBox({ title: 'Apagar puntos críticos', text: 'Los puntos críticos automáticos y sus vías alternas dejarán de verse en el mapa. Se encenderán otra vez solos con la próxima alerta naranja o roja.', ok: 'Apagar puntos', tone: 'warn', icon: ICON.check })) return;
+    try { const r = await api('/api/admin/drain-end', { method: 'POST' }); toast(r.turnedOff ? `Listo: ${r.turnedOff} punto(s) apagados` : 'Listo: drenaje terminado', 'ok'); } catch {}
+    refresh();
+  };
   q('[data-obs]').forEach(b => b.onclick = async () => { await api('/api/admin/observed', { method: 'PUT', body: { intensity: +b.dataset.obs, minutes: +id('obs-min').value } }); toast(`Lluvia ${OBS[b.dataset.obs - 1][1].toLowerCase()} marcada por el equipo`, 'ok'); refresh(); });
   const off = id('obs-off'); if (off) off.onclick = async () => { await api('/api/admin/observed', { method: 'PUT', body: { intensity: 0 } }); toast('Listo: el clima vuelve a las fuentes en línea', 'ok'); refresh(); };
 }
