@@ -229,6 +229,20 @@ try {
     if (!is_numeric($_GET['lat'] ?? null) || !is_numeric($_GET['lng'] ?? null) || abs($lat) > 90 || abs($lng) > 180) fail(400, 'Coordenadas inválidas');
     try { out(near_streets($lat, $lng)); } catch (Throwable $e) { out(['streets' => [], 'sector' => '']); }
   }
+  // Puente para la versión en Render: entrega la respuesta de Open-Meteo (los 9 modelos) para el punto configurado.
+  // Solo ese punto, con 10 min de caché: no sirve como proxy abierto y no gasta consultas de más.
+  if ($route === 'public/om-relay' && $method === 'GET') {
+    $f = data_dir() . '/cache/omrelay.json';
+    if (!is_file($f) || time() - filemtime($f) > 600) {
+      $cfg = db_load()['config']['weather'];
+      $r = http_one(['url' => om_url($cfg['lat'], $cfg['lng'], implode(',', array_keys(MODELS))), 'timeout' => 10, 'headers' => ['user-agent' => AV_UA]]);
+      if (!$r['err'] && $r['code'] === 200) @file_put_contents($f, $r['body']);
+      elseif (!is_file($f)) fail(502, 'Open-Meteo no respondió');
+    }
+    $j = (string)@file_get_contents($f);
+    http_response_code(200); header('Content-Type: application/json; charset=utf-8'); header('Cache-Control: public, max-age=300'); header('Access-Control-Allow-Origin: *');
+    header('Content-Length: ' . strlen($j)); echo $j; exit;
+  }
   if ($route === 'public/forecast-days' && $method === 'GET') { $cfg = db_load()['config']['weather']; out(with_history(get_days($cfg), $cfg)); }
   // Notificaciones push
   if ($route === 'public/push-key' && $method === 'GET') out(['key' => push_public_key()]);

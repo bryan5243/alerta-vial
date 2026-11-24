@@ -347,6 +347,8 @@ function weather_fetch(array $cfg): array {
     $rv = cache_get('radarsrc'); $rvFresh = $rv && ($rv['key'] ?? '') === "$lat,$lng" && $now - $rv['at'] < 240000;
     if (!$rvFresh) $reqs['rvmaps'] = ['url' => 'https://api.rainviewer.com/public/weather-maps.json', 'timeout' => 8, 'headers' => $ua];
     $res = $reqs ? http_multi($reqs) : [];
+    // Copia de la respuesta cruda para el puente de Render (/api/public/om-relay)
+    if (isset($res['om']) && !$res['om']['err'] && $res['om']['code'] === 200) @file_put_contents(data_dir() . '/cache/omrelay.json', $res['om']['body']);
     if (isset($res['om'])) $omModels = om_process($res['om'], $lat, $lng);
     elseif ($omBlocked) $omModels = om_blocked_models($om);
     else $omModels = $om['models'];
