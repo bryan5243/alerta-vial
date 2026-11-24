@@ -299,9 +299,23 @@ function apply_rain_log(array $w): array {
 function get_weather(array $cfg, array $extra = []): array {
   $lat = $cfg['lat']; $lng = $cfg['lng']; $station = $cfg['metarStation'] ?? 'SERO'; $owmKey = $cfg['owmKey'] ?? '';
   $key = "$lat,$lng,$station," . ($owmKey ? 1 : 0); $now = now_ms();
-  $c = cache_get('weather');
-  if ($c && ($c['key'] ?? '') === $key && $now - $c['at'] < AV_TTL) $remote = $c['remote'];
-  else {
+  $c = cache_get('weather'); $have = $c && ($c['key'] ?? '') === $key;
+  if ($have && $now - $c['at'] < AV_TTL) $remote = $c['remote'];
+  elseif ($have && $now - $c['at'] < 3600000) {
+    // Nadie espera a las fuentes: se responde con el último dato y se renueva después de enviar la respuesta
+    $remote = $c['remote'];
+    $lk = cache_get('wx_refresh');
+    if (!$lk || $now - ($lk['at'] ?? 0) > 60000) { cache_put('wx_refresh', ['at' => $now]); register_shutdown_function(function () use ($cfg) { if (function_exists('fastcgi_finish_request')) fastcgi_finish_request(); weather_fetch($cfg); }); }
+  }
+  else $remote = weather_fetch($cfg);
+  $w = combine($remote, $extra);
+  return !empty($w['ok']) ? apply_rain_log($w) : $w;
+}
+// Pide a la vez todas las fuentes vencidas y guarda el resultado
+function weather_fetch(array $cfg): array {
+  $lat = $cfg['lat']; $lng = $cfg['lng']; $station = $cfg['metarStation'] ?? 'SERO'; $owmKey = $cfg['owmKey'] ?? '';
+  $key = "$lat,$lng,$station," . ($owmKey ? 1 : 0); $now = now_ms();
+  {
     $ua = ['user-agent' => AV_UA]; $reqs = [];
     $om = cache_get('om') ?: [];
     $omFresh = !empty($om['models']) && ($om['key'] ?? '') === "$lat,$lng" && $now - ($om['at'] ?? 0) < OM_TTL;
@@ -335,8 +349,7 @@ function get_weather(array $cfg, array $extra = []): array {
     $remote = ['models' => array_merge($omModels, [$metno]), 'metar' => $metar, 'owm' => $owm, 'radar' => $radar, 'wttr' => $wttr, 'at' => gmdate('c')];
     cache_put('weather', ['at' => $now, 'key' => $key, 'remote' => $remote]);
   }
-  $w = combine($remote, $extra);
-  return !empty($w['ok']) ? apply_rain_log($w) : $w;
+  return $remote;
 }
 
 // ---------- Combinar fuentes ----------
@@ -572,6 +585,15 @@ function describe(array $w): array {
 function get_tide(array $cfg): array {
   $lat = $cfg['lat']; $lng = $cfg['lng']; $key = "$lat,$lng"; $c = cache_get('tide');
   if ($c && ($c['key'] ?? '') === $key && now_ms() - $c['at'] < AV_TTL * 3) return $c['data'];
+  if ($c && ($c['key'] ?? '') === $key && now_ms() - $c['at'] < 6 * 3600000) {
+    cache_put('tide', array_merge($c, ['at' => now_ms() - AV_TTL * 3 + 120000])); // nadie más la renueva en 2 min
+    register_shutdown_function(function () use ($cfg) { if (function_exists('fastcgi_finish_request')) fastcgi_finish_request(); tide_fetch($cfg); });
+    return $c['data'];
+  }
+  return tide_fetch($cfg);
+}
+function tide_fetch(array $cfg): array {
+  $lat = $cfg['lat']; $lng = $cfg['lng']; $key = "$lat,$lng";
   try {
     $url = 'https://marine-api.open-meteo.com/v1/marine?' . http_build_query(['latitude' => $lat, 'longitude' => $lng, 'hourly' => 'sea_level_height_msl', 'forecast_hours' => 24, 'past_hours' => 1, 'timezone' => 'America/Guayaquil', 'cell_selection' => 'sea']);
     $j = http_json(http_one(['url' => $url, 'timeout' => 8]));

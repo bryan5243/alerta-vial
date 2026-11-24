@@ -24,7 +24,14 @@ const COLLECTIONS = [
   'zones' => ['zn', ['name', 'coords', 'severity', 'riverId', 'note', 'depthCm', 'active']],
   'layers' => ['ly', ['name', 'color', 'geojson', 'kind', 'source', 'active']]];
 
-function out($data, int $code = 200): void { if (!empty($GLOBALS['BUMP_REV']) && $code < 400) cache_put('rev', ['rev' => now_ms()]); http_response_code($code); header('Content-Type: application/json; charset=utf-8'); header('Cache-Control: no-store'); echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE); exit; }
+function out($data, int $code = 200): void {
+  if (!empty($GLOBALS['BUMP_REV']) && $code < 400) cache_put('rev', ['rev' => now_ms()]);
+  $j = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+  http_response_code($code); header('Content-Type: application/json; charset=utf-8'); header('Cache-Control: no-store');
+  // Largo exacto + cerrar conexión: el teléfono recibe la respuesta completa aunque PHP siga renovando el clima por detrás
+  header('Content-Length: ' . strlen($j)); header('Connection: close');
+  echo $j; while (ob_get_level()) ob_end_flush(); flush(); exit;
+}
 function fail(int $code, string $msg): void { out(['error' => $msg], $code); }
 function body(): array { static $b = null; if ($b === null) { $j = json_decode((string)file_get_contents('php://input'), true); $b = is_array($j) ? $j : []; } return $b; }
 function bearer(): string {
