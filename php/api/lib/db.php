@@ -7,7 +7,7 @@ function db_path(): string { return data_dir() . '/db.json'; }
 function empty_db(): array {
   return ['config' => ['city' => 'Santa Rosa, El Oro', 'center' => ['lat' => -3.459603, 'lng' => -79.965844], 'zoom' => 15, 'mapProvider' => 'leaflet', 'googleMapsKey' => '',
       'gps' => ['warnM' => 400, 'dangerM' => 150, 'voice' => true],
-      'weather' => ['lat' => -3.459603, 'lng' => -79.965844, 'rainThresholdMm' => 5, 'rainThresholdMm3h' => 15, 'autoMode' => true]],
+      'weather' => ['lat' => -3.459603, 'lng' => -79.965844, 'rainThresholdMm' => 2.4, 'rainThresholdMm3h' => 7, 'thresholdsV2' => true, 'autoMode' => true]],
     'alert' => ['level' => 'normal', 'mode' => 'auto', 'message' => '', 'updatedAt' => gmdate('c')],
     'points' => [], 'streets' => [], 'routes' => [], 'recommendations' => [], 'layers' => [], 'rivers' => [], 'zones' => [], 'reports' => []];
 }
@@ -27,6 +27,15 @@ function db_load(): array {
     db_save();
   } else {
     $GLOBALS['AV_DB'] = json_decode(file_get_contents($p), true) ?: empty_db();
+    // Umbrales de Santa Rosa (EMOVTT, nov 2026): con más de 2,4 mm/h ya se inundan las calles.
+    // Si siguen los valores de fábrica antiguos (5 mm/h y 15 mm en 3 h), se pasan a los nuevos una sola vez.
+    $w = $GLOBALS['AV_DB']['config']['weather'] ?? null;
+    if (is_array($w) && empty($w['thresholdsV2'])) {
+      db_lock(); $d = &db(); $w = &$d['config']['weather'];
+      if ((float)($w['rainThresholdMm'] ?? 0) == 5) $w['rainThresholdMm'] = 2.4;
+      if ((float)($w['rainThresholdMm3h'] ?? 0) == 15) $w['rainThresholdMm3h'] = 7;
+      $w['thresholdsV2'] = true; unset($w); db_save();
+    }
   }
   return $GLOBALS['AV_DB'];
 }

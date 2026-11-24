@@ -10,6 +10,10 @@ if ($base !== '' && strpos($p, $base . '/') === 0) {
   if ($rest === '/' || $rest === '') { readfile(__DIR__ . '/dist-cpanel/index.html'); return true; }
   $p = $rest;
 }
+$_SERVER['SCRIPT_NAME'] = $base . '/api/index.php';
+if (preg_match('#^/photos/(rep_[a-z0-9]+\.jpg)$#', $p, $m)) { $_GET['photo'] = $m[1]; require __DIR__ . '/dist-cpanel/api/index.php'; return true; }
+if (preg_match('#^/(data|api)/#', $p) && !preg_match('#^/api/#', $p)) { http_response_code(403); return true; }
 if (preg_match('#^/api/#', $p)) { $_SERVER['REQUEST_URI'] = $p; require __DIR__ . '/dist-cpanel/api/index.php'; return true; }
+if (preg_match('#^/data/#', $p)) { http_response_code(403); return true; }
 if (preg_match('#^/admin/?$#', $p)) { readfile(__DIR__ . '/dist-cpanel/admin.html'); return true; }
 return false;

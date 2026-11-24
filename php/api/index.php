@@ -4,6 +4,7 @@ declare(strict_types=0);
 error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE & ~E_WARNING);
 require dirname(__DIR__) . '/config.php';
 require __DIR__ . '/lib/http.php'; require __DIR__ . '/lib/db.php'; require __DIR__ . '/lib/weather.php'; require __DIR__ . '/lib/flood.php';
+require __DIR__ . '/lib/near.php'; require __DIR__ . '/lib/daylog.php'; require __DIR__ . '/lib/push.php';
 date_default_timezone_set('UTC');
 
 const DEFAULT_LEVEL_MESSAGES = [
@@ -23,7 +24,7 @@ const COLLECTIONS = [
   'zones' => ['zn', ['name', 'coords', 'severity', 'riverId', 'note', 'depthCm', 'active']],
   'layers' => ['ly', ['name', 'color', 'geojson', 'kind', 'source', 'active']]];
 
-function out($data, int $code = 200): void { http_response_code($code); header('Content-Type: application/json; charset=utf-8'); header('Cache-Control: no-store'); echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE); exit; }
+function out($data, int $code = 200): void { if (!empty($GLOBALS['BUMP_REV']) && $code < 400) cache_put('rev', ['rev' => now_ms()]); http_response_code($code); header('Content-Type: application/json; charset=utf-8'); header('Cache-Control: no-store'); echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE); exit; }
 function fail(int $code, string $msg): void { out(['error' => $msg], $code); }
 function body(): array { static $b = null; if ($b === null) { $j = json_decode((string)file_get_contents('php://input'), true); $b = is_array($j) ? $j : []; } return $b; }
 function bearer(): string {
@@ -40,6 +41,17 @@ function level_msgs(array $db): array { return array_merge(DEFAULT_LEVEL_MESSAGE
 function gps_cfg(array $db): array { return array_merge(['warnM' => 400, 'dangerM' => 150, 'voice' => true], $db['config']['gps'] ?? []); }
 function nocar_cfg(array $db): array { return is_array($db['config']['noCar'] ?? null) ? $db['config']['noCar'] : DEFAULT_NOCAR; }
 function max_level(string $a, string $b): string { return LV[$a] >= LV[$b] ? $a : $b; }
+// Fotos de los reportes: se guardan como archivos junto a la base de datos (data/photos)
+function photos_dir(): string { return data_dir() . '/photos'; }
+// En la base se guarda "/photos/x.jpg" (igual que Node); al entregarlo se antepone la subcarpeta si la app no está en la raíz
+function base_path(): string { $b = rtrim(str_replace('\\', '/', dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '/api/index.php'))), '/'); return $b === '.' ? '' : $b; }
+function rep_out(array $r): array { if (!empty($r['photo']) && $r['photo'][0] === '/') $r['photo'] = base_path() . $r['photo']; return $r; }
+function parse_photo($d): ?string {
+  if (!is_string($d) || !preg_match('#^data:image/jpeg;base64,([A-Za-z0-9+/=]+)$#', $d, $m)) return null;
+  $buf = base64_decode($m[1], true);
+  if ($buf === false || strlen($buf) < 1000 || strlen($buf) > 2 * 1024 * 1024 || $buf[0] !== "\xFF" || $buf[1] !== "\xD8") return null;
+  return $buf;
+}
 
 // ---------- Simulador de lluvia (vive en un archivo temporal; se apaga solo al terminar el tiempo) ----------
 function sim_on(): ?array { $s = cache_get('sim'); if ($s && ($s['until'] ?? 0) > now_ms()) return $s; return null; }
@@ -57,27 +69,79 @@ function simulated_weather(?array $real): array {
 }
 function compute_status(): array {
   $db = db_load(); $cfg = $db['config']['weather'];
-  $weather = get_weather(array_merge($cfg, ['metarStation' => $cfg['metarStation'] ?? 'SERO', 'owmKey' => AV_OWM_KEY ?: ($cfg['owmKey'] ?? '')]), local_sources($db['alert']['observed'] ?? null, $db['reports'] ?? []));
+  $weather = get_weather(array_merge($cfg, ['metarStation' => $cfg['metarStation'] ?? 'SERO', 'owmKey' => AV_OWM_KEY ?: ($cfg['owmKey'] ?? '')]), local_sources($db['alert']['observed'] ?? null));
   $tide = get_tide($cfg);
   $flood = ($db['config']['floodEnabled'] ?? false) === true ? get_flood(array_merge($db['config']['center'], ['apiKey' => getenv('GOOGLE_FLOOD_KEY') ?: ($db['config']['googleFloodKey'] ?? '')])) : ['ok' => false, 'disabled' => true, 'gauges' => []];
-  if (sim_on()) $weather = simulated_weather($weather);
-  $risk = risk_index($weather, $cfg, $flood, $db['reports'] ?? [], $tide, array_values(array_filter($db['rivers'] ?? [], fn($r) => ($r['active'] ?? true) !== false)));
-  $suggested = max_level(level_from_weather($weather, $cfg), $risk['level']);
-  $effective = ($db['alert']['mode'] === 'manual' && !sim_on()) ? $db['alert']['level'] : $suggested;
-  sync_auto_points($effective);
-  return compact('weather', 'suggested', 'effective', 'risk', 'tide', 'flood');
+  if (!sim_on()) note_observation($weather); // diario del clima (para mostrar "Ayer")
+  else $weather = simulated_weather($weather);
+  $db = db_load();
+  $rivers = array_values(array_filter($db['rivers'] ?? [], fn($r) => ($r['active'] ?? true) !== false));
+  $risk = risk_index($weather, $cfg, $flood, $tide, $rivers);
+  // Un río crecido o desbordado sube el nivel por sí solo
+  $over = count(array_filter($rivers, fn($r) => ($r['status'] ?? '') === 'desbordado')); $high = count(array_filter($rivers, fn($r) => ($r['status'] ?? '') === 'crecido'));
+  $sev = !empty($flood['ok']) ? array_map(fn($g) => $g['severity'] ?? '', $flood['gauges'] ?? []) : [];
+  $riverLevel = in_array('EXTREME', $sev, true) || $over >= 2 || ($over >= 1 && ($weather['intensity'] ?? 0) >= 2) ? 'roja'
+    : (in_array('SEVERE', $sev, true) || $over >= 1 ? 'naranja' : (in_array('ABOVE_NORMAL', $sev, true) || $high >= 1 ? 'amarilla' : 'normal'));
+  $suggested = max_level(max_level(level_from_weather($weather, $cfg), $risk['level']), $riverLevel);
+  // Durante una simulación el nivel publicado sigue al clima simulado, aunque la alerta esté en manual.
+  $effective = ($db['alert']['mode'] === 'manual' && !sim_on()) ? $db['alert']['level'] : step_down($suggested);
+  $drain = sync_auto_points($effective, $weather);
+  return compact('weather', 'suggested', 'effective', 'risk', 'tide', 'flood', 'drain');
 }
-// Puntos automáticos: se encienden solos con naranja/roja y se apagan cuando el semáforo baja de naranja
-function sync_auto_points(string $effective): void {
-  $db = db_load(); $prev = $db['alert']['lastEffective'] ?? null;
-  if ($prev === $effective) return;
-  db_lock(); $db = &db();
-  if ($prev && LV[$prev] >= 2 && LV[$effective] < 2) foreach ($db['points'] as &$p) if (!empty($p['auto']) && !empty($p['active'])) $p['active'] = false;
-  $db['alert']['lastEffective'] = $effective; db_save();
+// Al dejar de llover el semáforo no cae de golpe: baja un color cada cierto tiempo (por defecto 45 min),
+// porque el agua tarda en irse. Si vuelve a llover, sube de inmediato.
+function step_down(string $suggested): string {
+  $db = db_load(); $a = $db['alert']; $now = now_ms();
+  $cur = isset(LV[$a['autoLevel'] ?? '']) ? $a['autoLevel'] : $suggested;
+  $hold = ((float)($db['config']['weather']['stepDownMin'] ?? 0) ?: 45) * 60000;
+  $next = $cur; $stepAt = $a['autoStepAt'] ?? 0;
+  if (LV[$suggested] >= LV[$cur]) { $next = $suggested; $stepAt = $now; }
+  elseif ($now - $stepAt >= $hold) { $next = array_search(LV[$cur] - 1, LV, true); $stepAt = $now; }
+  // autoStepAt solo se guarda cuando cambia el nivel o cuando sube/se mantiene alto (cada minuto como mucho)
+  if ($next !== ($a['autoLevel'] ?? null) || ($stepAt !== ($a['autoStepAt'] ?? 0) && $now - ($a['autoStepAt'] ?? 0) > 60000)) {
+    db_lock(); $d = &db(); $d['alert']['autoLevel'] = $next; $d['alert']['autoStepAt'] = $stepAt; db_save();
+  }
+  return $next;
+}
+// Puntos automáticos (y sus vías alternas): se encienden solos con naranja/roja y siguen encendidos el tiempo de
+// drenaje (por defecto 3 h) desde la última vez que hubo naranja/roja. Los que vienen de reportes ciudadanos
+// (nivel medio) siguen hasta 2 h después de la última lluvia confirmada.
+const REPORT_DRAIN_MS = 7200000, REPORT_TTL_MS = 3600000;
+function sync_auto_points(string $effective, ?array $weather = null): array {
+  $db = db_load(); $a = $db['alert']; $now = now_ms(); $ch = [];
+  if (($weather['intensity'] ?? 0) > 0 && (empty($a['lastRainAt']) || $now - $a['lastRainAt'] > 60000)) $ch['lastRainAt'] = $now;
+  $drainMs = ((float)($db['config']['weather']['drainHours'] ?? 3) ?: 0) * 3600000;
+  if (LV[$effective] >= 2 && (empty($a['lastHighAt']) || $now - $a['lastHighAt'] > 60000)) $ch['lastHighAt'] = $now;
+  $lastHigh = $ch['lastHighAt'] ?? ($a['lastHighAt'] ?? 0); $lastRain = $ch['lastRainAt'] ?? ($a['lastRainAt'] ?? 0);
+  $until = $lastHigh ? $lastHigh + $drainMs : 0; $draining = LV[$effective] < 2 && $until > $now;
+  $turnOff = LV[$effective] < 2 && $lastHigh && $until <= $now && empty($a['drainDone']);
+  if ($turnOff) $ch['drainDone'] = true;
+  if (LV[$effective] >= 2 && !empty($a['drainDone'])) $ch['drainDone'] = false;
+  if (($a['lastEffective'] ?? null) !== $effective) $ch['lastEffective'] = $effective;
+  if ($ch) {
+    db_lock(); $d = &db(); $d['alert'] = array_merge($d['alert'], $ch);
+    if ($turnOff) foreach ($d['points'] as &$p) if (!empty($p['auto']) && !empty($p['active'])) $p['active'] = false;
+    unset($p); db_save();
+  }
+  $repEnd = $lastHigh && $now - $lastHigh < 12 * 3600000 ? max($lastHigh, $lastRain) + REPORT_DRAIN_MS : 0;
+  return ['draining' => $draining, 'until' => $draining ? gmdate('Y-m-d\TH:i:s.000\Z', (int)($until / 1000)) : null, 'reportOn' => LV[$effective] >= 2 || $repEnd > $now];
+}
+// Avisos push: en cPanel no hay un proceso siempre encendido. Se revisan como mucho cada 5 minutos, con la tarea
+// cron (cron.php) o, si no se configuró, aprovechando las visitas al mapa (después de enviar la respuesta).
+function push_tick(?array $st = null): array {
+  cache_put('pushtick', ['at' => now_ms()]);
+  $st = $st ?? compute_status();
+  return push_check_and_notify($st, level_msgs(db_load())[$st['effective']] ?? null, (bool)sim_on());
+}
+function push_tick_maybe(array $st): void {
+  $c = cache_get('pushtick'); if ($c && now_ms() - ($c['at'] ?? 0) < 300000) return;
+  if (function_exists('fastcgi_finish_request')) fastcgi_finish_request();
+  try { push_tick($st); } catch (Throwable $e) { error_log('AlertaVial avisos: ' . $e->getMessage()); }
 }
 function weather_out(array $w): array { $w['hourly'] = array_slice($w['hourly'] ?? [], 0, 25); return $w; }
 
 // ---------- Enrutador ----------
+if (defined('AV_NO_ROUTER')) return;
 $method = $_SERVER['REQUEST_METHOD'];
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $i = strpos($path, '/api/'); $route = trim($i === false ? $path : substr($path, $i + 5), '/');
@@ -98,9 +162,11 @@ try {
 
   // ----- Pública -----
   if ($route === 'public/state' && $method === 'GET') {
-    $st = compute_status(); $db = db_load(); $f = features_cfg($db); $effective = $st['effective'];
+    $st = compute_status(); $db = db_load(); $f = features_cfg($db); $effective = $st['effective']; $drain = $st['drain'];
+    register_shutdown_function('push_tick_maybe', $st); // avisos push sin cron: cada 5 min como mucho, después de responder
     $on = fn($k, $list) => !empty($f[$k]) ? array_values($list) : [];
-    $pointOn = fn($p) => !empty($p['active']) || (!empty($p['auto']) && LV[$effective] >= 2);
+    // Un punto con "auto" se enciende con naranja o roja y sigue encendido mientras el agua drena.
+    $pointOn = fn($p) => !empty($p['active']) || (!empty($p['auto']) && (($p['source'] ?? '') === 'reporte' ? $drain['reportOn'] : (LV[$effective] >= 2 || $drain['draining'])));
     $routeOn = function ($r) use ($db, $pointOn, $f) {
       if (empty($r['active'])) return false;
       foreach ($db['points'] as $p) if ($p['id'] === ($r['avoids'] ?? null)) return $pointOn($p) && $f['points'];
@@ -108,9 +174,9 @@ try {
       return true;
     };
     $act = fn($x) => ($x['active'] ?? true) !== false;
-    out(['config' => ['city' => $db['config']['city'], 'center' => $db['config']['center'], 'zoom' => $db['config']['zoom'], 'mapProvider' => $db['config']['mapProvider'], 'googleMapsKey' => $db['config']['googleMapsKey'] ?? '',
+    out(['config' => ['city' => $db['config']['city'], 'center' => $db['config']['center'], 'zoom' => $db['config']['zoom'], 'mapProvider' => $db['config']['mapProvider'], 'baseStyle' => $db['config']['baseStyle'] ?? 'osm', 'googleMapsKey' => $db['config']['googleMapsKey'] ?? '', 'mapVersion' => $db['config']['mapVersion'] ?? 0,
         'rainThresholdMm' => $db['config']['weather']['rainThresholdMm'], 'gps' => gps_cfg($db), 'levelMessages' => level_msgs($db), 'features' => $f, 'noCar' => nocar_cfg($db)],
-      'alert' => array_merge($db['alert'], ['effective' => $effective, 'suggested' => $st['suggested']]),
+      'alert' => array_merge($db['alert'], ['effective' => $effective, 'suggested' => $st['suggested'], 'draining' => (bool)$drain['draining'], 'drainUntil' => $drain['until']]),
       'weather' => weather_out($st['weather']), 'risk' => $st['risk'], 'tide' => $st['tide'], 'flood' => $st['flood'],
       'layers' => $on('layers', array_filter($db['layers'] ?? [], $act)), 'rivers' => $on('rivers', array_filter($db['rivers'] ?? [], $act)), 'zones' => $on('rivers', array_filter($db['zones'] ?? [], $act)),
       'points' => $on('points', array_map(fn($p) => array_merge($p, ['active' => true]), array_filter($db['points'], $pointOn))),
@@ -124,17 +190,41 @@ try {
     if (empty(features_cfg(db_load())['reports'])) fail(403, 'Los reportes ciudadanos están desactivados por ahora.');
     $b = body();
     if (!is_num($b['lat'] ?? null) || !is_num($b['lng'] ?? null)) fail(400, 'Toca el mapa para indicar el lugar del reporte.');
+    $photo = parse_photo($b['photo'] ?? null);
+    if ($photo === null) fail(400, 'Adjunta una fotografía del lugar: es obligatoria para comprobar el reporte.');
     if (mb_strlen(trim((string)($b['description'] ?? ''))) < 5) fail(400, 'Describe brevemente qué está pasando (mínimo 5 letras).');
-    db_lock(); $db = &db();
+    db_lock(); $db = &db(); $db['reports'] ??= [];
+    // la ciudadanía ya no elige gravedad: todo reporte aceptado es un punto crítico de nivel medio
     $r = ['id' => next_id('rep'), 'lat' => $b['lat'], 'lng' => $b['lng'], 'street' => s_val($b['street'] ?? '', 120), 'description' => s_val($b['description'], 400),
-      'level' => in_array($b['level'] ?? '', ['leve', 'moderado', 'grave'], true) ? $b['level'] : 'moderado', 'type' => ($b['type'] ?? '') === 'desborde' ? 'desborde' : 'inundacion', 'status' => 'pendiente', 'createdAt' => now_iso()];
+      'level' => 'moderado', 'type' => ($b['type'] ?? '') === 'desborde' ? 'desborde' : 'inundacion', 'status' => 'pendiente', 'createdAt' => now_iso()];
+    $r['photo'] = '/photos/' . $r['id'] . '.jpg';
+    @mkdir(photos_dir(), 0775, true);
+    if (file_put_contents(photos_dir() . '/' . $r['id'] . '.jpg', $photo) === false) fail(500, 'No se pudo guardar la fotografía. Intenta otra vez.');
     $db['reports'][] = $r; db_save(); cache_put('rl_' . md5($ip), ['t' => array_merge($recent, [now_ms()])]);
-    out($r, 201);
+    out(rep_out($r), 201);
   }
   if ($route === 'public/reports' && $method === 'GET') {
-    $db = db_load(); $f = features_cfg($db);
-    out(array_values(array_filter($db['reports'] ?? [], fn($r) => $r['status'] === 'verificado' && (($r['type'] ?? '') === 'desborde' ? $f['rivers'] : $f['reports']))));
+    $db = db_load(); $f = features_cfg($db); $ids = array_column($db['points'] ?? [], 'id');
+    // Un reporte ya convertido en punto crítico no se muestra como reporte: lo representa el punto (solo con naranja/roja)
+    out(array_map('rep_out', array_values(array_filter($db['reports'] ?? [], fn($r) => $r['status'] === 'verificado' && now_ms() - strtotime($r['createdAt']) * 1000 < REPORT_TTL_MS
+      && !(!empty($r['pointId']) && in_array($r['pointId'], $ids, true)) && (($r['type'] ?? '') === 'desborde' ? $f['rivers'] : $f['reports'])))));
   }
+  if (isset($_GET['photo']) && $method === 'GET' && $method === 'GET') {
+    $n = (string)$_GET['photo']; $file = photos_dir() . '/' . $n;
+    if (!preg_match('/^rep_[a-z0-9]+\.jpg$/', $n) || !is_file($file)) { http_response_code(404); exit; }
+    header('Content-Type: image/jpeg'); header('Cache-Control: public, max-age=86400'); header('Content-Length: ' . filesize($file)); readfile($file); exit;
+  }
+  if ($route === 'public/rev' && $method === 'GET') out(['rev' => (cache_get('rev')['rev'] ?? 0), 'mapVersion' => db_load()['config']['mapVersion'] ?? 0]);
+  if ($route === 'public/near' && $method === 'GET') {
+    $lat = (float)($_GET['lat'] ?? 'x'); $lng = (float)($_GET['lng'] ?? 'x');
+    if (!is_numeric($_GET['lat'] ?? null) || !is_numeric($_GET['lng'] ?? null) || abs($lat) > 90 || abs($lng) > 180) fail(400, 'Coordenadas inválidas');
+    try { out(near_streets($lat, $lng)); } catch (Throwable $e) { out(['streets' => [], 'sector' => '']); }
+  }
+  if ($route === 'public/forecast-days' && $method === 'GET') { $cfg = db_load()['config']['weather']; out(with_history(get_days($cfg), $cfg)); }
+  // Notificaciones push
+  if ($route === 'public/push-key' && $method === 'GET') out(['key' => push_public_key()]);
+  if ($route === 'public/push-subscribe' && $method === 'POST') { if (push_add_sub(body()['subscription'] ?? null)) out(['ok' => true]); fail(400, 'Suscripción no válida.'); }
+  if ($route === 'public/push-unsubscribe' && $method === 'POST') { push_remove_sub((string)(body()['endpoint'] ?? '')); out(['ok' => true]); }
   if ($route === 'public/radar' && $method === 'GET') {
     $c = cache_get('radar'); if ($c && now_ms() - $c['at'] < 300000) out($c['data']);
     try {
@@ -146,7 +236,7 @@ try {
   }
 
   // ----- Administración -----
-  if ($seg && $seg[0] === 'admin') { auth(); admin_routes($method, array_slice($seg, 1)); }
+  if ($seg && $seg[0] === 'admin') { auth(); if ($method !== 'GET') $GLOBALS['BUMP_REV'] = true; admin_routes($method, array_slice($seg, 1)); }
   fail(404, 'Ruta no encontrada.');
 } catch (Throwable $e) { error_log('AlertaVial: ' . $e->getMessage()); fail(500, 'Ocurrió un error inesperado en el servidor.'); }
 
@@ -172,9 +262,10 @@ function admin_routes(string $method, array $seg): void {
   $r = implode('/', $seg); $b = body();
   if ($r === 'state' && $method === 'GET') {
     $st = compute_status(); $db = db_load();
-    out(array_merge($db, ['config' => array_merge($db['config'], ['gps' => gps_cfg($db), 'levelMessages' => level_msgs($db), 'features' => features_cfg($db), 'noCar' => nocar_cfg($db)]),
+    unset($db['push']);
+    out(array_merge($db, ['pushCount' => push_count(), 'config' => array_merge($db['config'], ['gps' => gps_cfg($db), 'levelMessages' => level_msgs($db), 'features' => features_cfg($db), 'noCar' => nocar_cfg($db)]),
       'alert' => array_merge($db['alert'], ['effective' => $st['effective'], 'suggested' => $st['suggested']]), 'weather' => weather_out($st['weather']), 'risk' => $st['risk'], 'tide' => $st['tide'],
-      'reports' => $db['reports'] ?? [], 'layers' => $db['layers'] ?? [], 'rivers' => $db['rivers'] ?? [], 'zones' => $db['zones'] ?? []]));
+      'reports' => array_map('rep_out', $db['reports'] ?? []), 'layers' => $db['layers'] ?? [], 'rivers' => $db['rivers'] ?? [], 'zones' => $db['zones'] ?? []]));
   }
   if ($r === 'config' && $method === 'PUT') {
     db_lock(); $db = &db(); $c = $b;
@@ -182,6 +273,7 @@ function admin_routes(string $method, array $seg): void {
     if (!empty($c['center'])) $db['config']['center'] = ['lat' => (float)$c['center']['lat'], 'lng' => (float)$c['center']['lng']];
     if (!empty($c['zoom'])) $db['config']['zoom'] = (int)$c['zoom'];
     if (!empty($c['mapProvider'])) $db['config']['mapProvider'] = $c['mapProvider'] === 'google' ? 'google' : 'leaflet';
+    if (array_key_exists('baseStyle', $c)) $db['config']['baseStyle'] = in_array($c['baseStyle'], ['osm', 'hot', 'osmfr'], true) ? $c['baseStyle'] : 'osm';
     if (array_key_exists('googleMapsKey', $c)) $db['config']['googleMapsKey'] = trim((string)$c['googleMapsKey']);
     if (!empty($c['features']) && is_array($c['features'])) { $f = []; foreach (DEFAULT_FEATURES as $k => $_) $f[$k] = ($c['features'][$k] ?? true) !== false; $db['config']['features'] = $f; }
     if (array_key_exists('noCar', $c)) {
@@ -196,18 +288,22 @@ function admin_routes(string $method, array $seg): void {
       $o = $db['config']['weather']; $w = $c['weather'];
       $db['config']['weather'] = array_merge($o, $w, ['lat' => (float)($w['lat'] ?? $o['lat']), 'lng' => (float)($w['lng'] ?? $o['lng']),
         'rainThresholdMm' => (float)($w['rainThresholdMm'] ?? $o['rainThresholdMm']), 'rainThresholdMm3h' => (float)($w['rainThresholdMm3h'] ?? $o['rainThresholdMm3h']),
+        'stepDownMin' => max(5, min(360, (float)($w['stepDownMin'] ?? $o['stepDownMin'] ?? 45) ?: 45)), 'drainHours' => max(0, min(48, (float)($w['drainHours'] ?? $o['drainHours'] ?? 3) ?: 0)),
         'metarStation' => substr(preg_replace('/[^A-Z0-9]/', '', strtoupper(trim((string)($w['metarStation'] ?? $o['metarStation'] ?? 'SERO')))), 0, 4),
         'owmKey' => s_val(trim((string)($w['owmKey'] ?? $o['owmKey'] ?? '')), 64)]);
     }
     db_save(); out($db['config']);
   }
+  // "Actualizar mapa": sube un número de versión; los teléfonos lo notan y renuevan sus archivos y cuadros guardados.
+  if ($r === 'map-refresh' && $method === 'POST') { db_lock(); $db = &db(); $db['config']['mapVersion'] = now_ms(); db_save(); out(['ok' => true, 'mapVersion' => $db['config']['mapVersion']]); }
+  if ($r === 'push/test' && $method === 'POST') out(push_send_all(['title' => 'Prueba de avisos', 'body' => 'Si ves esto, las notificaciones funcionan en este teléfono.', 'tag' => 'prueba']));
   if ($r === 'backup' && $method === 'GET') {
     $db = db_load(); header('Content-Type: application/json'); header('Content-Disposition: attachment; filename="alertavial-respaldo-' . gmdate('Y-m-d-H-i') . '.json"');
     echo json_encode($db, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT); exit;
   }
   if ($r === 'restore' && $method === 'POST') {
     $ok = isset($b['config'], $b['alert']); foreach (['points', 'streets', 'routes', 'recommendations'] as $k) $ok = $ok && is_array($b[$k] ?? null);
-    if (!$ok) fail(400, 'El archivo no es un respaldo de AlertaVial.');
+    if (!$ok) fail(400, 'El archivo no es un respaldo del Sistema de Alerta Vial.');
     db_reset($b); @unlink(data_dir() . '/cache/sim.json');
     $counts = []; foreach (['points', 'streets', 'routes', 'rivers', 'zones', 'layers', 'reports'] as $k) $counts[$k] = count($b[$k] ?? []);
     out(['ok' => true, 'counts' => $counts]);
@@ -239,12 +335,17 @@ function admin_routes(string $method, array $seg): void {
     if ($method === 'PUT') {
       foreach ($db['reports'] as &$rep) if ($rep['id'] === $id) {
         if (in_array($b['status'] ?? '', ['pendiente', 'verificado', 'descartado', 'retirado'], true)) $rep['status'] = $b['status'];
+        if (is_string($b['pointId'] ?? null)) $rep['pointId'] = substr($b['pointId'], 0, 40); // punto crítico creado a partir de este reporte
         $rep['reviewedAt'] = now_iso(); if ($rep['status'] === 'retirado') $rep['clearedAt'] = $rep['reviewedAt'];
-        db_save(); out($rep);
+        db_save(); out(rep_out($rep));
       }
       fail(404, 'No se encontró el reporte.');
     }
-    if ($method === 'DELETE') { $db['reports'] = array_values(array_filter($db['reports'] ?? [], fn($x) => $x['id'] !== $id)); db_save(); out(['ok' => true]); }
+    if ($method === 'DELETE') {
+      $db['reports'] = array_values(array_filter($db['reports'] ?? [], fn($x) => $x['id'] !== $id)); db_save();
+      if (preg_match('/^rep_[a-z0-9]+$/', $id)) @unlink(photos_dir() . "/$id.jpg");
+      out(['ok' => true]);
+    }
   }
   // CRUD genérico
   $name = $seg[0] ?? '';

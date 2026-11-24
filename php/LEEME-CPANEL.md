@@ -3,7 +3,7 @@
 Esta versión hace lo mismo que la de Node.js (mapa público, panel de administración, clima, alertas, reportes, respaldo), pero corre en cualquier cPanel con **PHP 8.0 o superior**. No necesita Node.js y **no se apaga**: los datos quedan guardados en el hosting.
 
 ## Qué necesitas
-- Un cPanel con PHP 8.0+ y las extensiones `curl` y `mbstring` (vienen activas casi siempre; se ven en *Seleccionar versión de PHP → Extensiones*).
+- Un cPanel con PHP 8.0+ y las extensiones `curl`, `mbstring`, `openssl` y `gd` (vienen activas casi siempre; se ven en *Seleccionar versión de PHP → Extensiones*). `gd` lee la imagen del radar y `openssl` firma las notificaciones push.
 - Un dominio o subdominio **para esta app sola** (por ejemplo `alerta.tudominio.com`). La app usa direcciones que empiezan en `/`, así que no funciona dentro de una subcarpeta como `tudominio.com/alerta`.
 - HTTPS activo (AutoSSL de cPanel). Sin HTTPS el GPS del teléfono y la instalación de la app no funcionan.
 
@@ -14,6 +14,19 @@ Esta versión hace lo mismo que la de Node.js (mapa público, panel de administr
 4. Abre `config.php` (clic derecho → Edit) y **cambia `AV_ADMIN_PASSWORD`** por la contraseña que quieras. Mientras diga `CAMBIAR-ESTA-CLAVE`, el panel no deja entrar. Guarda.
 5. Abre `https://alerta.tudominio.com`: debe verse el mapa. El panel está en `https://alerta.tudominio.com/admin` (usuario `admin`).
 6. En el panel, **Configuración → Respaldo de datos → Restaurar** si quieres cargar los datos que ya tenías (puntos, calles, ríos, vías alternas). El respaldo se descarga desde la versión Node (o desde Render) con el botón *Descargar respaldo*.
+
+## Tarea programada (recomendada, 2 minutos)
+Para que el semáforo baje solo, los puntos críticos se apaguen al terminar el drenaje y lleguen las notificaciones push aunque nadie tenga el mapa abierto:
+1. cPanel → **Cron Jobs** (Trabajos de cron) → *Agregar nuevo trabajo de cron*.
+2. Frecuencia: **cada 5 minutos** (`*/5 * * * *`).
+3. Comando (cambia la ruta por la de tu carpeta):
+   `php /home/TU_USUARIO/public_html/alertavial/api/cron.php >/dev/null 2>&1`
+
+Sin la tarea programada la app igual funciona: revisa todo cada vez que alguien abre el mapa.
+
+## Diferencias con la versión Node (Render)
+- **Detector de rayos**: no está en PHP. Necesita un programa encendido todo el tiempo (satélite GOES y red Blitzortung) y un hosting compartido no lo permite. La tormenta se sigue detectando con el aeropuerto (METAR), el radar y los modelos.
+- Todo lo demás es igual: reportes con foto obligatoria (se guardan en `data/photos`), reportes aceptados como puntos críticos de nivel medio, bajada gradual del semáforo, tiempo de drenaje, ríos que suben el nivel, calles cercanas automáticas, "Ayer" con el diario del clima, notificaciones push y botón *Actualizar mapa*.
 
 ## Opcional
 - **OpenWeatherMap**: pon tu API key gratuita en `AV_OWM_KEY` (`config.php`) para sumar otra fuente de clima.
@@ -28,7 +41,9 @@ Sube los archivos nuevos **sin tocar** la carpeta `data` ni `config.php`. Antes 
 | Error 500 o página en blanco | *Seleccionar versión de PHP*: elige 8.1 o superior y activa `curl` y `mbstring`. |
 | El panel dice "Falta elegir la contraseña" | Cambia `AV_ADMIN_PASSWORD` en `config.php`. |
 | "Necesitas iniciar sesión" aunque la contraseña es correcta | Verifica que el archivo `.htaccess` esté en la carpeta (es oculto). Es el que pasa la sesión a PHP. |
-| El clima dice "sin conexión" | Algunos hostings compartidos bloquean conexiones salientes: pídele a soporte que permitan a PHP conectarse a `api.open-meteo.com`, `api.met.no` y `aviationweather.gov`. |
+| El clima dice "sin conexión" | Algunos hostings compartidos bloquean conexiones salientes: pídele a soporte que permitan a PHP conectarse a `api.open-meteo.com`, `api.met.no`, `aviationweather.gov`, `tgftp.nws.noaa.gov`, `wttr.in`, `api.rainviewer.com` y `tilecache.rainviewer.com`. |
+| No llegan las notificaciones | Activa la extensión `openssl` y configura la tarea programada. Las notificaciones necesitan HTTPS. |
+| El reporte dice que no se pudo guardar la foto | Permisos de la carpeta `data` (755/775). |
 | No guarda cambios | Permisos de la carpeta `data` (755/775). |
 
 ## Para quien mantiene el código
