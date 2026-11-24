@@ -2,6 +2,8 @@
 // Datos públicos y gratuitos en AWS (programa NOAA Open Data Dissemination), sin clave. Cada 20 s sale un archivo
 // NetCDF con los "flashes" (rayos) detectados; se leen solo los de los últimos minutos y solo se guardan los cercanos.
 import h5wasm from 'h5wasm/node';
+import os from 'node:os';
+import path from 'node:path';
 const rad = x => x * Math.PI / 180;
 const kmBetween = (a, b) => { const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng), h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2; return 12742 * Math.asin(Math.sqrt(h)); };
 
@@ -29,7 +31,8 @@ let ready = null;
 export async function readFlashes(buf) {
   ready ||= h5wasm.ready;
   const { FS } = await ready;
-  const tmp = `/glm_${Date.now()}_${Math.random().toString(36).slice(2)}.nc`;
+  // h5wasm (versión Node) usa el disco real: se escribe en la carpeta temporal, no en la raíz (en Render no hay permiso)
+  const tmp = path.join(os.tmpdir(), `glm_${Date.now()}_${Math.random().toString(36).slice(2)}.nc`);
   FS.writeFile(tmp, new Uint8Array(buf));
   const f = new h5wasm.File(tmp, 'r');
   try {
