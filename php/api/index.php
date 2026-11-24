@@ -268,10 +268,11 @@ function validate_item(string $name, array $it): ?string {
 function admin_routes(string $method, array $seg): void {
   $r = implode('/', $seg); $b = body();
   if ($r === 'state' && $method === 'GET') {
-    $st = compute_status(); $db = db_load();
+    $st = compute_status(); $db = db_load(); $drain = $st['drain']; $eff = $st['effective'];
     unset($db['push']);
+    $dpts = LV[$eff] < 2 ? count(array_filter($db['points'], fn($p) => !empty($p['auto']) && (($p['source'] ?? '') === 'reporte' ? $drain['reportOn'] : $drain['draining']))) : 0;
     out(array_merge($db, ['pushCount' => push_count(), 'config' => array_merge($db['config'], ['gps' => gps_cfg($db), 'levelMessages' => level_msgs($db), 'features' => features_cfg($db), 'noCar' => nocar_cfg($db)]),
-      'alert' => array_merge($db['alert'], ['effective' => $st['effective'], 'suggested' => $st['suggested']]), 'weather' => weather_out($st['weather']), 'risk' => $st['risk'], 'tide' => $st['tide'],
+      'alert' => array_merge($db['alert'], ['effective' => $eff, 'suggested' => $st['suggested'], 'draining' => $drain['draining'] || (LV[$eff] < 2 && $drain['reportOn']), 'drainUntil' => $drain['until'], 'drainPoints' => $dpts]), 'weather' => weather_out($st['weather']), 'risk' => $st['risk'], 'tide' => $st['tide'],
       'reports' => array_map('rep_out', $db['reports'] ?? []), 'layers' => $db['layers'] ?? [], 'rivers' => $db['rivers'] ?? [], 'zones' => $db['zones'] ?? []]));
   }
   if ($r === 'config' && $method === 'PUT') {
@@ -300,6 +301,13 @@ function admin_routes(string $method, array $seg): void {
         'owmKey' => s_val(trim((string)($w['owmKey'] ?? $o['owmKey'] ?? '')), 64)]);
     }
     db_save(); out($db['config']);
+  }
+  // "El agua ya bajó": termina el drenaje antes de lo previsto y apaga los puntos críticos automáticos
+  if ($r === 'drain-end' && $method === 'POST') {
+    $st = compute_status(); if (LV[$st['effective']] >= 2) fail(400, 'La alerta sigue en naranja o roja: los puntos críticos deben seguir activos.');
+    db_lock(); $db = &db(); $db['alert']['lastHighAt'] = null; $db['alert']['lastRainAt'] = null; $db['alert']['drainDone'] = true; $n = 0;
+    foreach ($db['points'] as &$p) if (!empty($p['auto']) && !empty($p['active'])) { $p['active'] = false; $n++; }
+    unset($p); db_save(); out(['ok' => true, 'turnedOff' => $n]);
   }
   // "Actualizar mapa": sube un número de versión; los teléfonos lo notan y renuevan sus archivos y cuadros guardados.
   if ($r === 'map-refresh' && $method === 'POST') { db_lock(); $db = &db(); $db['config']['mapVersion'] = now_ms(); db_save(); out(['ok' => true, 'mapVersion' => $db['config']['mapVersion']]); }
