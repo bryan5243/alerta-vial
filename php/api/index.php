@@ -91,8 +91,10 @@ function compute_status(): array {
     : (in_array('SEVERE', $sev, true) || $over >= 1 ? 'naranja' : (in_array('ABOVE_NORMAL', $sev, true) || $high >= 1 ? 'amarilla' : 'normal'));
   $suggested = max_level(max_level(level_from_weather($weather, $cfg), $risk['level']), $riverLevel);
   // Durante una simulación el nivel publicado sigue al clima simulado, aunque la alerta esté en manual.
-  $effective = ($db['alert']['mode'] === 'manual' && !sim_on()) ? $db['alert']['level'] : step_down($suggested);
-  $drain = sync_auto_points($effective, $weather);
+  // La simulación es solo una prueba: muestra el nivel simulado pero no deja huella (ni bajada gradual ni drenaje)
+  $sim = (bool)sim_on();
+  $effective = $sim ? $suggested : ($db['alert']['mode'] === 'manual' ? $db['alert']['level'] : step_down($suggested));
+  $drain = $sim ? ['draining' => false, 'until' => null, 'reportOn' => LV[$effective] >= 2] : sync_auto_points($effective, $weather);
   return compact('weather', 'suggested', 'effective', 'risk', 'tide', 'flood', 'drain');
 }
 // Al dejar de llover el semáforo no cae de golpe: baja un color cada cierto tiempo (por defecto 45 min),
@@ -331,7 +333,7 @@ function admin_routes(string $method, array $seg): void {
   }
   if ($r === 'simulation' && $method === 'GET') out(sim_on() ?: ['active' => false]);
   if ($r === 'simulation' && $method === 'PUT') {
-    if (empty($b['active'])) { @unlink(data_dir() . '/cache/sim.json'); out(['active' => false]); }
+    if (empty($b['active'])) { @unlink(data_dir() . '/cache/sim.json'); db_lock(); $db = &db(); unset($db['alert']['autoLevel']); $db['alert']['autoStepAt'] = now_ms(); db_save(); out(['active' => false]); }
     $n = fn($v, $max) => max(0, min($max, (float)$v));
     $s = ['active' => true, 'preset' => s_val($b['preset'] ?? 'manual', 30), 'rainNow' => $n($b['rainNow'] ?? 0, 200), 'rainPast3h' => $n($b['rainPast3h'] ?? 0, 500), 'rainNext3h' => $n($b['rainNext3h'] ?? 0, 500),
       'probNext3h' => $n($b['probNext3h'] ?? 0, 100), 'weatherCode' => (int)round($n($b['weatherCode'] ?? 0, 99)), 'until' => now_ms() + (int)max(1, min(240, (float)($b['minutes'] ?? 0) ?: 30)) * 60000];
