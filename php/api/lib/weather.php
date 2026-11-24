@@ -152,8 +152,19 @@ function parse_metar($raw): array {
     if (!$ts && $m1 === '+') $i = 3;
     if ($i > $intensity) { $intensity = $i; $txt = $ts ? ($rain ? 'Tormenta con lluvia' : 'Tormenta eléctrica') : (($m1 === '+' ? 'Lluvia fuerte' : ($m1 === '-' ? 'Lluvia leve' : (preg_match('/DZ/', $m3) && !preg_match('/RA/', $m3) ? 'Llovizna' : 'Lluvia'))) . ($m2 === 'SH' ? ' (chubasco)' : '')); }
   }
-  if (!$intensity && $near) return ['intensity' => 0, 'near' => $near, 'text' => 'Lluvia en los alrededores (no sobre el aeropuerto)'];
-  return ['intensity' => $intensity, 'near' => $near, 'text' => $txt ?: 'Sin lluvia'];
+  $air = metar_air($body);
+  if (!$intensity && $near) return ['intensity' => 0, 'near' => $near, 'text' => 'Lluvia en los alrededores (no sobre el aeropuerto)'] + $air;
+  return ['intensity' => $intensity, 'near' => $near, 'text' => $txt ?: 'Sin lluvia'] + $air;
+}
+// Temperatura, humedad (del punto de rocío) y viento medidos en el aeropuerto: "29/22" (M = bajo cero), "23008KT"
+function metar_air(string $body): array {
+  $out = [];
+  if (preg_match('#\s(M?\d{2})/(M?\d{2})(?=\s|$)#', ' ' . $body, $t)) {
+    $n = fn($x) => ($x[0] === 'M' ? -1 : 1) * (int)str_replace('M', '', $x); $T = $n($t[1]); $D = $n($t[2]);
+    $out['temperature'] = $T; $out['humidity'] = (int)round(100 * exp(17.625 * $D / (243.04 + $D)) / exp(17.625 * $T / (243.04 + $T)));
+  }
+  if (preg_match('/\b(?:\d{3}|VRB)(\d{2,3})(?:G\d{2,3})?(KT|MPS)\b/', $body, $w)) $out['wind'] = (int)round((int)$w[1] * ($w[2] === 'KT' ? 1.852 : 3.6));
+  return $out;
 }
 // Dos servidores a la vez (aviationweather.gov y NOAA): gana el reporte más reciente que llegue
 function metar_parse(?array $awc, ?array $noaa, string $station): array {
@@ -173,7 +184,8 @@ function metar_parse(?array $awc, ?array $noaa, string $station): array {
     return $base + ['ok' => $fresh, 'stale' => !$fresh, 'at' => gmdate('c', $last['at']), 'ageMin' => $ageMin, 'raw' => $last['raw'], 'intensity' => $fresh ? $p['intensity'] : 0, 'rainNow' => $fresh ? INT_MM[$p['intensity']] : 0,
       'near' => $fresh && !empty($p['near']), 'cb' => $fresh && (bool)preg_match('/\b(FEW|SCT|BKN|OVC)\d{3}(CB|TCU)\b/', $last['raw']),
       'ts' => $fresh && (bool)preg_match('/\b(VC)?TS/', preg_replace('/^\S+\s+\S+\s+/', '', $last['raw'])),
-      'detail' => "{$p['text']} · reporte de hace $ageMin min", 'error' => $fresh ? null : "último reporte hace $ageMin min"];
+      'detail' => "{$p['text']} · reporte de hace $ageMin min", 'error' => $fresh ? null : "último reporte hace $ageMin min",
+      'temperature' => $fresh ? ($p['temperature'] ?? null) : null, 'humidity' => $fresh ? ($p['humidity'] ?? null) : null, 'wind' => $fresh ? ($p['wind'] ?? null) : null];
   } catch (Throwable $e) { return $base + ['ok' => false, 'intensity' => 0, 'error' => $e->getMessage()]; }
 }
 
@@ -399,7 +411,7 @@ function combine(array $remote, array $extra = []): array {
   $w = ['ok' => true, 'sources' => $sources, 'checkedAt' => $at, 'modelsNeeded' => $need, 'decidedBy' => $intensity > 0 ? $top['name'] : null,
     'source' => implode(' + ', array_map(fn($s) => $s['id'] === 'modelos' ? "$provs ($n modelos)" : $s['name'], $live)),
     'observedAt' => ($intensity > 0 ? ($top['at'] ?? null) : ($base['observedAt'] ?? null)) ?: $at,
-    'temperature' => $pk('temperature') ?? ($owm['temperature'] ?? null), 'cloudCover' => max($base['cloudCover'] ?? 0, $owm['cloudCover'] ?? 0, $intensity ? 95 : 0),
+    'temperature' => (!empty($metar['ok']) ? ($metar['temperature'] ?? null) : null) ?? $pk('temperature') ?? ($owm['temperature'] ?? null), 'cloudCover' => max($base['cloudCover'] ?? 0, $owm['cloudCover'] ?? 0, $intensity ? 95 : 0),
     'rainNow' => $intensity ? r1(max(array_map(fn($s) => !empty($s['intensity']) ? ($s['rainNow'] ?? 0) : 0, $live))) : 0,
     'rainPast3h' => max($pick('rainPast3h'), $intensity >= 2 ? INT_MM[$intensity] : 0), 'rainPast6h' => $pick('rainPast6h'), 'rainPast12h' => $pick('rainPast12h'), 'wetHours' => $pick('wetHours'),
     'rainNext3h' => $pick('rainNext3h'), 'rainNext24h' => $pick('rainNext24h'), 'probNext3h' => null, 'maxProbability24h' => null,
@@ -411,9 +423,12 @@ function combine(array $remote, array $extra = []): array {
     $w['probEstimated'] = !array_filter(array_slice($w['hourly'], 0, 4), fn($h) => empty($h['estimated']));
   }
   $w['periods'] = day_parts($w['hourly']);
-  $hum = $pk('humidity'); $wind = $pk('wind'); $gust = $pk('gust');
+  // humedad y viento: del aeropuerto si hay reporte reciente; si no, del mejor modelo
+  $obs = !empty($metar['ok']) && ($metar['temperature'] ?? null) !== null ? $metar : null;
+  $hum = $obs['humidity'] ?? $pk('humidity'); $wind = $obs['wind'] ?? $pk('wind'); $gust = $pk('gust'); $w['tempFrom'] = $obs ? 'aeropuerto' : 'modelo';
   $w['humidity'] = $hum === null ? null : (int)round($hum); $w['wind'] = $wind === null ? null : (int)round($wind); $w['gust'] = $gust === null ? null : (int)round($gust);
-  $w['apparent'] = $pk('apparent') ?? apparent_temp($w['temperature'], $w['humidity'], ($w['wind'] ?? 0) / 3.6);
+  // Sensación térmica a la sombra (Steadman), como la publica el INAMHI. La de Open-Meteo suma el sol directo y daba 6–8 °C de más.
+  $w['apparent'] = apparent_temp($w['temperature'], $w['humidity'], ($w['wind'] ?? 0) / 3.6);
   $w['heat'] = heat_info($w['apparent']);
   $sunSrc = $base['sun'] ?? null; if (!$sunSrc) { $m = first_of($okM, fn($m) => ($m['sun']['uvIndex'] ?? null) !== null); $sunSrc = $m['sun'] ?? null; }
   $w['sun'] = sun_info($sunSrc, $w['cloudCover'], $intensity);
