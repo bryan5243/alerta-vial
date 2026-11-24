@@ -42,6 +42,9 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
   // Aviso cuando los tiles no cargan (sin internet)
   const fb = document.createElement('div'); fb.className = 'map-fallback'; fb.textContent = 'Sin conexión al mapa base. Las capas de alerta siguen visibles.';
   el.appendChild(fb); tiles.on('load', () => fb.remove()); tiles.on('tileerror', () => { if (!el.contains(fb)) el.appendChild(fb); });
+  const driveTiles = L.tileLayer(B.url, { maxZoom: B.max, maxNativeZoom: B.max, crossOrigin: B.cors, subdomains: 'abc', attribution: B.attr,
+    keepBuffer: 1, updateWhenIdle: false, updateInterval: 300, updateWhenZooming: false, zIndex: 1, className: 'drive-tiles' });
+  driveTiles.on('tileerror', () => { if (!el.contains(fb)) el.appendChild(fb); });
   const layers = L.layerGroup().addTo(map);
   let radar = null, clickCb = null;
   map.on('click', e => clickCb && clickCb({ lat: e.latlng.lat, lng: e.latlng.lng }));
@@ -72,7 +75,12 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
     dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars(); meEl?.style.setProperty('--lean', dv.lean.toFixed(1) + 'deg');
     if (dv.tZ !== map.getZoom()) { dv.ext = true; map.setZoom(dv.tZ); return; }
     const p = map.latLngToContainerPoint([dv.lat, dv.lng]), c = map.getSize().divideBy(2), d = p.subtract(c);
-    if (Math.abs(d.x) > .2 || Math.abs(d.y) > .2) map.panBy(d, { animate: false });
+    if (Math.abs(d.x) > .2 || Math.abs(d.y) > .2) {
+      // Se mueve solo el panel (barato). El aviso de "fin de movimiento", que hace pedir cuadros y redibujar
+      // calles y rutas, se da como mucho cada 350 ms; antes iba en cada cuadro (60 veces por segundo) y trababa el mapa.
+      map._rawPanBy(d); map.fire('move');
+      if (t - (dv.endAt || 0) > 350) { dv.endAt = t; map.fire('moveend'); }
+    }
   };
   map.on('zoomstart', () => { if (dv.active) dv.ext = true; });
   map.on('zoomend', () => { if (!dv.active) return; dv.ext = false; if (Date.now() <= dv.manualUntil || dv.tZ === map.getZoom()) dv.tZ = map.getZoom(); });
@@ -82,6 +90,9 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
       if (dv.active) return; dv.active = true;
       const c = u || map.getCenter(); dv.hdg = u?.heading ?? 0; dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars();
       wrap.classList.add('drive'); document.body.classList.add('drive-on');
+      // En 3D el mapa es ~4 veces más grande que la pantalla: con cuadros de alta resolución eran 4×4 = 16 veces más
+      // descargas y la parte lejana quedaba en blanco. Se usa una capa de cuadros normales, con menos reserva.
+      map.addLayer(driveTiles); map.removeLayer(tiles);
       map.dragging.disable(); map.options.touchZoom = 'center'; map.options.scrollWheelZoom = 'center'; map.options.doubleClickZoom = 'center';
       map.touchZoom.disable(); map.touchZoom.enable(); map.scrollWheelZoom.disable(); map.scrollWheelZoom.enable();
       map.invalidateSize({ animate: false });
@@ -93,6 +104,7 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
     stop() {
       if (!dv.active) return; dv.active = false; cancelAnimationFrame(dv.raf);
       wrap.classList.remove('drive', 'drive-flat', 'drive-north', 'drive-moving'); document.body.classList.remove('drive-on');
+      map.addLayer(tiles); map.removeLayer(driveTiles);
       ['--rot', '--tilt', '--unsq'].forEach(k => wrap.style.removeProperty(k)); el.style.transform = ''; lastPinRot = lastTilt = null; ['--rot'].forEach(k => ctlEl?.style.removeProperty(k)); ['--me', '--lean'].forEach(k => meEl?.style.removeProperty(k));
       map.options.touchZoom = true; map.options.scrollWheelZoom = true; map.options.doubleClickZoom = true;
       map.dragging.enable(); map.touchZoom.disable(); map.touchZoom.enable(); map.scrollWheelZoom.disable(); map.scrollWheelZoom.enable();
