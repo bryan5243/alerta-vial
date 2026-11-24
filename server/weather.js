@@ -360,22 +360,29 @@ function applyRainLog(w, now = Date.now()) {
 }
 
 // Combina modelos y observaciones. `extra` son fuentes locales (equipo, reportes) que arma el servidor.
+// Pide todas las fuentes a la vez (puede tardar hasta ~12 s si alguna no responde)
+async function fetchRemote(lat, lng, metarStation, owmKey) {
+  const [omModels, metno, metar, owm, radar, wttr] = await Promise.all([
+    openMeteoAll(lat, lng).catch(e => Object.keys(MODELS).map(m => ({ model: m, name: MODELS[m], ok: false, error: e.message, intensity: 0 }))),
+    metnoSource(lat, lng),
+    metarStation ? metarSource(metarStation) : Promise.resolve(null),
+    owmSource(lat, lng, owmKey),
+    radarSource(lat, lng),
+    wttrSource(lat, lng),
+  ]);
+  return { models: [...omModels, metno], metar, owm, radar, wttr, at: new Date().toISOString() };
+}
+let refreshing = null;
+// Combina modelos y observaciones. `extra` son fuentes locales (equipo, reportes) que arma el servidor.
+// Nadie espera a las fuentes: si hay un dato de menos de 1 h se responde con él al instante y se renueva por detrás.
 export async function getWeather({ lat, lng, metarStation = 'SERO', owmKey = '' } = {}, extra = []) {
   const key = `${lat},${lng},${metarStation},${owmKey ? 1 : 0}`;
-  let remote;
-  if (cache.data && cache.key === key && Date.now() - cache.at < TTL) remote = cache.data;
-  else {
-    const [omModels, metno, metar, owm, radar, wttr] = await Promise.all([
-      openMeteoAll(lat, lng).catch(e => Object.keys(MODELS).map(m => ({ model: m, name: MODELS[m], ok: false, error: e.message, intensity: 0 }))),
-      metnoSource(lat, lng),
-      metarStation ? metarSource(metarStation) : Promise.resolve(null),
-      owmSource(lat, lng, owmKey),
-      radarSource(lat, lng),
-      wttrSource(lat, lng),
-    ]);
-    remote = { models: [...omModels, metno], metar, owm, radar, wttr, at: new Date().toISOString() };
-    cache = { at: Date.now(), key, data: remote };
+  const age = Date.now() - cache.at, have = cache.data && cache.key === key;
+  if (!have || age >= TTL) {
+    refreshing ||= fetchRemote(lat, lng, metarStation, owmKey).then(data => { cache = { at: Date.now(), key, data }; }).finally(() => { refreshing = null; });
+    if (!have || age >= 3600e3) await refreshing.catch(() => {});
   }
+  const remote = cache.data && cache.key === key ? cache.data : await fetchRemote(lat, lng, metarStation, owmKey);
   const w = combine({ ...remote, lightning: lightningSnapshot() }, extra);
   return w.ok ? applyRainLog(w) : w;
 }
@@ -648,9 +655,15 @@ export function describe(w) {
 
 // Marea (nivel del mar) desde Open-Meteo Marine. Útil en ciudades costeras como Santa Rosa (El Oro).
 // Devuelve qué tan alta está la marea ahora respecto al rango de las próximas 24 h (0 = bajamar, 1 = pleamar).
+// Marea: igual que el clima, se responde con el último dato y se renueva por detrás
+let tideRefreshing = null;
 export async function getTide({ lat, lng }) {
-  const key = `${lat},${lng}`;
-  if (tideCache.data && tideCache.key === key && Date.now() - tideCache.at < TTL * 3) return tideCache.data;
+  const key = `${lat},${lng}`, have = tideCache.data && tideCache.key === key, age = Date.now() - tideCache.at;
+  if (have && age < TTL * 3) return tideCache.data;
+  tideRefreshing ||= fetchTide(lat, lng, key).finally(() => { tideRefreshing = null; });
+  return have && age < 6 * 3600e3 ? tideCache.data : tideRefreshing;
+}
+async function fetchTide(lat, lng, key) {
   try {
     const url = new URL('https://marine-api.open-meteo.com/v1/marine');
     url.search = new URLSearchParams({ latitude: lat, longitude: lng, hourly: 'sea_level_height_msl', forecast_hours: 24, past_hours: 1, timezone: 'America/Guayaquil', cell_selection: 'sea' });

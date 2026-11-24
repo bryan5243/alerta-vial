@@ -180,9 +180,11 @@ if (SIM) {
 const CACHE_KEY = 'av_state_cache';
 async function fetchState() {
   try {
-    const res = await fetch('/api/public/state', { signal: AbortSignal.timeout(12000) }); if (!res.ok) throw new Error(res.status);
+    // Estado y reportes se piden a la vez (antes uno después del otro)
+    const [res, rr] = await Promise.all([fetch('/api/public/state', { signal: AbortSignal.timeout(20000) }), fetch('/api/public/reports', { signal: AbortSignal.timeout(20000) }).catch(() => null)]);
+    if (!res.ok) throw new Error(res.status);
     const st = await res.json();
-    const reports = await (await fetch('/api/public/reports', { signal: AbortSignal.timeout(12000) })).json();
+    const reports = rr && rr.ok ? await rr.json().catch(() => []) : [];
     const pack = { state: st, reports, at: Date.now() };
     try { localStorage.setItem(CACHE_KEY, JSON.stringify(pack)); } catch { try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ...pack, state: { ...st, layers: [] } })); } catch {} }
     setOffline(null); return pack;
@@ -213,9 +215,16 @@ async function checkMapVersion(v) {
   location.reload();
 }
 async function load() {
-  const pack = await fetchState(); state = pack.state; setNoCar(state?.config?.noCar);
-  if (!document.body.classList.contains('is-offline')) checkMapVersion(state?.config?.mapVersion);
-  const reports = pack.reports;
+  // Al abrir: se muestra al instante lo último guardado en el teléfono y se actualiza en cuanto llega el dato nuevo
+  if (!state) { let cached = null; try { cached = JSON.parse(localStorage.getItem(CACHE_KEY)); } catch {}
+    if (cached?.state?.config) await show(cached).catch(() => {}); }
+  const pack = await fetchState();
+  if (!document.body.classList.contains('is-offline')) checkMapVersion(pack.state?.config?.mapVersion);
+  await show(pack);
+}
+async function show(pack) {
+  state = pack.state; setNoCar(state?.config?.noCar);
+  const reports = pack.reports || [];
   if (!map) {
     map = await createMap({ provider: state.config.mapProvider, el: document.getElementById('map'), center: state.config.center, zoom: homeZoom(), googleKey: state.config.googleMapsKey, style: state.config.baseStyle });
     map.onClick(onMapClick);

@@ -459,6 +459,8 @@ async function pushTick() {
     await push.checkAndNotify(st, { levelMessage: levelMsgs(db)[st.effective], simulated: !!simOn() });
   } catch (e) { console.error('Avisos push:', e.message); }
 }
+// El clima se consulta apenas arranca el servidor y luego cada 4 min, así ninguna visita espera a las fuentes.
+setTimeout(() => computeStatus().catch(() => {}), 1000); setInterval(() => computeStatus().catch(() => {}), 4 * 60 * 1000);
 setTimeout(pushTick, 20000); setInterval(pushTick, 5 * 60 * 1000);
 
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'admin.html')));
