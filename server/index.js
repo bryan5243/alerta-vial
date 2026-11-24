@@ -277,7 +277,7 @@ app.post('/api/admin/reset-real', auth, async (req, res) => {
     if (off) done.push(`${off} punto(s) crítico(s) encendidos`);
   }
   a.updatedAt = new Date().toISOString(); save();
-  res.json({ ok: true, done, effective: st.effective });
+  res.json({ ok: true, done, effective: st.effective }); setTimeout(pushTick, 300);
 });
 // "Actualizar mapa": sube un número de versión; todos los teléfonos que abren el mapa lo notan y renuevan sus archivos y cuadros guardados.
 app.post('/api/admin/map-refresh', auth, (req, res) => { const db = load(); db.config.mapVersion = Date.now(); save(); res.json({ ok: true, mapVersion: db.config.mapVersion }); });
@@ -330,7 +330,7 @@ app.put('/api/admin/observed', auth, (req, res) => {
   if (!i) delete db.alert.observed;
   else db.alert.observed = { intensity: Math.max(1, Math.min(4, i)), at: new Date().toISOString(), until: new Date(Date.now() + Math.max(15, Math.min(720, +b.minutes || 120)) * 60000).toISOString() };
   save();
-  res.json(db.alert.observed || { intensity: 0 });
+  res.json(db.alert.observed || { intensity: 0 }); setTimeout(pushTick, 300);
 });
 
 app.get('/api/admin/simulation', auth, (req, res) => res.json(simOn() || { active: false }));
@@ -340,7 +340,7 @@ app.put('/api/admin/simulation', auth, (req, res) => {
   const n = (v, max) => Math.max(0, Math.min(max, +v || 0));
   simulation = { active: true, preset: String(b.preset || 'manual').slice(0, 30), rainNow: n(b.rainNow, 200), rainPast3h: n(b.rainPast3h, 500), rainNext3h: n(b.rainNext3h, 500),
     probNext3h: n(b.probNext3h, 100), weatherCode: Math.round(n(b.weatherCode, 99)), until: Date.now() + Math.max(1, Math.min(240, +b.minutes || 30)) * 60000 };
-  res.json(simulation);
+  res.json(simulation); setTimeout(pushTick, 300); // los avisos de prueba salen al instante (antes esperaban hasta 5 min)
 });
 
 app.put('/api/admin/alert', auth, (req, res) => {
@@ -355,7 +355,7 @@ app.put('/api/admin/alert', auth, (req, res) => {
   if (message !== undefined) db.alert.message = String(message).slice(0, 300);
   db.alert.updatedAt = new Date().toISOString();
   save();
-  res.json({ ...db.alert, simStopped });
+  res.json({ ...db.alert, simStopped }); setTimeout(pushTick, 300);
 });
 
 // CRUD genérico para points / streets / routes / recommendations

@@ -39,14 +39,18 @@ const NAME = { amarilla: 'Alerta amarilla', naranja: 'Alerta naranja', roja: 'Al
 const COOLDOWN = 2 * 3600 * 1000;
 // Decide qué avisar según el estado actual. Solo avisa cuando algo EMPIEZA o EMPEORA (no repite cada 5 minutos).
 export async function checkAndNotify(st, { levelMessage, simulated } = {}) {
-  const p = store(), L = p.last, now = Date.now();
+  const p = store(), now = Date.now();
+  // Las simulaciones llevan su propio registro y no tienen espera entre avisos: así cada prueba avisa,
+  // y una prueba no bloquea el aviso de una lluvia real durante 2 h (antes compartían el mismo registro).
+  if (!simulated && p.lastSim) delete p.lastSim;
+  const L = simulated ? (p.lastSim ||= { init: true }) : p.last;
   const pre = simulated ? 'Prueba: ' : '';
   const out = [];
   const w = st.weather || {}, ol = w.outlook?.level;
   const storm = (w.intensity >= 4) || (w.outlook?.reasons || []).some(r => /prevé tormenta|reporta tormenta/.test(r));
   const rainy = ol === 'lloviendo' || w.intensity > 0;
   const soon = ol === 'probable';
-  const can = k => !L[k + 'At'] || now - L[k + 'At'] > COOLDOWN;
+  const can = k => simulated || !L[k + 'At'] || now - L[k + 'At'] > COOLDOWN;
   const fire = async (k, msg) => { L[k + 'At'] = now; save(); out.push({ k, ...msg }); if (p.subs.length) await sendAll(msg); };
   // 1) Nivel de alerta que sube
   const first = L.init !== true; L.init = true;
