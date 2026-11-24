@@ -130,7 +130,10 @@ function secAlert() {
     </aside></div>
   `);
   q('.kpis [data-go]').forEach(b => b.onclick = () => root.querySelector(`.navbtn[data-s="${b.dataset.go}"]`)?.click());
-  q('[data-mode]').forEach(b => b.onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { mode: b.dataset.mode } }); toast('Modo actualizado', 'ok'); refresh(); });
+  q('[data-mode]').forEach(b => b.onclick = async () => {
+    const r = await api('/api/admin/alert', { method: 'PUT', body: { mode: b.dataset.mode } });
+    toast(b.dataset.mode === 'auto' ? `Automático: el semáforo sigue al pronóstico${r.simStopped ? ' · simulación apagada' : ''}` : 'Modo manual: tú eliges el nivel', 'ok'); refresh();
+  });
   q('[data-level]').forEach(b => b.onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { level: b.dataset.level } }); toast(`Nivel: ${LEVELS[b.dataset.level]}`, 'ok'); refresh(); });
   id('save-msg').onclick = async () => { await api('/api/admin/alert', { method: 'PUT', body: { message: id('msg').value } }); toast('Aviso guardado', 'ok'); refresh(); };
   bindSim(w); bindObs();
