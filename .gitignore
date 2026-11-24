@@ -4,3 +4,4 @@ data/db.json
 .env
 php/dist-cpanel/
 php/alertavial-cpanel.zip
+data/photos/

@@ -88,13 +88,13 @@ async function photon(q, center, signal) {
     const street = [p.street, p.housenumber].filter(Boolean).join(' ');
     const name = p.name || street || p.city || p.county;
     const where = uniq([p.name && street ? street : '', p.district || p.locality, p.city, p.county, p.state]).filter(x => x !== name).slice(0, 3);
-    return { name, label: where.join(', '), lat, lng, kind: 'remote' };
+    return { name: pretty(name), label: where.join(', '), lat, lng, kind: 'remote' };
   }).filter(x => x.name && Number.isFinite(x.lat));
 }
 async function nominatim(q, center, signal) {
   const d = AREA_M / 111000, vb = [center.lng - d, center.lat + d, center.lng + d, center.lat - d].join(',');
   const j = await getJson(`${NOMINATIM}?format=jsonv2&limit=8&countrycodes=ec&accept-language=es&bounded=1&viewbox=${vb}&q=${encodeURIComponent(q)}`, signal);
-  return j.map(x => ({ name: x.name || x.display_name.split(',')[0], label: x.display_name.split(',').slice(1, 4).join(',').trim(), lat: +x.lat, lng: +x.lon, kind: 'remote' }));
+  return j.map(x => ({ name: pretty(x.name || x.display_name.split(',')[0]), label: x.display_name.split(',').slice(1, 4).join(',').trim(), lat: +x.lat, lng: +x.lon, kind: 'remote' }));
 }
 
 // Cada consulta tiene su propio tiempo límite y se corta si el usuario sigue escribiendo
@@ -128,4 +128,12 @@ export function createRemoteSearch() {
     cache.set(key, out); if (cache.size > 40) cache.delete(cache.keys().next().value);
     return out;
   };
+}
+
+// Nombres que OpenStreetMap trae TODO EN MAYÚSCULAS se muestran como título ("Mercado Centro Comercial de Santa Rosa")
+export function pretty(n) {
+  n = String(n || '').trim();
+  if (n.length < 4 || n !== n.toLocaleUpperCase('es') || n === n.toLocaleLowerCase('es')) return n;
+  const small = new Set(['de', 'del', 'la', 'las', 'los', 'el', 'y', 'e', 'en', 'a']);
+  return n.toLocaleLowerCase('es').split(' ').map((w, i) => (i && small.has(w) ? w : w.charAt(0).toLocaleUpperCase('es') + w.slice(1))).join(' ');
 }

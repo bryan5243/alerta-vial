@@ -4,9 +4,12 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { load, save, nextId, reset } from './db.js';
-import { getWeather, getTide, levelFromWeather, riskIndex, describe, localSources, dayParts, rainingNow } from './weather.js';
+import { getDays, getWeather, getTide, levelFromWeather, riskIndex, describe, localSources, dayParts, rainingNow } from './weather.js';
 import { getFloodForecast } from './flood.js';
 import { seedIfEmpty } from './seed.js';
+import fs from 'node:fs';
+import { DB_PATH } from './db.js';
+import * as push from './push.js';
 
 // Mensaje que ve la ciudadanía según el color de alerta (editable desde el panel).
 const DEFAULT_LEVEL_MESSAGES = {
@@ -24,7 +27,13 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const app = express();
 app.set('trust proxy', 1); // detrás del proxy de Render/cPanel: IP real para el límite de reportes
 app.use(express.json({ limit: '25mb' })); // capas GeoJSON pueden ser grandes
-app.use(express.static(path.join(__dirname, '..', 'public')));
+// no-cache: el navegador revalida siempre (usa ETag), así nadie se queda con archivos viejos tras una actualización
+app.use(express.static(path.join(__dirname, '..', 'public'), { setHeaders: (res, f) => { if (/\.(html|js|css|webmanifest)$/.test(f)) res.setHeader('Cache-Control', 'no-cache'); } }));
+
+// Revisión de datos: sube con cada cambio hecho desde el admin. Los teléfonos la consultan (muy liviano) y recargan al instante.
+let dataRev = Date.now();
+app.use('/api/admin', (req, res, next) => { if (req.method !== 'GET') res.on('finish', () => { if (res.statusCode < 400) dataRev = Date.now(); }); next(); });
+app.get('/api/public/rev', (req, res) => { res.set('Cache-Control', 'no-store'); res.json({ rev: dataRev, mapVersion: load().config.mapVersion || 0 }); });
 
 seedIfEmpty();
 
@@ -69,45 +78,79 @@ function simulatedWeather(real) {
   w.outlook = s.rainNow > 0 ? { level: 'lloviendo', title: 'Está lloviendo', text: 'Revisa las calles inundadas y las vías alternas antes de salir.', reasons: [] } : real?.outlook;
   return Object.assign(w, describe(w));
 }
+import { startLightning } from './lightning.js';
+import { nearStreets } from './near.js';
+import { noteObservation, withHistory } from './daylog.js';
+{ const c0 = load().config; if (c0.lightningEnabled !== false) startLightning({ lat: c0.weather?.lat ?? c0.center?.lat, lng: c0.weather?.lng ?? c0.center?.lng }); }
 async function computeStatus() {
   const db = load();
   let [weather, tide, flood] = await Promise.all([
     getWeather({ ...db.config.weather, metarStation: db.config.weather.metarStation ?? 'SERO', owmKey: process.env.OWM_KEY || db.config.weather.owmKey || '' },
-      localSources({ observed: db.alert.observed, reports: db.reports || [] })),
+      localSources({ observed: db.alert.observed })),
     getTide(db.config.weather),
     db.config.floodEnabled === true
       ? getFloodForecast({ ...db.config.center, apiKey: process.env.GOOGLE_FLOOD_KEY || db.config.googleFloodKey || '' })
       : Promise.resolve({ ok: false, disabled: true, gauges: [] }),
   ]);
+  if (!simOn()) noteObservation(weather); // diario del clima (para mostrar "Ayer")
   if (simOn()) weather = simulatedWeather(weather);
-  const risk = riskIndex({ weather, cfg: db.config.weather, flood, reports: db.reports || [], tide, rivers: (db.rivers || []).filter(r => r.active !== false) });
+  const risk = riskIndex({ weather, cfg: db.config.weather, flood, reports: [], tide, rivers: (db.rivers || []).filter(r => r.active !== false) });
   // Nivel sugerido: el mayor entre la regla de lluvia y el índice de riesgo combinado.
-  const suggested = maxLevel(levelFromWeather(weather, db.config.weather), risk.level);
+  // Un río crecido o desbordado sube el nivel por sí solo (antes solo sumaba hasta 20 puntos al índice y no alcanzaba ni la amarilla).
+  const activeRivers = (db.rivers || []).filter(r => r.active !== false);
+  const over = activeRivers.filter(r => r.status === 'desbordado').length, high = activeRivers.filter(r => r.status === 'crecido').length;
+  const gaugeSev = flood?.ok ? (flood.gauges || []).map(g => g.severity) : [];
+  const riverLevel = gaugeSev.includes('EXTREME') || over >= 2 || (over >= 1 && (weather?.intensity || 0) >= 2) ? 'roja'
+    : gaugeSev.includes('SEVERE') || over >= 1 ? 'naranja' : gaugeSev.includes('ABOVE_NORMAL') || high >= 1 ? 'amarilla' : 'normal';
+  const suggested = maxLevel(maxLevel(levelFromWeather(weather, db.config.weather), risk.level), riverLevel);
   // Durante una simulación el nivel publicado sigue al clima simulado, aunque la alerta esté en manual.
-  const effective = db.alert.mode === 'manual' && !simOn() ? db.alert.level : suggested;
-  syncAutoPoints(db, effective);
-  return { weather, suggested, effective, risk, tide, flood };
+  const effective = db.alert.mode === 'manual' && !simOn() ? db.alert.level : stepDown(db, suggested);
+  const drain = syncAutoPoints(db, effective, Date.now(), weather);
+  return { weather, suggested, effective, risk, tide, flood, drain };
+}
+// Al dejar de llover el semáforo no cae de golpe: baja un color cada cierto tiempo (por defecto 45 min),
+// porque el agua tarda en irse. Si vuelve a llover, sube de inmediato.
+function stepDown(db, suggested, now = Date.now()) {
+  const a = db.alert, cur = a.autoLevel && LV[a.autoLevel] != null ? a.autoLevel : suggested;
+  const hold = (+db.config.weather?.stepDownMin || 45) * 60e3;
+  let next = cur;
+  if (LV[suggested] >= LV[cur]) { next = suggested; a.autoStepAt = now; }
+  else if (now - (a.autoStepAt || 0) >= hold) { next = Object.keys(LV).find(k => LV[k] === LV[cur] - 1); a.autoStepAt = now; }
+  if (next !== a.autoLevel) { a.autoLevel = next; save(); }
+  return next;
 }
 // Puntos automáticos (y sus vías alternas): se encienden solos con naranja/roja. Cuando el semáforo baja a
 // amarilla o verde, también se apagan los que se encendieron a mano durante la alerta, para que no queden
 // vías alternas publicadas sin peligro.
-function syncAutoPoints(db, effective) {
-  const prev = db.alert.lastEffective;
-  if (prev === effective) return;
-  if (prev && LV[prev] >= 2 && LV[effective] < 2) {
+function syncAutoPoints(db, effective, now = Date.now(), weather = null) {
+  const a = db.alert;
+  // Hora de la última lluvia confirmada (para los puntos que vienen de reportes ciudadanos)
+  if (weather?.intensity > 0 && (!a.lastRainAt || now - a.lastRainAt > 60e3)) { a.lastRainAt = now; save(); }
+  const drainMs = (+(db.config.weather?.drainHours ?? 3) || 0) * 3600e3;
+  // Mientras hay naranja o roja se anota la hora; los puntos críticos siguen activos hasta que pase el tiempo
+  // de drenaje (por defecto 3 h) desde la última vez que hubo naranja/roja: el agua tarda en bajar.
+  if (LV[effective] >= 2) { if (!a.lastHighAt || now - a.lastHighAt > 60e3) { a.lastHighAt = now; save(); } }
+  const until = a.lastHighAt ? a.lastHighAt + drainMs : 0, draining = LV[effective] < 2 && until > now;
+  if (LV[effective] < 2 && a.lastHighAt && until <= now && !a.drainDone) {
     let n = 0; for (const p of db.points) if (p.auto && p.active) { p.active = false; n++; }
-    if (n) console.log(`Alerta bajó a ${effective}: ${n} punto(s) automáticos apagados con sus vías alternas.`);
+    if (n) console.log(`Pasó el tiempo de drenaje: ${n} punto(s) automáticos apagados con sus vías alternas.`);
+    a.drainDone = true; save();
   }
-  db.alert.lastEffective = effective; save();
+  if (LV[effective] >= 2 && a.drainDone) { a.drainDone = false; save(); }
+  if (a.lastEffective !== effective) { a.lastEffective = effective; save(); }
+  // Puntos creados desde reportes (nivel medio): encendidos con naranja/roja y hasta 2 h después de que para la lluvia.
+  const repEnd = a.lastHighAt && now - a.lastHighAt < 12 * 3600e3 ? Math.max(a.lastHighAt, a.lastRainAt || 0) + REPORT_DRAIN_MS : 0;
+  return { draining, until: draining ? new Date(until).toISOString() : null, reportOn: LV[effective] >= 2 || repEnd > now };
 }
+const REPORT_DRAIN_MS = 2 * 3600e3, REPORT_TTL_MS = 3600e3;
 
 // ---------- API pública ----------
 app.get('/api/public/state', async (req, res) => {
   const db = load();
-  const { weather, suggested, effective, risk, tide, flood } = await computeStatus();
+  const { weather, suggested, effective, risk, tide, flood, drain } = await computeStatus();
   const f = featuresCfg(db); const on = (k, list) => (f[k] ? list : []);
-  // Un punto con "auto" se enciende solo cuando la alerta es naranja o roja.
-  const pointOn = p => p.active || (p.auto && LV[effective] >= 2);
+  // Un punto con "auto" se enciende con naranja o roja y sigue encendido mientras el agua drena.
+  const pointOn = p => p.active || (p.auto && (p.source === 'reporte' ? drain?.reportOn : (LV[effective] >= 2 || drain?.draining)));
   // Una vía alterna vinculada a un punto o calle solo se muestra mientras ese peligro esté activo.
   const routeOn = r => {
     if (!r.active) return false;
@@ -117,9 +160,9 @@ app.get('/api/public/state', async (req, res) => {
   };
   res.json({
     config: { city: db.config.city, center: db.config.center, zoom: db.config.zoom,
-      mapProvider: db.config.mapProvider, googleMapsKey: db.config.googleMapsKey || '',
-      rainThresholdMm: db.config.weather.rainThresholdMm, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: f, noCar: noCarCfg(db) },
-    alert: { ...db.alert, effective, suggested },
+      mapProvider: db.config.mapProvider, baseStyle: db.config.baseStyle || 'osm', googleMapsKey: db.config.googleMapsKey || '',
+      mapVersion: db.config.mapVersion || 0, rainThresholdMm: db.config.weather.rainThresholdMm, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: f, noCar: noCarCfg(db) },
+    alert: { ...db.alert, effective, suggested, draining: !!drain?.draining, drainUntil: drain?.until || null },
     weather: { ...weather, hourly: weather.hourly?.slice(0, 25) },
     risk, tide, flood,
     layers: on('layers', (db.layers || []).filter(l => l.active !== false)),
@@ -133,6 +176,21 @@ app.get('/api/public/state', async (req, res) => {
 });
 
 // Reportes ciudadanos (comunidad). Entran como "pendientes" y el admin los revisa.
+// Fotos de los reportes: se guardan como archivos junto a la base de datos.
+const PHOTOS = path.join(path.dirname(DB_PATH), 'photos');
+function parsePhoto(d) {
+  const m = typeof d === 'string' && /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(d);
+  if (!m) return null;
+  const buf = Buffer.from(m[1], 'base64');
+  if (buf.length < 1000 || buf.length > 2 * 1024 * 1024 || buf[0] !== 0xFF || buf[1] !== 0xD8) return null;
+  return buf;
+}
+app.get('/photos/:name', (req, res) => {
+  if (!/^rep_[a-z0-9]+\.jpg$/.test(req.params.name)) return res.status(404).end();
+  const f = path.join(PHOTOS, req.params.name);
+  if (!fs.existsSync(f)) return res.status(404).end();
+  res.set('Cache-Control', 'public, max-age=86400').type('image/jpeg').sendFile(f);
+});
 const reportLimiter = new Map();
 app.post('/api/public/reports', (req, res) => {
   const ip = req.ip;
@@ -141,13 +199,18 @@ app.post('/api/public/reports', (req, res) => {
   if (!featuresCfg(load()).reports) return res.status(403).json({ error: 'Los reportes ciudadanos están desactivados por ahora.' });
   const { lat, lng, description, level, street, type } = req.body || {};
   if (typeof lat !== 'number' || typeof lng !== 'number') return res.status(400).json({ error: 'Toca el mapa para indicar el lugar del reporte.' });
+  const photo = parsePhoto(req.body?.photo);
+  if (!photo) return res.status(400).json({ error: 'Adjunta una fotografía del lugar: es obligatoria para comprobar el reporte.' });
   if (!description || description.trim().length < 5) return res.status(400).json({ error: 'Describe brevemente qué está pasando (mínimo 5 letras).' });
   const db = load();
   db.reports ||= [];
   const report = { id: nextId('rep'), lat, lng, street: String(street || '').slice(0, 120),
-    description: String(description).slice(0, 400), level: ['leve', 'moderado', 'grave'].includes(level) ? level : 'moderado',
+    description: String(description).slice(0, 400), level: 'moderado', // la ciudadanía ya no elige gravedad: todo reporte aceptado es un punto crítico de nivel medio
     type: type === 'desborde' ? 'desborde' : 'inundacion',
     status: 'pendiente', createdAt: new Date().toISOString() };
+  report.photo = `/photos/${report.id}.jpg`;
+  fs.mkdirSync(PHOTOS, { recursive: true });
+  fs.writeFileSync(path.join(PHOTOS, `${report.id}.jpg`), photo);
   db.reports.push(report);
   save();
   reportLimiter.set(ip, [...recent, Date.now()]);
@@ -157,7 +220,9 @@ app.post('/api/public/reports', (req, res) => {
 app.get('/api/public/reports', (req, res) => {
   const db = load();
   const f = featuresCfg(db);
-  res.json((db.reports || []).filter(r => r.status === 'verificado' && (r.type === 'desborde' ? f.rivers : f.reports)));
+  // Un reporte ya convertido en punto crítico no se muestra como reporte: lo representa el punto (solo con naranja/roja)
+  const ids = new Set((db.points || []).map(p => p.id));
+  res.json((db.reports || []).filter(r => r.status === 'verificado' && Date.now() - new Date(r.createdAt) < REPORT_TTL_MS && !(r.pointId && ids.has(r.pointId)) && (r.type === 'desborde' ? f.rivers : f.reports)));
 });
 
 // Radar RainViewer: devolvemos las plantillas de tiles más recientes (sin key).
@@ -180,9 +245,11 @@ app.get('/api/public/radar', async (req, res) => {
 app.get('/api/admin/state', auth, async (req, res) => {
   const db = load();
   const { weather, suggested, effective, risk, tide } = await computeStatus();
-  res.json({ ...db, config: { ...db.config, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: featuresCfg(db), noCar: noCarCfg(db) }, alert: { ...db.alert, effective, suggested }, weather: { ...weather, hourly: weather.hourly?.slice(0, 25) }, risk, tide, reports: db.reports || [], layers: db.layers || [], rivers: db.rivers || [], zones: db.zones || [] });
+  res.json({ ...db, push: undefined, pushCount: push.subCount(), config: { ...db.config, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: featuresCfg(db), noCar: noCarCfg(db) }, alert: { ...db.alert, effective, suggested }, weather: { ...weather, hourly: weather.hourly?.slice(0, 25) }, risk, tide, reports: db.reports || [], layers: db.layers || [], rivers: db.rivers || [], zones: db.zones || [] });
 });
 
+// "Actualizar mapa": sube un número de versión; todos los teléfonos que abren el mapa lo notan y renuevan sus archivos y cuadros guardados.
+app.post('/api/admin/map-refresh', auth, (req, res) => { const db = load(); db.config.mapVersion = Date.now(); save(); res.json({ ok: true, mapVersion: db.config.mapVersion }); });
 app.put('/api/admin/config', auth, (req, res) => {
   const db = load();
   const c = req.body || {};
@@ -190,6 +257,7 @@ app.put('/api/admin/config', auth, (req, res) => {
   if (c.center) db.config.center = { lat: +c.center.lat, lng: +c.center.lng };
   if (c.zoom) db.config.zoom = +c.zoom;
   if (c.mapProvider) db.config.mapProvider = c.mapProvider === 'google' ? 'google' : 'leaflet';
+  if (c.baseStyle !== undefined) db.config.baseStyle = ['osm', 'hot', 'osmfr'].includes(c.baseStyle) ? c.baseStyle : 'osm';
   if (c.googleMapsKey !== undefined) db.config.googleMapsKey = String(c.googleMapsKey).trim();
   if (c.features) db.config.features = Object.fromEntries(Object.keys(DEFAULT_FEATURES).map(k => [k, c.features[k] !== false]));
   if (c.noCar !== undefined) db.config.noCar = [...new Set((Array.isArray(c.noCar) ? c.noCar : String(c.noCar).split(/\n|,/)).map(x => String(x).trim().slice(0, 60)).filter(Boolean))].slice(0, 40);
@@ -201,6 +269,8 @@ app.put('/api/admin/config', auth, (req, res) => {
     lat: +(c.weather.lat ?? db.config.weather.lat), lng: +(c.weather.lng ?? db.config.weather.lng),
     rainThresholdMm: +(c.weather.rainThresholdMm ?? db.config.weather.rainThresholdMm),
     rainThresholdMm3h: +(c.weather.rainThresholdMm3h ?? db.config.weather.rainThresholdMm3h),
+    stepDownMin: Math.max(5, Math.min(360, +(c.weather.stepDownMin ?? db.config.weather.stepDownMin ?? 45) || 45)),
+    drainHours: Math.max(0, Math.min(48, +(c.weather.drainHours ?? db.config.weather.drainHours ?? 3) || 0)),
     metarStation: String(c.weather.metarStation ?? db.config.weather.metarStation ?? 'SERO').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4),
     owmKey: String(c.weather.owmKey ?? db.config.weather.owmKey ?? '').trim().slice(0, 64) };
   save();
@@ -216,7 +286,7 @@ app.get('/api/admin/backup', auth, (req, res) => {
 app.post('/api/admin/restore', auth, (req, res) => {
   const d = req.body;
   const ok = d && typeof d === 'object' && d.config && d.alert && ['points', 'streets', 'routes', 'recommendations'].every(k => Array.isArray(d[k]));
-  if (!ok) return res.status(400).json({ error: 'El archivo no es un respaldo de AlertaVial.' });
+  if (!ok) return res.status(400).json({ error: 'El archivo no es un respaldo del Sistema de Alerta Vial.' });
   reset(d); simulation = null;
   res.json({ ok: true, counts: Object.fromEntries(['points', 'streets', 'routes', 'rivers', 'zones', 'layers', 'reports'].map(k => [k, (d[k] || []).length])) });
 });
@@ -316,6 +386,7 @@ app.put('/api/admin/reports/:id', auth, (req, res) => {
   const r = (db.reports || []).find(x => x.id === req.params.id);
   if (!r) return res.status(404).json({ error: 'No se encontró el reporte.' });
   if (['pendiente', 'verificado', 'descartado', 'retirado'].includes(req.body.status)) r.status = req.body.status;
+  if (typeof req.body.pointId === 'string') r.pointId = req.body.pointId.slice(0, 40); // punto crítico creado a partir de este reporte
   r.reviewedAt = new Date().toISOString();
   if (r.status === 'retirado') r.clearedAt = r.reviewedAt;
   save();
@@ -324,6 +395,7 @@ app.put('/api/admin/reports/:id', auth, (req, res) => {
 app.delete('/api/admin/reports/:id', auth, (req, res) => {
   const db = load();
   db.reports = (db.reports || []).filter(x => x.id !== req.params.id);
+  if (/^rep_[a-z0-9]+$/.test(req.params.id)) fs.rm(path.join(PHOTOS, `${req.params.id}.jpg`), { force: true }, () => {});
   save();
   res.json({ ok: true });
 });
@@ -366,11 +438,34 @@ function validate(name, item) {
   return null;
 }
 
+app.get('/api/public/near', async (req, res) => {
+  const lat = +req.query.lat, lng = +req.query.lng;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return res.status(400).json({ error: 'Coordenadas inválidas' });
+  try { res.json(await nearStreets(lat, lng)); } catch { res.json({ streets: [], sector: '' }); }
+});
+app.get('/api/public/forecast-days', async (req, res) => { const cfg = load().config.weather; res.json(await withHistory(await getDays(cfg), cfg)); });
+
+// ---------- Notificaciones push ----------
+app.get('/api/public/push-key', (req, res) => res.json({ key: push.publicKey() }));
+app.post('/api/public/push-subscribe', (req, res) => push.addSub(req.body?.subscription) ? res.json({ ok: true }) : res.status(400).json({ error: 'Suscripción no válida.' }));
+app.post('/api/public/push-unsubscribe', (req, res) => { push.removeSub(String(req.body?.endpoint || '')); res.json({ ok: true }); });
+app.post('/api/admin/push/test', auth, async (req, res) => {
+  const r = await push.sendAll({ title: 'Prueba de avisos', body: 'Si ves esto, las notificaciones funcionan en este teléfono.', tag: 'prueba' });
+  res.json(r);
+});
+async function pushTick() {
+  try {
+    const st = await computeStatus(); const db = load();
+    await push.checkAndNotify(st, { levelMessage: levelMsgs(db)[st.effective], simulated: !!simOn() });
+  } catch (e) { console.error('Avisos push:', e.message); }
+}
+setTimeout(pushTick, 20000); setInterval(pushTick, 5 * 60 * 1000);
+
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'admin.html')));
 app.use((err, req, res, next) => { console.error(err); res.status(500).json({ error: 'Ocurrió un error inesperado en el servidor.' }); });
 
 app.listen(PORT, () => {
-  console.log(`\n  AlertaVial listo`);
+  console.log(`\n  Sistema de Alerta Vial listo`);
   console.log(`  En esta PC:      http://localhost:${PORT}`);
   for (const ip of lanIps()) console.log(`  En tu teléfono:  http://${ip}:${PORT}   (misma red WiFi)`);
   console.log(`  Panel admin:     http://localhost:${PORT}/admin\n`);

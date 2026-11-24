@@ -18,6 +18,14 @@ export function load() {
     save();
   } else {
     cache = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+    // Umbrales de Santa Rosa (EMOVTT, nov 2026): con más de 2,4 mm/h ya se inundan las calles.
+    // Si siguen los valores de fábrica antiguos (5 mm/h y 15 mm en 3 h), se pasan a los nuevos una sola vez.
+    const w = cache.config?.weather;
+    if (w && !w.thresholdsV2) {
+      if (+w.rainThresholdMm === 5) w.rainThresholdMm = 2.4;
+      if (+w.rainThresholdMm3h === 15) w.rainThresholdMm3h = 7;
+      w.thresholdsV2 = true; save();
+    }
   }
   return cache;
 }
@@ -43,7 +51,7 @@ export function emptyDb() {
       mapProvider: 'leaflet',
       googleMapsKey: '',
       gps: { warnM: 400, dangerM: 150, voice: true },
-      weather: { lat: -3.459603, lng: -79.965844, rainThresholdMm: 5, rainThresholdMm3h: 15, autoMode: true },
+      weather: { lat: -3.459603, lng: -79.965844, rainThresholdMm: 2.4, rainThresholdMm3h: 7, thresholdsV2: true, autoMode: true },
     },
     alert: { level: 'normal', mode: 'auto', message: '', updatedAt: new Date().toISOString() },
     points: [],

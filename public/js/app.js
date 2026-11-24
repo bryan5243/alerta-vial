@@ -2,7 +2,8 @@ import { createMap } from './map-provider.js';
 import { createGps, nearestOnLine, haversine, progressOn, isAhead } from './gps.js';
 import { createNav, setNoCar } from './nav.js';
 import { createWeatherFx } from './weather-fx.js';
-import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, wxTime, toast, ICON, waveSvg, edgeFade, dec, rainHours } from './common.js';
+import { nearStreets } from './near-streets.js';
+import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, wxTime, toast, ICON, waveSvg, edgeFade, dec, rainHours, daysCards } from './common.js';
 
 const $ = s => document.querySelector(s);
 let map, state, radarOn = false, radarFrames = [], radarTimer = null, picking = false, pickMarker = null, pickPos = null;
@@ -25,6 +26,26 @@ const chromeH = () => document.documentElement.style.setProperty('--chrome', `${
 const chromeObs = new ResizeObserver(() => { chromeH(); map?.invalidate(); });
 chromeObs.observe(document.querySelector('header.top')); chromeObs.observe($('#band')); chromeH();
 new ResizeObserver(() => map?.invalidate()).observe(document.getElementById('map'));
+// Alto real de la pantalla: en iPhone (sobre todo como acceso directo) 100dvh queda desactualizado al girar, volver de otra app o cambiar la barra,
+// y hacía falta cerrar y abrir. Se vuelve a medir en cada cambio y se reacomoda el mapa.
+// Respaldo: si el teléfono llegó a ampliar la página al escribir, al salir del campo se devuelve el zoom a 1
+(() => {
+  const m = document.querySelector('meta[name="viewport"]'); if (!m) return; const base = m.content;
+  const reset = () => { m.content = `${base}, maximum-scale=1`; setTimeout(() => { m.content = base; }, 350); };
+  document.addEventListener('focusout', e => { if (e.target.matches?.('input,select,textarea')) setTimeout(reset, 120); });
+})();
+let vpT = 0;
+const syncViewport = () => {
+  const root = document.documentElement;
+  root.style.setProperty('--app-h', `${window.innerHeight}px`);
+  root.style.setProperty('--app-w', `${root.clientWidth}px`);
+  chromeH(); map?.invalidate();
+};
+const syncSoon = () => { clearTimeout(vpT); syncViewport(); vpT = setTimeout(syncViewport, 350); };
+window.addEventListener('resize', syncSoon); window.addEventListener('orientationchange', syncSoon); window.addEventListener('pageshow', syncSoon);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncSoon(); });
+window.visualViewport?.addEventListener('resize', () => { clearTimeout(vpT); vpT = setTimeout(syncViewport, 200); });
+syncViewport();
 const hiddenLayers = new Set(JSON.parse((() => { try { return localStorage.getItem('av_hidden_layers'); } catch { return null; } })() || '[]'));
 // Clima sobre el mapa: indicador + animación de lluvia / tormenta
 const wxFx = createWeatherFx({ canvas: $('#wx-fx'), flash: $('#wx-flash') });
@@ -70,6 +91,35 @@ function renderGlance(nFlood) {
 const goTab = id => { const t = document.querySelector(`.tab[data-tab="${id}"]`); if (!t || t.hidden) return; t.click();
   if (window.innerWidth <= 900 && !matchMedia('(min-width:768px) and (min-height:561px)').matches) window.scrollTo({ top: Math.max(0, $('.panel').getBoundingClientRect().top + window.scrollY - Math.round(window.innerHeight * .3)), behavior: 'smooth' }); };
 $('#glance').addEventListener('click', e => { const b = e.target.closest('[data-go]'); if (b) goTab(b.dataset.go); });
+// Sensación térmica, humedad y viento
+function feelCard(w) {
+  if (w.apparent == null) return '';
+  const h = w.heat;
+  return `<div class="wx-feel${h ? ` hf-${h.key}` : ''}"><div class="wf-h"><span class="wf-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0z"/><path d="M12 9v7"/></svg></span><b>Sensación térmica</b><span class="wf-v">${Math.round(w.apparent)}<small>°C</small></span></div>
+    <div class="wf-m">${h ? `<span class="wf-tag">${esc(h.label)}</span>` : ''}${w.humidity != null ? `<span>Humedad <b>${w.humidity} %</b></span>` : ''}${w.wind != null ? `<span>Viento <b>${w.wind} km/h</b></span>` : ''}${w.temperature != null ? `<span>Aire <b>${Math.round(w.temperature)}°C</b></span>` : ''}</div>
+    ${h?.advice ? `<p>${esc(h.advice)}</p>` : ''}</div>`;
+}
+// Probabilidad estimada de tormenta eléctrica (próximas 6 h)
+function thunderCard(w) {
+  const t = w.thunder; if (!t) return '';
+  return `<div class="wx-thunder th-${t.level}"><div class="th-h"><span class="th-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span><b>Tormenta eléctrica</b><span class="th-p">${t.prob}<small>%</small></span></div>
+    <div class="th-now ${t.activity ? 'on lv' + t.activity.level : 'off'}"><i aria-hidden="true"></i><span>${t.activity ? `<b>${esc(t.activity.label)}</b> en este momento${t.activity.mm ? ` · ~${t.activity.mm} mm/h` : ''}` : 'Ahora: <b>sin tormenta detectada</b>'}</span></div>
+    <div class="th-bar" role="img" aria-label="Probabilidad de tormenta eléctrica ${t.prob} por ciento, ${esc(t.label)}"><i style="width:${t.prob}%"></i></div>
+    <div class="th-l"><b>${esc(t.label)}</b><span>próximas 6 h · estimado</span></div>
+    <p>${esc(t.text)}</p>${t.reasons?.length ? `<details class="th-why"><summary>Por qué</summary><ul>${t.reasons.map(r => `<li>${esc(cap(r))}</li>`).join('')}</ul></details>` : ''}</div>`;
+}
+// Vista de inicio: un radio de 1 km alrededor del centro (así caben todas las zonas afectadas). Se calcula con el tamaño real del mapa.
+const HOME_RADIUS = () => +state?.config?.homeRadius || 1000;
+function homeZoom() {
+  const c = state?.config?.center, el = document.getElementById('map'); if (!c || !el) return Math.max(+state?.config?.zoom || 0, 16);
+  const w = el.clientWidth, h = el.clientHeight, appNav = document.documentElement.classList.contains('app-nav');
+  const avail = Math.min(w - 24, h - (appNav ? 150 : 90)); if (!(avail > 80)) return 15;
+  // En el teléfono la barra de escala abre marcando 1 km (≈1/3 del ancho); en pantallas grandes, 1 km de radio
+  const mpp = w <= 900 ? HOME_RADIUS() / Math.max(100, Math.min(140, w * .32)) : HOME_RADIUS() * 2 / avail;
+  return Math.max(12, Math.min(18, Math.log2(156543.03 * Math.cos(c.lat * Math.PI / 180) / mpp)));
+}
+const goHome = () => { const c = state?.config?.center; if (c && map) map.setCenter(c, homeZoom()); };
+let daysData = null;
 // Tarjeta "Clima ahora": cielo, temperatura, lluvia y sol (índice UV, radiación, salida y puesta)
 function weatherCard(w) {
   const sky = skyOf(w), s = w.sun, night = s?.isDay === 0;
@@ -86,12 +136,13 @@ function weatherCard(w) {
     </div>` : '';
   return `<div class="wx-card sky-${sky}">
     <div class="wx-now"><span class="wx-big">${WX_IC[skyIcon(w)]}</span>
-      <div class="wx-now-t"><b>${esc(w.condition || 'Clima')}</b><small>${w.temperature != null ? `${Math.round(w.temperature)}°C · ` : ''}dato de las ${wxTime(w.observedAt)}</small></div>${uvBadge}</div>
+      <div class="wx-now-t"><b>${esc(w.condition || 'Clima')}</b><small>${w.temperature != null ? `${Math.round(w.temperature)}°C${w.apparent != null ? ` · sensación ${Math.round(w.apparent)}°C` : ''} · ` : ''}dato de las ${wxTime(w.observedAt)}</small></div>${uvBadge}</div>
+    <div class="wx-auto${w.raining ? ' on' : ''}" role="status"><i aria-hidden="true"></i><b>${w.raining ? 'Lloviendo ahora' : 'No está lloviendo'}</b><small>detección automática${w.models?.length ? ` · ${w.models.filter(m => m.ok).length} fuentes` : ''}</small></div>
     <div class="wx-stats">
       <div class="stat${w.raining ? ' rain' : ''}"><b>${dec(w.rainNow)}<small> mm/h</small></b><span>Lluvia ahora</span></div>
       <div class="stat"><b>${dec(w.rainPast3h)}<small> mm</small></b><span>Últimas 3 h</span></div>
       <div class="stat"><b>${dec(w.rainNext3h)}<small> mm</small></b><span>Próximas 3 h</span></div>
-    </div>${rainHours(w)}${sunRow}</div>`;
+    </div>${rainHours(w)}${feelCard(w)}${thunderCard(w)}${sunRow}</div>`;
 }
 function renderWx(w) {
   const chip = $('#wx-chip'); wxFx.set(w); applySky(w);
@@ -100,7 +151,8 @@ function renderWx(w) {
   chip.hidden = false; chip.className = `wx-chip i${i} sky-${skyOf(w)}`;
   const extra = w.rainNow > 0 ? `<span>${dec(w.rainNow)} mm/h</span>` : w.probNext3h >= 80 ? `<span>${w.probNext3h}% en 3 h</span>` : '';
   const ol = !i && ['atencion', 'probable'].includes(w.outlook?.level) ? `<span class="ol-tag ol-${w.outlook.level}">${w.outlook.level === 'probable' ? 'Lluvia probable' : 'Podría llover'}${w.outlook.from ? ` ${w.outlook.from.slice(11, 16)}` : ''}</span>` : '';
-  const uv = ol || (!i && uvOn(w) && w.sun.uvIndex >= 3 ? `<span class="uv-tag uv-${w.sun.uv.key}">UV ${dec(w.sun.uvIndex)}</span>` : '');
+  const th = !i && ['moderada', 'alta'].includes(w.thunder?.level) ? `<span class="ol-tag ol-probable">Tormenta ${w.thunder.prob} %</span>` : '';
+  const uv = ol || th || (!i && uvOn(w) && w.sun.uvIndex >= 3 ? `<span class="uv-tag uv-${w.sun.uv.key}">UV ${dec(w.sun.uvIndex)}</span>` : '');
   // aviso una sola vez cuando la lluvia pasa a "probable"
   if (!i && w.outlook?.level === 'probable') { const k = `av_ol_${w.outlook.from || ''}`; try { if (!sessionStorage.getItem(k)) { sessionStorage.setItem(k, '1'); toast(`Lluvia probable${w.outlook.from ? ` desde las ${w.outlook.from.slice(11, 16)}` : ' en las próximas horas'}. Lleva paraguas.`); } } catch {} }
   chip.innerHTML = `<span class="wx-ic">${WX_IC[ic]}</span><b>${esc(w.condition || 'Clima')}</b>${w.temperature != null && !i ? `<span>${Math.round(w.temperature)}°C</span>` : ''}${ol ? '' : extra}${uv}${w.simulated ? '<em>prueba</em>' : ''}<u aria-hidden="true">${wxFx.enabled ? 'efectos' : 'sin efectos'}</u>`;
@@ -150,12 +202,26 @@ function setOffline(at) {
 window.addEventListener('online', () => load().catch(() => {}));
 window.addEventListener('offline', () => { if (state) setOffline(JSON.parse(localStorage.getItem(CACHE_KEY) || 'null')?.at || Date.now()); });
 
+// Si el equipo pulsó "Actualizar mapa" en el admin, este teléfono renueva sus archivos y cuadros guardados (una sola vez).
+async function checkMapVersion(v) {
+  v = +v || 0; let mine = null; try { mine = localStorage.getItem('av_map_ver'); } catch {}
+  if (mine === null) { try { localStorage.setItem('av_map_ver', String(v)); } catch {} return; } // primera visita: ya está al día
+  if (+mine === v) return;
+  try { localStorage.setItem('av_map_ver', String(v)); } catch {}
+  try { if ('caches' in window) for (const k of await caches.keys()) await caches.delete(k);
+    if (navigator.serviceWorker) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); } catch {}
+  location.reload();
+}
 async function load() {
   const pack = await fetchState(); state = pack.state; setNoCar(state?.config?.noCar);
+  if (!document.body.classList.contains('is-offline')) checkMapVersion(state?.config?.mapVersion);
   const reports = pack.reports;
   if (!map) {
-    map = await createMap({ provider: state.config.mapProvider, el: document.getElementById('map'), center: state.config.center, zoom: Math.max(+state.config.zoom || 0, 16), googleKey: state.config.googleMapsKey });
+    map = await createMap({ provider: state.config.mapProvider, el: document.getElementById('map'), center: state.config.center, zoom: homeZoom(), googleKey: state.config.googleMapsKey, style: state.config.baseStyle });
     map.onClick(onMapClick);
+    // El mapa a veces se mide antes de que termine de acomodarse la pantalla: se reajusta a 1 km una vez más
+    const rehome = () => { if (!document.body.classList.contains('gps-on') && !nav?.active) goHome(); };
+    setTimeout(() => { rehome(); setTimeout(() => document.getElementById('splash')?.classList.add('out'), 250); }, 700); window.addEventListener('load', () => setTimeout(rehome, 300), { once: true });
   }
   render(reports);
   gps.refresh(); nav.refresh();
@@ -226,7 +292,18 @@ $('#btn-alt').addEventListener('click', () => {
   toast(altAll ? `Mostrando las ${state.routes.length} vías alternas. Vuelve a tocar el botón para ocultarlas.` : 'Vías alternas ocultas. Saldrán solas cuando elijas un destino o navegues.', 'ok');
 });
 
-if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/sw.js').catch(() => {});
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  // si ya había una versión instalada y llega una nueva, recarga una vez (así no queda CSS/JS viejo hasta salir y entrar)
+  const had = !!navigator.serviceWorker.controller; let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !reloaded && !document.body.classList.contains('gps-on')) { reloaded = true; location.reload(); } });
+  // el service worker avisa cuando detecta archivos nuevos en el servidor: se recarga una vez (salvo mientras se navega con GPS)
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data?.type !== 'shell-updated' || reloaded) return;
+    const go = () => { if (reloaded) return; if (document.body.classList.contains('gps-on')) { setTimeout(go, 15000); return; } reloaded = true; location.reload(); };
+    go();
+  });
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
 
 // Instalar como app (PWA): Android/Chrome/Edge muestran el botón Instalar; en iPhone se explica "Agregar a inicio".
 (() => {
@@ -236,7 +313,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWor
   const show = () => { if (standalone || later() || SIM) return; box.hidden = false; requestAnimationFrame(() => box.classList.add('on')); };
   const hide = days => { box.classList.remove('on'); setTimeout(() => (box.hidden = true), 300); if (days) try { localStorage.setItem('av_install_later', Date.now() + days * 864e5); } catch {} };
   window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e; setTimeout(show, 4000); });
-  window.addEventListener('appinstalled', () => { hide(); toast('AlertaVial quedó instalada en tu teléfono.', 'ok'); });
+  window.addEventListener('appinstalled', () => { hide(); toast('El Sistema de Alerta Vial quedó instalado en tu teléfono.', 'ok'); });
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !/crios|fxios/i.test(navigator.userAgent);
   if (ios && !standalone) {
     $('#ins-d').innerHTML = 'Toca <svg class="ins-share" viewBox="0 0 24 24"><path d="M12 3v12m-4-8 4-4 4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg> <b>Compartir</b> y luego <b>Agregar a inicio</b>.';
@@ -262,12 +339,13 @@ function render(reports) {
   $('#band-icon').innerHTML = lvl === 'normal' ? ICON.check : ICON.warn;
   $('#band-label').textContent = LEVELS[lvl];
   const lvlMsg = config.levelMessages?.[lvl] || LEVEL_DESC[lvl];
-  $('#band-msg').innerHTML = `${weather.simulated ? '<span class="sim-tag">Simulación de prueba</span>' : ''}${esc(lvlMsg)}${alert.message ? `<span class="lvl-extra">${esc(alert.message)}</span>` : ''}`;
+  $('#band-msg').innerHTML = `${weather.simulated ? '<span class="sim-tag">Simulación de prueba</span>' : ''}${esc(lvlMsg)}${alert.message ? `<span class="lvl-extra">${esc(alert.message)}</span>` : ''}${alert.draining ? `<span class="lvl-extra">Ya no llueve, pero el agua aún no baja: los puntos críticos siguen activos hasta las ${new Date(alert.drainUntil).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' })}.</span>` : ''}`;
 
   // Clima
   const w = weather; renderWx(w);
-  $('#weather').innerHTML = w.ok ? outlookCard(w.outlook) + weatherCard(w)
-    : `<div class="wx-card wx-off">${ICON.cloud}<span>Sin datos de clima por ahora. Las alertas manuales siguen activas.</span></div>`;
+  $('#weather').innerHTML = (w.ok ? outlookCard(w.outlook) + weatherCard(w)
+    : `<div class="wx-card wx-off">${ICON.cloud}<span>Sin datos de clima por ahora. Las alertas manuales siguen activas.</span></div>`)
+    + `<div class="wx-card wx-daycard sky-${w.ok ? skyOf(w) : 'nublado'}"><div class="wx-days" data-days>${daysCards(daysData)}</div></div>`;
   const srcOpen = $('#srcline details')?.open;
   $('#srcline').innerHTML = `<details class="src"${srcOpen ? ' open' : ''}><summary>${ICON.info}<span>De dónde salen los datos${w.ok ? ` <small>· ${wxTime(w.observedAt)}</small>` : ''}</span></summary><div class="src-b">
     <p><b>Clima:</b> ${esc(w.source)}${w.ok ? `, dato de las ${wxTime(w.observedAt)}` : ''}.${w.decidedBy ? ` Lluvia detectada por ${esc(w.decidedBy)}.` : ''}</p>
@@ -335,7 +413,7 @@ function render(reports) {
   for (const o of overflows) shapes.overflows.set(o.id, map.addOverflow({ lat: o.lat, lng: o.lng, iconSvg: ICON.wave,
     popup: `<b>Desborde de río</b><br>${esc(o.street || '')}<br>${esc(o.description)}<br><span style="color:#5A6B7D">Reportado ${ago(o.createdAt)} · verificado por EMOVTT</span>` }));
   renderOverflowBanner(overflows, rivers.filter(r => r.status === 'desbordado'));
-  for (const r of reports.filter(r => r.type !== 'desborde')) map.addMarker({ lat: r.lat, lng: r.lng, cls: 'report', icon: 'report', popup: `<b>Reporte ciudadano verificado</b><br>${esc(r.street)} · ${esc(r.level)}<br>${esc(r.description)}<br><span style="color:#5A6B7D">${ago(r.createdAt)}</span>` });
+  for (const r of reports.filter(r => r.type !== 'desborde')) map.addMarker({ lat: r.lat, lng: r.lng, cls: 'report', icon: 'report', popup: `<b>Reporte ciudadano verificado</b>${r.photo ? `<br><img src="${esc(r.photo)}" alt="Foto del reporte" style="width:100%;max-width:220px;border-radius:8px;margin:6px 0">` : ''}<br>${esc(r.street)} · ${esc(r.level)}<br>${esc(r.description)}<br><span style="color:#5A6B7D">${ago(r.createdAt)}</span>` });
   if (radarOn) applyRadar();
 }
 // Secciones que el equipo apagó en Admin → Configuración desaparecen del mapa público.
@@ -346,7 +424,7 @@ function applyFeatures(F) {
   $('#btn-radar').hidden = off('radar'); if (off('radar') && radarOn) { radarOn = false; $('#btn-radar').classList.remove('on'); clearInterval(radarTimer); map?.setRadar(null); }
   $('#btn-report').hidden = off('reports');
   const tabF = { streets: 'streets', routes: 'routes', rivers: 'rivers', recs: 'recommendations' };
-  const tabs = [...document.querySelectorAll('.tab')];
+  const tabs = [...document.querySelectorAll('.tab:not(.tab-map)')];
   tabs.forEach(t => { t.hidden = t.dataset.tab === 'sum' ? off('risk') && off('weather') : off(tabF[t.dataset.tab]); });
   const vis = tabs.filter(t => !t.hidden);
   $('#tabs').hidden = !vis.length;
@@ -402,11 +480,22 @@ const empty = (icon, t, s) => `<div class="empty">${icon}<div style="font-weight
 
 // Tabs
 const tabsFade = edgeFade($('#tabs'));
-document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+// Celular: barra de pestañas inferior; al tocar una sube la hoja con su contenido, y "Mapa" (o tocar el mapa) la baja
+const isAppNav = () => document.documentElement.classList.contains('app-nav');
+const paintTabs = () => { const open = document.documentElement.classList.contains('sheet-open');
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('is-on', x.dataset.tab === 'map' ? !open : open && x.getAttribute('aria-selected') === 'true')); };
+function setSheet(on) { document.documentElement.classList.toggle('sheet-open', !!on && isAppNav()); paintTabs(); map?.invalidate(); }
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', e => {
+  if (t.dataset.tab === 'map') { setSheet(false); return; }
+  const same = t.getAttribute('aria-selected') === 'true';
   document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x === t));
   document.querySelectorAll('.pane').forEach(p => p.hidden = p.id !== `pane-${t.dataset.tab}`);
-  t.scrollIntoView({ inline: 'nearest', block: 'nearest' }); tabsFade();
+  if (isAppNav() && e.isTrusted) { const open = document.documentElement.classList.contains('sheet-open'); setSheet(!(open && same)); if (!open || !same) $('.panel').scrollTop = 0; } else paintTabs();
+  if (!isAppNav()) t.scrollIntoView({ inline: 'nearest', block: 'nearest' }); tabsFade();
 }));
+window.addEventListener('resize', () => { if (!isAppNav()) setSheet(false); else paintTabs(); });
+document.querySelector('.mapwrap').addEventListener('pointerdown', e => { if (isAppNav() && document.documentElement.classList.contains('sheet-open') && !e.target.closest('.map-actions,.nav-search,.nav-card,.fab,.gps-bar')) setSheet(false); });
+paintTabs();
 // Celular: la tira de arriba de la hoja dice qué hay debajo del mapa y la abre o cierra
 $('#peek-ic').innerHTML = ICON.chevron;
 const panelUp = () => document.body.classList.toggle('panel-up', window.scrollY > 60);
@@ -419,14 +508,14 @@ $('#peek').addEventListener('click', () => {
 document.querySelector('.panel').addEventListener('click', e => {
   const it = e.target.closest('.item[data-id]'); if (!it) return;
   const sh = shapes[it.dataset.kind].get(it.dataset.id); const src = state[it.dataset.kind].find(x => x.id === it.dataset.id);
-  if (it.dataset.kind === 'overflows') { map.panTo({ lat: src.lat, lng: src.lng }, 18); setTimeout(() => sh?.open?.(), 500); if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+  if (it.dataset.kind === 'overflows') { map.panTo({ lat: src.lat, lng: src.lng }, 18); setTimeout(() => sh?.open?.(), 500); if (isAppNav()) setSheet(false); else if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
   document.querySelectorAll('.item.selected').forEach(x => x.classList.remove('selected')); it.classList.add('selected');
   if (it.dataset.kind === 'routes' && !shapes.routes.has(it.dataset.id)) { altFocus.add(it.dataset.id); syncRoutes(); }
   const sh2 = it.dataset.kind === 'routes' ? shapes.routes.get(it.dataset.id) : sh;
   map.fitBounds(src.coords); setTimeout(() => sh2?.open?.(), 400);
-  if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (isAppNav()) setSheet(false); else if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' });
 });
-$('#btn-fit').addEventListener('click', () => map.fitBounds([...state.streets, ...state.routes].flatMap(x => x.coords)));
+$('#btn-fit').addEventListener('click', goHome);
 
 // Radar RainViewer
 async function applyRadar() {
@@ -437,35 +526,187 @@ async function applyRadar() {
 }
 $('#btn-radar').addEventListener('click', () => { radarOn = !radarOn; $('#btn-radar').classList.toggle('on', radarOn); if (radarOn) applyRadar(); else { clearInterval(radarTimer); map.setRadar(null); } });
 
-// Reporte ciudadano
-$('#btn-report').addEventListener('click', () => { picking = true; $('#picking').classList.add('on'); if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); });
-$('#pick-cancel').addEventListener('click', stopPick);
+// Reporte ciudadano, por pasos: 1) dónde  2) qué y qué tan grave  3) foto y detalles
+$('#r-ic-gps').innerHTML = ICON.nav; $('#r-ic-map').innerHTML = ICON.pin; $('#r-ic-flood').innerHTML = ICON.drop; $('#r-ic-river').innerHTML = ICON.wave;
+const R_TITLES = [['¿Dónde está el problema?', 'Tu reporte lo revisa el equipo municipal antes de publicarse en el mapa.'], ['¿Qué está pasando?', 'Elige el tipo de problema. La calle se completa sola.'], ['Foto y detalles', 'La foto ayuda al equipo a comprobar el reporte.']];
+let rStep = 0;
+function repStep(n) {
+  rStep = n;
+  document.querySelectorAll('.r-pane').forEach(p => p.classList.toggle('on', +p.dataset.pane === n));
+  document.querySelectorAll('#r-steps i').forEach((i, k) => i.classList.toggle('on', k <= n));
+  $('#r-count').textContent = `Paso ${n + 1} de 3`; $('#r-title').textContent = R_TITLES[n][0]; $('#r-sub').textContent = R_TITLES[n][1];
+  $('#r-back').textContent = n === 0 ? 'Cancelar' : 'Atrás'; $('#r-next').hidden = n !== 1; $('#r-send').hidden = n !== 2;
+  $('#report-form .r-body').scrollTop = 0;
+}
+function openReport() {
+  pickPos = null; $('#r-loc-err').textContent = ''; repStep(0);
+  if (isAppNav()) setSheet(false);
+  $('#sheet-bg').classList.add('open');
+}
+function locationChosen(pos) {
+  pickPos = pos;
+  if (pickMarker) pickMarker.remove(); pickMarker = map.addMarker({ ...pos, cls: 'report', icon: 'report' });
+  $('#r-coords').innerHTML = `${ICON.pin}<span>Ubicación marcada</span>`;
+  $('#sheet-bg').classList.add('open'); repStep(1); suggestStreets(pos);
+}
+// Calles y sector cercanos al punto marcado: un toque los escribe en "Calle o sector"
+let sugSeq = 0;
+async function suggestStreets(pos) {
+  const box = $('#r-sug'), my = ++sugSeq; if ($('#r-street').dataset.auto === '1') { $('#r-street').value = ''; }
+  showStreetEdit(false); $('#r-place').innerHTML = '<i class="r-spin"></i> Buscando la calle…';
+  // Primero lo que ya conoce el sistema (puntos críticos y calles cercanas), al instante
+  const near = (arr, get) => (arr || []).map(x => ({ name: x.name, d: get(x) })).filter(x => x.name && x.d < 200);
+  const dist = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lng - b.lng) * 111320 * Math.cos(a.lat * Math.PI / 180));
+  const local = [...near(state?.points, p => dist(p, pos)), ...near(state?.streets, s => Math.min(...(s.coords || []).map(c => dist({ lat: c[0], lng: c[1] }, pos))))].sort((a, b) => a.d - b.d).map(x => x.name);
+  const paint = (names, sector, loading) => {
+    const uniq = [...new Set(names)].slice(0, 6), none = !loading && !uniq.length && !sector;
+    box.innerHTML = `<span class="r-sug-t">${loading ? (uniq.length ? 'Calles cercanas · buscando más…' : '<i class="r-spin"></i> Buscando calles cercanas…') : none ? 'No encontramos el nombre de la calle. Escríbelo o' : 'Calles cercanas · toca para usar'}</span>`
+      + (none ? `<button type="button" class="r-chip" id="r-sug-retry">Buscar otra vez</button>` : '')
+      + uniq.map(n => `<button type="button" class="r-chip" data-sug="${esc(n)}">${esc(n)}</button>`).join('')
+      + (sector ? `<button type="button" class="r-chip sec" data-sec="${esc(sector)}">${ICON.pin} Sector ${esc(sector)}</button>` : '');
+    box.querySelectorAll('[data-sug]').forEach(b => b.onclick = () => { $('#r-street').value = b.dataset.sug; $('#r-street').dataset.auto = ''; });
+    box.querySelector('#r-sug-retry')?.addEventListener('click', () => suggestStreets(pos));
+    box.querySelectorAll('[data-sec]').forEach(b => b.onclick = () => { const i = $('#r-street'), v = i.value.trim(); if (!v.includes(b.dataset.sec)) i.value = v ? `${v} · Sector ${b.dataset.sec}` : `Sector ${b.dataset.sec}`; });
+  };
+  paint(local, '', true);
+  // Se completa solo (la persona puede cambiarlo): intersección más cercana y sector
+  const fill = (r, loading) => {
+    if (my !== sugSeq) return;
+    const st = r.streets.map(s => s.name), inter = st.length >= 2 ? [`${st[0]} y ${st[1]}`] : [];
+    paint([...inter, ...st, ...local], r.sector, loading);
+    const inp = $('#r-street'), auto = inter[0] || st[0] || local[0] || '';
+    if (!inp.value.trim() || inp.dataset.auto === '1') { inp.value = [auto, r.sector && `Sector ${r.sector}`].filter(Boolean).join(' · '); inp.dataset.auto = inp.value ? '1' : ''; }
+    if (inp.value) $('#r-place').innerHTML = `${ICON.pin}<b>${esc(inp.value)}</b>`;
+    else if (!loading) showStreetEdit(true); // no se encontró la calle: se pide escribirla
+  };
+  try { fill(await nearStreets(pos.lat, pos.lng, q => fill(q, true)), false); }
+  catch { if (my === sugSeq) { paint(local, '', false); if (!$('#r-street').value) showStreetEdit(true); } }
+}
+$('#btn-report').addEventListener('click', openReport);
+$('#r-loc-map').addEventListener('click', () => { $('#sheet-bg').classList.remove('open'); picking = true; $('#picking').classList.add('on'); if (!isAppNav() && window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: 'smooth' }); });
+$('#r-loc-gps').addEventListener('click', () => {
+  const b = $('#r-loc-gps'), err = $('#r-loc-err'); err.textContent = '';
+  if (!('geolocation' in navigator)) { err.textContent = 'Tu teléfono no permite usar el GPS aquí. Marca el lugar en el mapa.'; return; }
+  b.classList.add('busy'); b.querySelector('small').textContent = 'Buscando tu ubicación…';
+  navigator.geolocation.getCurrentPosition(p => { b.classList.remove('busy'); b.querySelector('small').textContent = 'Usar mi ubicación actual (GPS)'; const pos = { lat: p.coords.latitude, lng: p.coords.longitude }; map.panTo?.(pos); locationChosen(pos); },
+    () => { b.classList.remove('busy'); b.querySelector('small').textContent = 'Usar mi ubicación actual (GPS)'; err.textContent = 'No pudimos obtener tu ubicación. Revisa el permiso del GPS o marca el lugar en el mapa.'; },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 20000 });
+});
+$('#pick-cancel').addEventListener('click', () => { stopPick(); $('#sheet-bg').classList.add('open'); repStep(0); });
 function stopPick() { picking = false; $('#picking').classList.remove('on'); }
 function onMapClick(pos) {
   if (nav.onMapClick(pos)) return;
-  if (!picking) return; stopPick(); pickPos = pos;
-  if (pickMarker) pickMarker.remove(); pickMarker = map.addMarker({ ...pos, cls: 'report', icon: 'report' });
-  $('#r-coords').textContent = `Ubicación: ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
-  $('#sheet-bg').classList.add('open'); $('#r-street').focus();
+  if (!picking) return; stopPick(); locationChosen(pos);
 }
 let rType = 'inundacion';
 document.querySelectorAll('[data-rtype]').forEach(btn => btn.addEventListener('click', () => {
   rType = btn.dataset.rtype;
   document.querySelectorAll('[data-rtype]').forEach(x => { x.classList.toggle('on', x === btn); x.setAttribute('aria-pressed', x === btn); });
-  $('#r-title').textContent = rType === 'desborde' ? 'Reportar desborde de río' : 'Reportar calle inundada';
   $('#r-desc').placeholder = rType === 'desborde' ? 'Ej. El río se salió por la margen derecha y el agua llega a las casas.' : 'Ej. El agua cubre la vereda frente al parque y el bus no pasa.';
 }));
-const closeSheet = () => { $('#sheet-bg').classList.remove('open'); if (pickMarker) { pickMarker.remove(); pickMarker = null; } };
-$('#r-cancel').addEventListener('click', closeSheet);
+// Calle automática: se muestra como texto; "Cambiar" abre el campo y las sugerencias
+const showStreetEdit = on => { $('#r-street-wrap').hidden = !on; $('#r-place-box').hidden = on; if (on) $('#r-street').focus({ preventScroll: true }); };
+$('#r-place-edit').addEventListener('click', () => showStreetEdit(true));
+$('#r-next').addEventListener('click', () => repStep(2));
+$('#r-back').addEventListener('click', () => { if (rStep === 0) closeSheet(); else repStep(rStep - 1); });
+const closeSheet = () => { clearPhoto(); stopPick(); $('#sheet-bg').classList.remove('open'); if (pickMarker) { pickMarker.remove(); pickMarker = null; } pickPos = null; };
 $('#sheet-bg').addEventListener('click', e => { if (e.target === e.currentTarget) closeSheet(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet-bg').classList.contains('open')) closeSheet(); });
+// Foto del reporte: se reduce en el teléfono (máx. 1280 px, JPEG) para que suba rápido con datos móviles.
+let photoData = null;
+function showPhoto(on) { $('#r-photo-view').hidden = !on; $('#r-photo-empty').hidden = on; $('#r-photo-box').classList.toggle('has', on); }
+function clearPhoto() { photoData = null; $('#r-photo-cam').value = ''; $('#r-photo-gal').value = ''; $('#r-photo-prev').removeAttribute('src'); showPhoto(false); $('#r-photo-err').textContent = ''; $('#r-photo-box').classList.remove('bad'); }
+async function onPhoto(e) {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' });
+    const k = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    photoData = c.toDataURL('image/jpeg', 0.72);
+    $('#r-photo-prev').src = photoData; showPhoto(true);
+    $('#r-photo-err').textContent = ''; $('#r-photo-box').classList.remove('bad');
+  } catch { photoData = null; showPhoto(false); $('#r-photo-err').textContent = 'No se pudo leer esa imagen. Prueba con otra foto.'; }
+  e.target.value = '';
+}
+$('#r-photo-cam').addEventListener('change', onPhoto); $('#r-photo-gal').addEventListener('change', onPhoto);
+$('#r-photo-del').addEventListener('click', clearPhoto);
 $('#report-form').addEventListener('submit', async e => {
   e.preventDefault(); $('#r-err').textContent = '';
-  const body = { ...pickPos, type: rType, street: $('#r-street').value, level: $('#r-level').value, description: $('#r-desc').value };
+  if (!photoData) { $('#r-photo-err').textContent = 'Agrega una fotografía: es obligatoria para comprobar el reporte.'; $('#r-photo-box').classList.add('bad'); return; }
+  const body = { ...pickPos, type: rType, street: $('#r-street').value, description: $('#r-desc').value, photo: photoData };
   const r = await fetch('/api/public/reports', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const j = await r.json();
   if (!r.ok) { $('#r-err').textContent = j.error; return; }
-  closeSheet(); e.target.reset(); toast('Gracias. Tu reporte fue enviado y será revisado.', 'ok');
+  closeSheet(); e.target.reset(); clearPhoto(); toast('Gracias. Tu reporte fue enviado y será revisado.', 'ok');
 });
 
 load().catch(err => { console.error(err); toast('No se pudo cargar la información. Reintenta en unos segundos.', 'err'); });
 setInterval(() => load().catch(() => {}), 60000);
+// Cambios del admin en vivo: cada 10 s se consulta un número de revisión; si cambió, se recarga el estado de inmediato
+let lastRev = null, revBusy = false;
+async function pollRev() {
+  if (revBusy || document.hidden || !navigator.onLine) return; revBusy = true;
+  try { const r = await (await fetch('/api/public/rev', { cache: 'no-store', signal: AbortSignal.timeout(6000) })).json();
+    const k = `${r.rev}|${r.mapVersion}`; if (lastRev !== null && k !== lastRev) await load(); lastRev = k; } catch {} finally { revBusy = false; }
+}
+setInterval(pollRev, 10000); pollRev();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { lastRev = null; load().catch(() => {}); pollRev(); } });
+
+// Avisos de lluvia y tormenta (notificaciones push)
+const pushBtn = $('#btn-push'), tip = $('#push-tip');
+const pushOk = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && window.isSecureContext;
+const b64 = k => Uint8Array.from(atob(k.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+async function pushSub() { const reg = await navigator.serviceWorker.ready; return reg.pushManager.getSubscription(); }
+async function pushRefresh() {
+  const on = !!(await pushSub().catch(() => null)) && Notification.permission === 'granted';
+  pushBtn.setAttribute('aria-pressed', on);
+  pushBtn.setAttribute('aria-label', on ? 'Avisos activados. Toca para desactivar' : 'Activar avisos de lluvia y tormenta');
+  pushBtn.title = on ? 'Avisos activados (toca para desactivar)' : 'Activar avisos de lluvia y tormenta';
+  if (on) tip.hidden = true;
+  return on;
+}
+async function pushToggle() {
+  try {
+    const cur = await pushSub();
+    if (cur) { await fetch('/api/public/push-unsubscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ endpoint: cur.endpoint }) }); await cur.unsubscribe(); toast('Avisos desactivados', 'ok'); return pushRefresh(); }
+    if (Notification.permission === 'denied') return toast('Las notificaciones están bloqueadas: permítelas en los ajustes del navegador.', 'err');
+    if (await Notification.requestPermission() !== 'granted') return toast('Sin permiso no podemos avisarte. Puedes activarlo cuando quieras con la campana.', 'err');
+    const { key } = await (await fetch('/api/public/push-key')).json();
+    const sub = await (await navigator.serviceWorker.ready).pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(key) });
+    const r = await fetch('/api/public/push-subscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subscription: sub.toJSON() }) });
+    if (!r.ok) throw new Error('subscribe');
+    toast('Avisos activados: te avisaremos si hay tormenta o se acerca lluvia.', 'ok'); pushRefresh();
+  } catch { toast('No se pudieron activar los avisos en este navegador.', 'err'); }
+}
+if (pushOk) {
+  pushBtn.hidden = false; pushBtn.innerHTML = ICON.bell; $('#pt-ic').innerHTML = ICON.bell;
+  pushBtn.addEventListener('click', pushToggle);
+  $('#pt-yes').addEventListener('click', () => { tip.hidden = true; pushToggle(); });
+  $('#pt-no').addEventListener('click', () => { tip.hidden = true; try { localStorage.setItem('av_push_no', String(Date.now())); } catch {} });
+  // Sugerencia: si aún no están activados (y no los rechazó hace poco), se ofrece una vez al abrir
+  pushRefresh().then(on => {
+    let no = 0; try { no = +localStorage.getItem('av_push_no') || 0; } catch {}
+    if (!on && Notification.permission === 'default' && Date.now() - no > 7 * 864e5) setTimeout(() => { if (pushBtn.getAttribute('aria-pressed') !== 'true') tip.hidden = false; }, 4000);
+  });
+}
+// Pronóstico de ayer, hoy y los próximos 2 días (se pide aparte y se guarda 30 min en el servidor)
+// El teléfono también anota el día de hoy: si el servidor se reinició y no tiene "Ayer", se usa lo que este teléfono vio.
+function dayMemo(d) {
+  if (!d?.ok || !d.days?.length) return d;
+  let log = {}; try { log = JSON.parse(localStorage.getItem('av_daylog') || '{}') || {}; } catch {}
+  const t = d.days.find(x => x.rel === 0);
+  if (t && !t.na) { const o = log[t.date]; log[t.date] = !o ? { ...t } : { ...o, tMax: Math.max(o.tMax ?? -99, t.tMax ?? -99), tMin: Math.min(o.tMin ?? 99, t.tMin ?? 99), ...(t.mm >= (o.mm ?? 0) ? { mm: t.mm, code: t.code, text: t.text } : {}) }; }
+  for (const k of Object.keys(log).sort().slice(0, -10)) delete log[k];
+  try { localStorage.setItem('av_daylog', JSON.stringify(log)); } catch {}
+  const days = d.days.map(x => (x.rel === -1 && x.na && log[x.date]) ? { ...log[x.date], rel: -1, prob: null, saved: true } : x);
+  return { ...d, days };
+}
+async function loadDays() {
+  try { const r = await fetch('/api/public/forecast-days', { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw 0; daysData = dayMemo(await r.json()); try { localStorage.setItem('av_days', JSON.stringify(daysData)); } catch {} }
+  catch { try { daysData ||= JSON.parse(localStorage.getItem('av_days') || 'null'); } catch {} daysData ||= { ok: false, days: [] }; }
+  document.querySelectorAll('[data-days]').forEach(el => { el.innerHTML = daysCards(daysData); });
+}
+loadDays(); setInterval(loadDays, 30 * 60 * 1000);
+document.addEventListener('click', e => { if (e.target.closest('[data-days-retry]')) { daysData = null; document.querySelectorAll('[data-days]').forEach(el => { el.innerHTML = daysCards(null); }); loadDays(); } });
+$('#r-street').addEventListener('input', e => { e.target.dataset.auto = ''; });

@@ -11,9 +11,12 @@
   },
   "dependencies": {
     "express": "^4.19.2",
+    "h5wasm": "^0.10.3",
     "jszip": "^3.10.1",
     "leaflet": "^1.9.4",
-    "shpjs": "^4.0.4"
+    "shpjs": "^4.0.4",
+    "web-push": "^3.6.7",
+    "ws": "^8.18.0"
   },
   "license": "MIT",
   "engines": {

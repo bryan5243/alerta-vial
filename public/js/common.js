@@ -41,6 +41,7 @@ export function confirmBox({ title = '¿Estás seguro?', text = '', ok = 'Acepta
   });
 }
 export const ICON = {
+  bell: '<svg class="i" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>',
   drop: '<svg class="i" viewBox="0 0 24 24"><path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z"/></svg>',
   route: '<svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="19" r="3"/><circle cx="18" cy="5" r="3"/><path d="M12 19h4.5a3.5 3.5 0 0 0 0-7h-9a3.5 3.5 0 0 1 0-7H12"/></svg>',
   info: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4m0-4h.01"/></svg>',
@@ -100,4 +101,23 @@ function partsRows(w) {
   // todo seco: una sola línea en vez de cuatro renglones iguales
   if (ps.every(p => p.probability < 80)) return `<p class="wx-dry">Sin probabilidad alta de lluvia (80 % o más) en las próximas 24 horas.</p>`;
   return `<div class="wx-parts">${ps.map(p => `<div class="wp${tone(p.probability)}"><span class="wp-l">${p.label}<small>${hr(p.from)}–${(hr(p.to) + 1) % 24} h</small></span><span class="wp-bar"><i style="width:${Math.max(3, p.probability)}%"></i></span><b class="wp-p">${p.probability}%</b><span class="wp-mm">${p.precipitation >= .1 ? `${dec(p.precipitation)} mm` : p.probability >= 50 ? '< 0,1 mm' : '0 mm'}</span></div>`).join('')}</div>`;
+}
+
+// Pronóstico por días: ayer (ya ocurrió), hoy y los 2 días siguientes
+const WD = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+export function daysCards(d) {
+  const head = '<div class="wx-days-h"><span class="wx-hours-t">Ayer, hoy y los próximos 2 días</span><span class="wx-hours-k">pronóstico</span></div>';
+  if (!d) return `${head}<p class="wx-days-msg">Cargando el pronóstico…</p>`;
+  if (!d.ok || !d.days?.length) return `${head}<p class="wx-days-msg">No se pudo cargar el pronóstico por días${d.error ? ` <small>(${esc(d.error)})</small>` : ''}. <button type="button" class="linklike" data-days-retry>Reintentar</button></p>`;
+  const lab = x => x.rel === -1 ? 'Ayer' : x.rel === 0 ? 'Hoy' : x.rel === 1 ? 'Mañana' : WD[new Date(x.date + 'T12:00:00').getDay()];
+  return `<div class="wx-days-h"><span class="wx-hours-t">Ayer, hoy y los próximos 2 días</span><span class="wx-hours-k">${d.stale ? 'dato guardado' : esc(d.source || 'Open-Meteo')}</span></div>
+    <div class="wx-days-g" role="list">${d.days.map(x => {
+    const p = x.prob == null ? null : Math.round(x.prob), past = x.rel < 0;
+    if (x.na) return `<div class="wd past" role="listitem"><span class="wd-l">${lab(x)}</span><span class="wd-t">Sin dato</span><span class="wd-r">no disponible</span></div>`;
+    const wet = past ? x.mm >= 1 : (p ?? 0) >= 80 || x.mm >= 5;
+    return `<div class="wd${x.rel === 0 ? ' today' : ''}${past ? ' past' : ''}${wet ? ' wet' : ''}" role="listitem" aria-label="${lab(x)}: ${x.text}, ${past ? 'llovió' : 'lluvia'} ${dec(x.mm)} mm${p == null || past ? '' : `, probabilidad ${p} %`}">
+      <span class="wd-l">${lab(x)}</span><span class="wd-t">${x.text || '–'}</span>
+      <span class="wd-temp"><b>${x.tMax == null ? '–' : Math.round(x.tMax)}°</b> <small>${x.tMin == null ? '' : Math.round(x.tMin) + '°'}</small></span>
+      <span class="wd-r">${past ? `${dec(x.mm)} mm` : p == null ? `${dec(x.mm)} mm` : `${p}% · ${dec(x.mm)} mm`}</span>${past ? `<span class="wd-n">${x.saved ? 'registrado' : 'ya ocurrió'}</span>` : ''}</div>`;
+  }).join('')}</div>`;
 }

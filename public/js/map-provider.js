@@ -15,33 +15,106 @@ const ICONS = {
   nav: '<path d="M4 11 20 4l-7 16-2-7z"/>',
   interseccion: '<path d="M12 2v20M2 12h20"/><path d="M5 18c1.5-1 3-1 4.5 0s3 1 4.5 0 3-1 4.5 0"/>',
 };
-export const pinHtml = (cls, icon) => `<div class="pin ${cls}"><svg viewBox="0 0 24 24">${ICONS[icon] || ICONS.inundacion}</svg></div>`;
+export const pinHtml = (cls, icon) => `<div class="pin-w"><div class="pin ${cls}"><svg viewBox="0 0 24 24">${ICONS[icon] || ICONS.inundacion}</svg></div></div>`;
 
-export async function createMap({ provider = 'leaflet', el, center, zoom, googleKey }) {
+export async function createMap({ provider = 'leaflet', el, center, zoom, googleKey, style = 'osm' }) {
   if (provider === 'google' && googleKey) {
     try { return await googleMap({ el, center, zoom, googleKey }); }
     catch (e) { console.warn('Google Maps no disponible, usando Leaflet.', e); }
   }
-  return leafletMap({ el, center, zoom });
+  return leafletMap({ el, center, zoom, style });
 }
 
 /* ---------------- Leaflet ---------------- */
-function leafletMap({ el, center, zoom }) {
+// Estilos del mapa base (todos de OpenStreetMap, gratis y sin key). Si un área del estilo estándar estorba, se puede cambiar desde Admin → Configuración.
+const BASES = {
+  osm: { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', cors: true, max: 19, attr: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' },
+  hot: { url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', cors: false, max: 19, attr: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · HOT' },
+  osmfr: { url: 'https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', cors: false, max: 19, attr: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · OSM Francia' },
+};
+function leafletMap({ el, center, zoom, style = 'osm' }) {
   const map = L.map(el, { zoomControl: false, attributionControl: true, zoomSnap: 1, zoomDelta: 1, wheelPxPerZoomLevel: 90 }).setView([center.lat, center.lng], zoom);
   L.control.zoom({ position: 'bottomright' }).addTo(map);
-  L.control.scale({ position: 'bottomleft', metric: true, imperial: false, maxWidth: 110 }).addTo(map); // la barra de 100 m aparece en el zoom 18
+  L.control.scale({ position: 'bottomleft', metric: true, imperial: false, maxWidth: 150 }).addTo(map); // la barra de 100 m aparece en el zoom 18
   // Mapa base: OpenStreetMap oficial (gratis, sin API key).
-  const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, maxNativeZoom: 19, detectRetina: true, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  }).addTo(map);
+  const B = BASES[style] || BASES.osm;
+  const tiles = L.tileLayer(B.url, { maxZoom: B.max, maxNativeZoom: B.max, detectRetina: true, crossOrigin: B.cors, subdomains: 'abc', attribution: B.attr }).addTo(map);
   // Aviso cuando los tiles no cargan (sin internet)
   const fb = document.createElement('div'); fb.className = 'map-fallback'; fb.textContent = 'Sin conexión al mapa base. Las capas de alerta siguen visibles.';
   el.appendChild(fb); tiles.on('load', () => fb.remove()); tiles.on('tileerror', () => { if (!el.contains(fb)) el.appendChild(fb); });
   const layers = L.layerGroup().addTo(map);
   let radar = null, clickCb = null;
   map.on('click', e => clickCb && clickCb({ lat: e.latlng.lat, lng: e.latlng.lng }));
+
+  /* ---- Vista de conducción 3D (como Google Maps): el mapa se inclina, gira según el rumbo y sigue al vehículo ---- */
+  const wrap = el.parentElement;
+  const dv = { active: false, tilt: 45, northUp: false, hdg: 0, rot: 0, manualUntil: 0, zoomBase: 18 };
+  const meEl = document.getElementById('drive-me'), ctlEl = document.getElementById('drive-ctl');
+  let lastPinRot = null, lastTilt = null;
+  // El mapa se gira por transform directo (barato); las variables que heredan los marcadores se actualizan solo si cambian lo suficiente
+  const dvVars = () => {
+    el.style.transform = `translate(-50%,-50%) perspective(820px) rotateX(${dv.tilt}deg) rotateZ(${dv.rot.toFixed(2)}deg)`;
+    if (lastPinRot == null || Math.abs(dv.rot - lastPinRot) >= 1.5) { lastPinRot = dv.rot; wrap.style.setProperty('--rot', `${dv.rot.toFixed(1)}deg`); ctlEl?.style.setProperty('--rot', `${dv.rot.toFixed(1)}deg`); }
+    if (lastTilt !== dv.tilt) { lastTilt = dv.tilt; const k = Math.cos(dv.tilt * Math.PI / 180); wrap.style.setProperty('--tilt', `${dv.tilt}deg`); wrap.style.setProperty('--unsq', String(+(1 / Math.max(.3, k)).toFixed(3))); wrap.classList.toggle('drive-flat', dv.tilt === 0); }
+    meEl?.style.setProperty('--me', `${dv.northUp ? dv.hdg.toFixed(1) : 0}deg`); wrap.classList.toggle('drive-north', dv.northUp);
+  };
+  // Bucle de animación (60 fps): la cámara persigue al vehículo con suavizado. Solo se desplaza el panel (panBy, barato);
+  // el zoom usa la animación nativa de Leaflet (GPU) y la cámara espera a que termine.
+  const dvLoop = (t) => {
+    if (!dv.active) return;
+    dv.raf = requestAnimationFrame(dvLoop);
+    const dt = Math.min(.1, dv.last ? (t - dv.last) / 1000 : .016); dv.last = t;
+    if (dv.ext) return;
+    const kp = 1 - Math.exp(-dt / .3), kr = 1 - Math.exp(-dt / .25);
+    dv.lat += (dv.tLat - dv.lat) * kp; dv.lng += (dv.tLng - dv.lng) * kp;
+    const h0 = dv.hdg; if (dv.tHdg != null) dv.hdg += (dv.tHdg - dv.hdg) * kr;
+    dv.lean += ((Math.max(-14, Math.min(14, (dv.hdg - h0) / Math.max(dt, .001) * .35)) * (dv.speed > 2 ? 1 : 0)) - dv.lean) * (1 - Math.exp(-dt / .2));
+    dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars(); meEl?.style.setProperty('--lean', dv.lean.toFixed(1) + 'deg');
+    if (dv.tZ !== map.getZoom()) { dv.ext = true; map.setZoom(dv.tZ); return; }
+    const p = map.latLngToContainerPoint([dv.lat, dv.lng]), c = map.getSize().divideBy(2), d = p.subtract(c);
+    if (Math.abs(d.x) > .2 || Math.abs(d.y) > .2) map.panBy(d, { animate: false });
+  };
+  map.on('zoomstart', () => { if (dv.active) dv.ext = true; });
+  map.on('zoomend', () => { if (!dv.active) return; dv.ext = false; if (Date.now() <= dv.manualUntil || dv.tZ === map.getZoom()) dv.tZ = map.getZoom(); });
+  const drive = {
+    get active() { return dv.active; }, get tilt() { return dv.tilt; }, get northUp() { return dv.northUp; },
+    start(u) {
+      if (dv.active) return; dv.active = true;
+      const c = u || map.getCenter(); dv.hdg = u?.heading ?? 0; dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars();
+      wrap.classList.add('drive'); document.body.classList.add('drive-on');
+      map.dragging.disable(); map.options.touchZoom = 'center'; map.options.scrollWheelZoom = 'center'; map.options.doubleClickZoom = 'center';
+      map.touchZoom.disable(); map.touchZoom.enable(); map.scrollWheelZoom.disable(); map.scrollWheelZoom.enable();
+      map.invalidateSize({ animate: false });
+      const z0 = Math.min(17, Math.max(map.getZoom(), 16));
+      map.setView([c.lat ?? c[0], c.lng ?? c[1]], z0, { animate: false });
+      dv.lat = dv.tLat = c.lat ?? c[0]; dv.lng = dv.tLng = c.lng ?? c[1]; dv.tZ = z0; dv.ext = false; dv.lean = 0; dv.last = 0;
+      dv.raf = requestAnimationFrame(dvLoop);
+    },
+    stop() {
+      if (!dv.active) return; dv.active = false; cancelAnimationFrame(dv.raf);
+      wrap.classList.remove('drive', 'drive-flat', 'drive-north', 'drive-moving'); document.body.classList.remove('drive-on');
+      ['--rot', '--tilt', '--unsq'].forEach(k => wrap.style.removeProperty(k)); el.style.transform = ''; lastPinRot = lastTilt = null; ['--rot'].forEach(k => ctlEl?.style.removeProperty(k)); ['--me', '--lean'].forEach(k => meEl?.style.removeProperty(k));
+      map.options.touchZoom = true; map.options.scrollWheelZoom = true; map.options.doubleClickZoom = true;
+      map.dragging.enable(); map.touchZoom.disable(); map.touchZoom.enable(); map.scrollWheelZoom.disable(); map.scrollWheelZoom.enable();
+      const c = map.getCenter(); map.invalidateSize({ animate: false }); map.setView(c, Math.min(map.getZoom(), 18), { animate: false });
+    },
+    update(u) {
+      if (!dv.active || !u) return;
+      if (u.heading != null && !isNaN(u.heading)) dv.tHdg = dv.hdg + (((u.heading - dv.hdg + 540) % 360) - 180);
+      dv.tLat = u.lat; dv.tLng = u.lng;
+      const now = Date.now(); let sp = u.speed;
+      if ((sp == null || isNaN(sp)) && dv.pt) { const dm = Math.hypot((u.lat - dv.pt.lat) * 111320, (u.lng - dv.pt.lng) * 111320 * Math.cos(u.lat * Math.PI / 180)); sp = dm / Math.max(.3, (now - dv.pt.t) / 1000); }
+      dv.pt = { lat: u.lat, lng: u.lng, t: now };
+      const v = (sp ?? 0) * 3.6; dv.speed = v;
+      wrap.classList.toggle('drive-moving', v > 2);
+      if (Date.now() > dv.manualUntil && !dv.ext) dv.tZ = v > 70 ? 15 : v > 45 ? 16 : 17;
+    },
+    zoom(dz) { dv.manualUntil = Date.now() + 25000; dv.tZ = Math.max(13, Math.min(19, Math.round(map.getZoom()) + dz)); },
+    toggleTilt() { dv.tilt = dv.tilt ? 0 : 45; dvVars(); return dv.tilt; },
+    toggleNorth() { dv.northUp = !dv.northUp; dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars(); return dv.northUp; },
+  };
   return {
-    provider: 'leaflet', raw: map,
+    provider: 'leaflet', raw: map, drive,
     addMarker({ lat, lng, cls, icon, popup, onClick, pulse }) {
       const m = L.marker([lat, lng], { icon: L.divIcon({ className: '', html: pinHtml(cls + (pulse ? ' pulse' : ''), icon), iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28] }) });
       if (popup) m.bindPopup(popup, { maxWidth: 260 });

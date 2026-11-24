@@ -391,3 +391,15 @@ Antes, cuando la ruta tenía que esquivar un punto de riesgo, solo se ofrecía u
 - Espera de 90 ms (antes 150) después de la última letra.
 - Photon y Nominatim ya no van uno detrás del otro: Photon sale al instante y, si en 0,6 s no responde o no trae lugares, Nominatim sale a la vez; gana el primero con resultados (antes había que esperar hasta 3,5 s a que Photon fallara). Tiempos máximos: Photon 3 s, Nominatim 4,5 s.
 - Los resultados locales (ciudades, puntos y calles del mapa) siguen apareciendo al instante, sin red.
+
+
+## Reportes con foto y avisos de lluvia
+- **Foto obligatoria** en los reportes ciudadanos: se reduce en el teléfono (1280 px, JPEG) y el servidor la guarda en `data/photos/` (junto a la base). Se ve en el panel de revisión y en el mapa cuando el reporte se verifica. Un reporte sin foto se rechaza.
+- **Avisos push** (campana en el mapa): el servidor revisa el clima cada 5 min y avisa cuando se aproxima lluvia, hay tormenta, empieza a llover o sube el color de la alerta (máx. uno del mismo tipo cada 2 h). Claves VAPID y suscripciones en `db.push`. Admin → Configuración → "Avisos en el teléfono" envía una prueba. Requiere HTTPS (Render lo da) e iPhone con la app en la pantalla de inicio.
+
+## Pronóstico por días
+En la pestaña Resumen, bajo "Lluvia por horas", se muestran 4 tarjetas: ayer (lo que ya ocurrió), hoy, mañana y pasado mañana (temperatura, probabilidad y mm de lluvia). Viene de `/api/public/forecast-days` (Open-Meteo, una consulta guardada 30 min) y la app guarda la última copia para verla sin señal.
+
+
+## Vista de conducción 3D
+Al iniciar el GPS (o la simulación) el mapa pasa solo a vista de conducción: se inclina (perspectiva 3D), gira para que el rumbo quede siempre hacia arriba, sigue al vehículo con movimiento suave y ajusta el zoom según la velocidad (18 en ciudad, 17 desde 45 km/h, 16 desde 70 km/h). Botones a la derecha: brújula (la aguja marca el norte; al tocarla se fija el norte arriba), 2D/3D (inclinación), acercar y alejar; también funciona el pellizco. El botón "3D" de la barra del GPS sale a la vista normal para explorar el mapa. Parado, el rumbo sale de la brújula del teléfono (en iPhone pide permiso al iniciar). Está hecho con transformaciones CSS 3D sobre Leaflet (`map.drive` en `map-provider.js`); con Google Maps no aplica.
