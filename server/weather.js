@@ -161,8 +161,21 @@ export function parseMetar(raw) {
     if (i > intensity) { intensity = i; txt = ts ? (rain ? 'Tormenta con lluvia' : 'Tormenta eléctrica') : `${m[1] === '+' ? 'Lluvia fuerte' : m[1] === '-' ? 'Lluvia leve' : /DZ/.test(m[3]) && !/RA/.test(m[3]) ? 'Llovizna' : 'Lluvia'}${m[2] === 'SH' ? ' (chubasco)' : ''}`; }
   }
   // VC = lluvia a 8–16 km del aeropuerto, no sobre él: se informa pero no sube el semáforo.
-  if (!intensity && near) return { intensity: 0, near, text: 'Lluvia en los alrededores (no sobre el aeropuerto)' };
-  return { intensity, near, text: txt || 'Sin lluvia' };
+  const air = metarAir(body);
+  if (!intensity && near) return { intensity: 0, near, text: 'Lluvia en los alrededores (no sobre el aeropuerto)', ...air };
+  return { intensity, near, text: txt || 'Sin lluvia', ...air };
+}
+// Temperatura, humedad (del punto de rocío) y viento medidos en el aeropuerto: "29/22" (M = bajo cero), "23008KT"
+export function metarAir(body) {
+  const out = {};
+  const t = /\s(M?\d{2})\/(M?\d{2})(?=\s|$)/.exec(' ' + body);
+  if (t) {
+    const n = x => (x[0] === 'M' ? -1 : 1) * +x.replace('M', ''), T = n(t[1]), D = n(t[2]);
+    out.temperature = T; out.humidity = Math.round(100 * Math.exp(17.625 * D / (243.04 + D)) / Math.exp(17.625 * T / (243.04 + T)));
+  }
+  const w = /\b(?:\d{3}|VRB)(\d{2,3})(?:G\d{2,3})?(KT|MPS)\b/.exec(body);
+  if (w) out.wind = Math.round(+w[1] * (w[2] === 'KT' ? 1.852 : 3.6));
+  return out;
 }
 async function metarSource(station) {
   if (metarCache.data && Date.now() - metarCache.at < TTL) return metarCache.data;
@@ -183,7 +196,8 @@ async function metarSource(station) {
     const fresh = ageMin <= 90;
     d = { ...base, ok: fresh, stale: !fresh, at: last.at.toISOString(), ageMin, raw: last.raw, intensity: fresh ? p.intensity : 0, rainNow: fresh ? INT_MM[p.intensity] : 0,
       near: fresh && !!p.near, cb: fresh && /\b(FEW|SCT|BKN|OVC)\d{3}(CB|TCU)\b/.test(last.raw), ts: fresh && /\b(VC)?TS/.test(last.raw.replace(/^\S+\s+\S+\s+/, '')),
-      detail: `${p.text} · reporte de hace ${ageMin} min`, error: fresh ? undefined : `último reporte hace ${ageMin} min` };
+      detail: `${p.text} · reporte de hace ${ageMin} min`, error: fresh ? undefined : `último reporte hace ${ageMin} min`,
+      temperature: fresh ? p.temperature : undefined, humidity: fresh ? p.humidity : undefined, wind: fresh ? p.wind : undefined };
   } catch (e) { d = { ...base, ok: false, intensity: 0, error: e.message }; }
   metarCache = { at: d.ok ? Date.now() : Date.now() - TTL + 3 * 60e3, data: d }; // si falla, se reintenta en 3 min
   return d;
@@ -432,7 +446,8 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
     decidedBy: intensity > 0 ? top.name : null,
     source: live.map(s => s.id === 'modelos' ? `${provs} (${okM.length} modelos)` : s.name).join(' + '),
     observedAt: (intensity > 0 ? top.at : base?.observedAt) || at,
-    temperature: base?.temperature ?? okM.find(m => m.temperature != null)?.temperature ?? owm?.temperature, cloudCover: Math.max(base?.cloudCover ?? 0, owm?.cloudCover ?? 0, intensity ? 95 : 0),
+    // Temperatura: la medida en el aeropuerto si hay reporte reciente; si no, la del modelo
+    temperature: (metar?.ok ? metar.temperature : null) ?? base?.temperature ?? okM.find(m => m.temperature != null)?.temperature ?? owm?.temperature, cloudCover: Math.max(base?.cloudCover ?? 0, owm?.cloudCover ?? 0, intensity ? 95 : 0),
     rainNow: intensity ? r1(Math.max(...live.map(s => (s.intensity ? s.rainNow || 0 : 0)))) : 0,
     rainPast3h: Math.max(pick('rainPast3h'), intensity >= 2 ? INT_MM[intensity] : 0), rainPast6h: pick('rainPast6h'), rainPast12h: pick('rainPast12h'), wetHours: pick('wetHours'),
     rainNext3h: pick('rainNext3h'), rainNext24h: pick('rainNext24h'),
@@ -450,10 +465,14 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
     w.probEstimated = w.hourly.slice(0, 4).every(h => h.estimated);
   }
   w.periods = dayParts(w.hourly);
-  { // sensación térmica, humedad y viento (del mejor modelo; si falta, de otro o calculada)
-    const pk = k => base?.[k] ?? okM.find(m => m[k] != null)?.[k];
-    w.humidity = pk('humidity') == null ? undefined : Math.round(pk('humidity')); w.wind = pk('wind') == null ? undefined : Math.round(pk('wind')); w.gust = pk('gust') == null ? undefined : Math.round(pk('gust'));
-    w.apparent = pk('apparent') ?? apparentTemp(w.temperature, w.humidity, (w.wind || 0) / 3.6);
+  { // humedad y viento: del aeropuerto si hay reporte reciente; si no, del mejor modelo
+    const obs = metar?.ok && metar.temperature != null ? metar : null;
+    const pk = k => obs?.[k] ?? base?.[k] ?? okM.find(m => m[k] != null)?.[k];
+    w.humidity = pk('humidity') == null ? undefined : Math.round(pk('humidity')); w.wind = pk('wind') == null ? undefined : Math.round(pk('wind')); w.gust = base?.gust ?? okM.find(m => m.gust != null)?.gust; if (w.gust != null) w.gust = Math.round(w.gust);
+    w.tempFrom = obs ? 'aeropuerto' : 'modelo';
+    // Sensación térmica a la sombra (Steadman: temperatura + humedad − viento), como la publica el INAMHI.
+    // La de Open-Meteo suma también el sol directo del mediodía y daba 6–8 °C de más (p. ej. 41 °C con 34 °C de aire).
+    w.apparent = apparentTemp(w.temperature, w.humidity, (w.wind || 0) / 3.6);
     w.heat = heatInfo(w.apparent);
   }
   w.sun = sunInfo(base?.sun || okM.find(m => m.sun?.uvIndex != null)?.sun, w.cloudCover, intensity);

@@ -96,7 +96,7 @@ function feelCard(w) {
   if (w.apparent == null) return '';
   const h = w.heat;
   return `<div class="wx-feel${h ? ` hf-${h.key}` : ''}"><div class="wf-h"><span class="wf-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0z"/><path d="M12 9v7"/></svg></span><b>Sensación térmica</b><span class="wf-v">${Math.round(w.apparent)}<small>°C</small></span></div>
-    <div class="wf-m">${h ? `<span class="wf-tag">${esc(h.label)}</span>` : ''}${w.humidity != null ? `<span>Humedad <b>${w.humidity} %</b></span>` : ''}${w.wind != null ? `<span>Viento <b>${w.wind} km/h</b></span>` : ''}${w.temperature != null ? `<span>Aire <b>${Math.round(w.temperature)}°C</b></span>` : ''}</div>
+    <div class="wf-m">${h ? `<span class="wf-tag">${esc(h.label)}</span>` : ''}${w.humidity != null ? `<span>Humedad <b>${w.humidity} %</b></span>` : ''}${w.wind != null ? `<span>Viento <b>${w.wind} km/h</b></span>` : ''}${w.temperature != null ? `<span>Aire <b>${Math.round(w.temperature)}°C</b>${w.tempFrom === 'aeropuerto' ? ' <small>(aeropuerto)</small>' : ''}</span>` : ''}</div>
     ${h?.advice ? `<p>${esc(h.advice)}</p>` : ''}</div>`;
 }
 // Probabilidad estimada de tormenta eléctrica (próximas 6 h)
