@@ -49,81 +49,148 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
   let radar = null, clickCb = null;
   map.on('click', e => clickCb && clickCb({ lat: e.latlng.lat, lng: e.latlng.lng }));
 
-  /* ---- Vista de conducción 3D (como Google Maps): el mapa se inclina, gira según el rumbo y sigue al vehículo ---- */
+  /* ---- Registro de capas: lo que se dibuja en el mapa normal se anota aquí para copiarlo a la vista 3D ---- */
+  const scene = new Map(); let sid = 0;
+  const reg = f => { f.id = ++sid; scene.set(f.id, f); glv?.touch(f); return f; };
+  const unreg = f => { if (scene.delete(f.id)) glv?.touch(f); };
+  const touch = f => glv?.touch(f);
+
+  /* ---- Vista de conducción 3D (como Google Maps): el mapa se inclina, gira según el rumbo y sigue al vehículo ----
+     Se dibuja con WebGL (MapLibre): llena la pantalla hasta el horizonte, el zoom con dos dedos es continuo y las rutas no se cortan.
+     En teléfonos sin WebGL queda una vista de respaldo plana (norte arriba) con Leaflet. */
   const wrap = el.parentElement;
-  const dv = { active: false, tilt: 45, northUp: false, hdg: 0, rot: 0, manualUntil: 0, zoomBase: 18 };
+  const dv = { active: false, tilt: 45, northUp: false, hdg: 0, b: 0, rot: 0, manualUntil: 0, mode: null, z: 16, tZ: 17.3, p: 0, lean: 0, speed: 0 };
   const meEl = document.getElementById('drive-me'), ctlEl = document.getElementById('drive-ctl');
-  let lastPinRot = null, lastTilt = null;
-  // El mapa se gira por transform directo (barato); las variables que heredan los marcadores se actualizan solo si cambian lo suficiente
-  const dvVars = () => {
-    el.style.transform = `translate(-50%,-50%) perspective(820px) rotateX(${dv.tilt}deg) rotateZ(${dv.rot.toFixed(2)}deg)`;
-    if (lastPinRot == null || Math.abs(dv.rot - lastPinRot) >= 1.5) { lastPinRot = dv.rot; wrap.style.setProperty('--rot', `${dv.rot.toFixed(1)}deg`); ctlEl?.style.setProperty('--rot', `${dv.rot.toFixed(1)}deg`); }
-    if (lastTilt !== dv.tilt) { lastTilt = dv.tilt; const k = Math.cos(dv.tilt * Math.PI / 180); wrap.style.setProperty('--tilt', `${dv.tilt}deg`); wrap.style.setProperty('--unsq', String(+(1 / Math.max(.3, k)).toFixed(3))); wrap.classList.toggle('drive-flat', dv.tilt === 0); }
-    meEl?.style.setProperty('--me', `${dv.northUp ? dv.hdg.toFixed(1) : 0}deg`); wrap.classList.toggle('drive-north', dv.northUp);
+  const PITCH = 52, CAR_Y = .64;
+  const DT = BASES[style]?.cors ? B : BASES.osm;
+  const tileUrls = DT.url.includes('{s}') ? ['a', 'b', 'c'].map(x => DT.url.replace('{s}', x)) : [DT.url];
+  let glv = null, glMod = null, lastRot = null, lastMe = null, lastTilt = null, pinch = null;
+  const clampZ = z => Math.max(13, Math.min(19.5, z));
+  const angD = (a, b) => ((a - b + 540) % 360) - 180;
+  const setVars = () => {
+    const rot = -dv.b;
+    if (lastRot == null || Math.abs(rot - lastRot) >= .8) { lastRot = rot; ctlEl?.style.setProperty('--rot', `${rot.toFixed(1)}deg`); wrap.style.setProperty('--rot', `${rot.toFixed(1)}deg`); }
+    const me = angD(dv.hdg, dv.b);
+    if (lastMe == null || Math.abs(me - lastMe) >= .5) { lastMe = me; meEl?.style.setProperty('--me', `${me.toFixed(1)}deg`); }
+    if (lastTilt !== dv.tilt) { lastTilt = dv.tilt; wrap.classList.toggle('drive-flat', !dv.tilt); }
+    wrap.classList.toggle('drive-north', dv.northUp);
   };
-  // Bucle de animación (60 fps): la cámara persigue al vehículo con suavizado. Solo se desplaza el panel (panBy, barato);
-  // el zoom usa la animación nativa de Leaflet (GPU) y la cámara espera a que termine.
+  // Posición entre lecturas del GPS: se avanza a velocidad constante desde donde está la cámara hasta la nueva lectura
+  // (en el tiempo que tardó en llegar), así el auto se desliza sin saltos ni frenazos aunque el GPS dé un dato por segundo.
+  const seg = { a: null, b: null, t0: 0, dur: 1 }, hs = { a: 0, b: 0, t0: 0, dur: 1 };
+  const posAt = t => { if (!seg.b) return; const k = Math.min(1, (t - seg.t0) / seg.dur); dv.lat = seg.a[0] + (seg.b[0] - seg.a[0]) * k; dv.lng = seg.a[1] + (seg.b[1] - seg.a[1]) * k; };
+  const hdgAt = t => { const k = Math.min(1, (t - hs.t0) / hs.dur), e = 1 - (1 - k) * (1 - k); dv.hdg = hs.a + (hs.b - hs.a) * e; };
   const dvLoop = (t) => {
     if (!dv.active) return;
     dv.raf = requestAnimationFrame(dvLoop);
     const dt = Math.min(.1, dv.last ? (t - dv.last) / 1000 : .016); dv.last = t;
-    if (dv.ext) return;
-    const kp = 1 - Math.exp(-dt / .3), kr = 1 - Math.exp(-dt / .25);
-    dv.lat += (dv.tLat - dv.lat) * kp; dv.lng += (dv.tLng - dv.lng) * kp;
-    const h0 = dv.hdg; if (dv.tHdg != null) dv.hdg += (dv.tHdg - dv.hdg) * kr;
-    dv.lean += ((Math.max(-14, Math.min(14, (dv.hdg - h0) / Math.max(dt, .001) * .35)) * (dv.speed > 2 ? 1 : 0)) - dv.lean) * (1 - Math.exp(-dt / .2));
-    dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars(); meEl?.style.setProperty('--lean', dv.lean.toFixed(1) + 'deg');
-    if (dv.tZ !== map.getZoom()) { dv.ext = true; map.setZoom(dv.tZ); return; }
-    const p = map.latLngToContainerPoint([dv.lat, dv.lng]), c = map.getSize().divideBy(2), d = p.subtract(c);
-    if (Math.abs(d.x) > .2 || Math.abs(d.y) > .2) {
-      // Se mueve solo el panel (barato). El aviso de "fin de movimiento", que hace pedir cuadros y redibujar
-      // calles y rutas, se da como mucho cada 350 ms; antes iba en cada cuadro (60 veces por segundo) y trababa el mapa.
-      map._rawPanBy(d); map.fire('move');
-      if (t - (dv.endAt || 0) > 350) { dv.endAt = t; map.fire('moveend'); }
+    if (dv.mode === 'css' && dv.ext) return;
+    const h0 = dv.hdg; posAt(t); hdgAt(t);
+    dv.lean += ((Math.max(-14, Math.min(14, angD(dv.hdg, h0) / Math.max(dt, .001) * .35)) * (dv.speed > 2 ? 1 : 0)) - dv.lean) * (1 - Math.exp(-dt / .2));
+    meEl?.style.setProperty('--lean', dv.lean.toFixed(1) + 'deg');
+    const tb = dv.northUp || dv.mode === 'css' ? 0 : dv.hdg; dv.b += angD(tb, dv.b) * (1 - Math.exp(-dt / .18));
+    if (dv.mode === 'gl') {
+      if (!pinch) dv.z += (dv.tZ - 1 - dv.z) * (1 - Math.exp(-dt / .35));
+      dv.p += ((dv.tilt ? PITCH : 0) - dv.p) * (1 - Math.exp(-dt / .3));
+      const { h } = glv.size, pad = Math.round(h * (2 * CAR_Y - 1));
+      const k = `${dv.lat.toFixed(7)},${dv.lng.toFixed(7)},${dv.z.toFixed(3)},${dv.b.toFixed(2)},${dv.p.toFixed(2)},${pad}`;
+      if (k !== dv.camKey) { dv.camKey = k; glv.camera({ center: [dv.lng, dv.lat], zoom: dv.z, bearing: dv.b, pitch: dv.p, padding: { top: pad, bottom: 0, left: 0, right: 0 } }); }
+      setVars(); return;
     }
+    if (dv.mode !== 'css') return;
+    // Respaldo sin WebGL: mapa plano con norte arriba que sigue al vehículo (solo se desplaza el panel).
+    setVars();
+    const zt = Math.round(clampZ(dv.tZ));
+    if (zt !== map.getZoom()) { dv.ext = true; map.setZoom(zt); return; }
+    const p = map.latLngToContainerPoint([dv.lat, dv.lng]), c = map.getSize().divideBy(2), d = p.subtract(c);
+    if (Math.abs(d.x) > .2 || Math.abs(d.y) > .2) { map._rawPanBy(d); map.fire('move'); if (t - (dv.endAt || 0) > 350) { dv.endAt = t; map.fire('moveend'); } }
   };
-  map.on('zoomstart', () => { if (dv.active) dv.ext = true; });
-  map.on('zoomend', () => { if (!dv.active) return; dv.ext = false; if (Date.now() <= dv.manualUntil || dv.tZ === map.getZoom()) dv.tZ = map.getZoom(); });
+  map.on('zoomstart', () => { if (dv.active && dv.mode === 'css') dv.ext = true; });
+  map.on('zoomend', () => { if (!dv.active || dv.mode !== 'css') return; dv.ext = false; dv.tZ = map.getZoom(); });
+  // Gestos propios en la vista 3D: dos dedos acercan/alejan (continuo, siempre centrado en el vehículo), doble toque acerca, rueda del ratón.
+  const manual = () => { dv.manualUntil = Date.now() + 25000; };
+  const tdist = e => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+  let lastTap = 0;
+  function bindGestures(g) {
+    const o = { passive: false };
+    g.addEventListener('touchstart', e => {
+      if (e.touches.length === 2) { e.preventDefault(); pinch = { d: tdist(e) || 1, z: dv.z }; manual(); }
+      else if (e.touches.length === 1) { const n = Date.now(); if (n - lastTap < 300) { e.preventDefault(); dv.tZ = clampZ(Math.round(dv.tZ) + 1); manual(); lastTap = 0; } else lastTap = n; }
+    }, o);
+    g.addEventListener('touchmove', e => {
+      if (e.touches.length >= 2) { e.preventDefault(); if (!pinch) pinch = { d: tdist(e) || 1, z: dv.z };
+        dv.z = Math.max(12, Math.min(18.5, pinch.z + Math.log2(tdist(e) / pinch.d))); dv.tZ = dv.z + 1; manual(); }
+      else if (pinch) e.preventDefault();
+    }, o);
+    const end = e => { if (pinch && e.touches.length < 2) { pinch = null; dv.tZ = dv.z + 1; } };
+    g.addEventListener('touchend', end); g.addEventListener('touchcancel', end);
+    g.addEventListener('gesturestart', e => e.preventDefault(), o); g.addEventListener('gesturechange', e => e.preventDefault(), o);
+    g.addEventListener('wheel', e => { e.preventDefault(); dv.tZ = clampZ(dv.tZ - e.deltaY / 240); manual(); }, o);
+  }
+  const syncLeaflet = () => { if (dv.lat != null) map.setView([dv.lat, dv.lng], Math.round(Math.max(15, Math.min(18, dv.tZ))), { animate: false }); };
+  function cssStart() {
+    dv.mode = 'css'; dv.northUp = true; dv.tilt = 0; wrap.classList.add('drive-css'); wrap.classList.remove('drive-gl', 'gl-ready');
+    map.addLayer(driveTiles); map.removeLayer(tiles);
+    map.dragging.disable(); map.options.touchZoom = 'center'; map.options.scrollWheelZoom = 'center'; map.options.doubleClickZoom = 'center';
+    map.touchZoom.disable(); map.touchZoom.enable(); map.scrollWheelZoom.disable(); map.scrollWheelZoom.enable();
+    map.invalidateSize({ animate: false }); dv.ext = false; syncLeaflet();
+  }
+  function cssStop() {
+    wrap.classList.remove('drive-css'); map.addLayer(tiles); map.removeLayer(driveTiles);
+    map.options.touchZoom = true; map.options.scrollWheelZoom = true; map.options.doubleClickZoom = true;
+    map.dragging.enable(); map.touchZoom.disable(); map.touchZoom.enable(); map.scrollWheelZoom.disable(); map.scrollWheelZoom.enable();
+    map.invalidateSize({ animate: false });
+  }
+  const onResize = () => { if (dv.active && dv.mode === 'gl') { glv.resize(); dv.camKey = ''; } };
+  window.addEventListener('resize', onResize); window.addEventListener('orientationchange', () => setTimeout(onResize, 300));
   const drive = {
-    get active() { return dv.active; }, get tilt() { return dv.tilt; }, get northUp() { return dv.northUp; },
+    get active() { return dv.active; }, get tilt() { return dv.tilt; }, get northUp() { return dv.northUp; }, get mode() { return dv.mode; },
+    get gl() { return glv?.map; },
     start(u) {
       if (dv.active) return; dv.active = true;
-      const c = u || map.getCenter(); dv.hdg = u?.heading ?? 0; dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars();
-      wrap.classList.add('drive'); document.body.classList.add('drive-on');
-      // En 3D el mapa es ~4 veces más grande que la pantalla: con cuadros de alta resolución eran 4×4 = 16 veces más
-      // descargas y la parte lejana quedaba en blanco. Se usa una capa de cuadros normales, con menos reserva.
-      map.addLayer(driveTiles); map.removeLayer(tiles);
-      map.dragging.disable(); map.options.touchZoom = 'center'; map.options.scrollWheelZoom = 'center'; map.options.doubleClickZoom = 'center';
-      map.touchZoom.disable(); map.touchZoom.enable(); map.scrollWheelZoom.disable(); map.scrollWheelZoom.enable();
-      map.invalidateSize({ animate: false });
-      const z0 = Math.min(17, Math.max(map.getZoom(), 16));
-      map.setView([c.lat ?? c[0], c.lng ?? c[1]], z0, { animate: false });
-      dv.lat = dv.tLat = c.lat ?? c[0]; dv.lng = dv.tLng = c.lng ?? c[1]; dv.tZ = z0; dv.ext = false; dv.lean = 0; dv.last = 0;
+      const c = u || map.getCenter(), lat = c.lat ?? c[0], lng = c.lng ?? c[1];
+      dv.lat = lat; dv.lng = lng; seg.a = seg.b = [lat, lng]; seg.t0 = 0; seg.dur = 1;
+      dv.hdg = dv.b = hs.a = hs.b = (u?.heading != null && !isNaN(u.heading)) ? u.heading : 0; dv.northUp = false; dv.tilt = 45;
+      dv.tZ = 17.3; dv.z = 16.3; dv.p = 0; dv.lean = 0; dv.last = 0; dv.camKey = ''; dv.manualUntil = 0; lastRot = lastMe = lastTilt = null;
+      wrap.classList.add('drive'); document.body.classList.add('drive-on'); setVars();
       dv.raf = requestAnimationFrame(dvLoop);
+      const go = async () => {
+        glMod ||= await import('./drive-gl.js');
+        if (!glMod.hasWebGL()) throw new Error('sin webgl');
+        glv ||= glMod.createDriveGL({ wrap, scene, tiles: tileUrls, attr: DT.attr });
+        const first = !glv.ready; await glv.init({ lat, lng }); if (first) bindGestures(glv.el);
+      };
+      dv.mode = 'wait'; wrap.classList.add('drive-gl');
+      go().then(() => {
+        if (!dv.active) return;
+        dv.mode = 'gl'; glv.show(); dv.camKey = '';
+        requestAnimationFrame(() => wrap.classList.add('gl-ready'));
+      }).catch(e => { console.warn('Vista 3D no disponible, se usa la vista plana:', e?.message || e); if (dv.active) cssStart(); });
     },
     stop() {
-      if (!dv.active) return; dv.active = false; cancelAnimationFrame(dv.raf);
-      wrap.classList.remove('drive', 'drive-flat', 'drive-north', 'drive-moving'); document.body.classList.remove('drive-on');
-      map.addLayer(tiles); map.removeLayer(driveTiles);
-      ['--rot', '--tilt', '--unsq'].forEach(k => wrap.style.removeProperty(k)); el.style.transform = ''; lastPinRot = lastTilt = null; ['--rot'].forEach(k => ctlEl?.style.removeProperty(k)); ['--me', '--lean'].forEach(k => meEl?.style.removeProperty(k));
-      map.options.touchZoom = true; map.options.scrollWheelZoom = true; map.options.doubleClickZoom = true;
-      map.dragging.enable(); map.touchZoom.disable(); map.touchZoom.enable(); map.scrollWheelZoom.disable(); map.scrollWheelZoom.enable();
-      const c = map.getCenter(); map.invalidateSize({ animate: false }); map.setView(c, Math.min(map.getZoom(), 18), { animate: false });
+      if (!dv.active) return; dv.active = false; cancelAnimationFrame(dv.raf); pinch = null;
+      if (dv.mode === 'css') cssStop(); else glv?.hide();
+      wrap.classList.remove('drive', 'drive-gl', 'gl-ready', 'drive-flat', 'drive-north', 'drive-moving'); document.body.classList.remove('drive-on');
+      ['--rot', '--tilt', '--unsq'].forEach(k => wrap.style.removeProperty(k)); el.style.transform = ''; ctlEl?.style.removeProperty('--rot'); ['--me', '--lean'].forEach(k => meEl?.style.removeProperty(k));
+      dv.mode = null; map.invalidateSize({ animate: false }); syncLeaflet();
     },
     update(u) {
-      if (!dv.active || !u) return;
-      if (u.heading != null && !isNaN(u.heading)) dv.tHdg = dv.hdg + (((u.heading - dv.hdg + 540) % 360) - 180);
-      dv.tLat = u.lat; dv.tLng = u.lng;
-      const now = Date.now(); let sp = u.speed;
-      if ((sp == null || isNaN(sp)) && dv.pt) { const dm = Math.hypot((u.lat - dv.pt.lat) * 111320, (u.lng - dv.pt.lng) * 111320 * Math.cos(u.lat * Math.PI / 180)); sp = dm / Math.max(.3, (now - dv.pt.t) / 1000); }
-      dv.pt = { lat: u.lat, lng: u.lng, t: now };
+      if (!dv.active || !u || u.lat == null) return;
+      const now = performance.now(), iv = dv.fixAt ? now - dv.fixAt : 1000; dv.fixAt = now;
+      const jump = Math.hypot((u.lat - dv.lat) * 111320, (u.lng - dv.lng) * 111320 * Math.cos(u.lat * Math.PI / 180));
+      if (jump > 400 || dv.lat == null) { dv.lat = u.lat; dv.lng = u.lng; seg.a = seg.b = [u.lat, u.lng]; }
+      else { seg.a = [dv.lat, dv.lng]; seg.b = [u.lat, u.lng]; seg.t0 = now; seg.dur = Math.max(250, Math.min(2500, iv * 1.05)); }
+      if (u.heading != null && !isNaN(u.heading)) { hs.a = dv.hdg; hs.b = dv.hdg + angD(u.heading, dv.hdg); hs.t0 = now; hs.dur = Math.max(250, Math.min(1000, iv)); }
+      const t = Date.now(); let sp = u.speed;
+      if ((sp == null || isNaN(sp)) && dv.pt) { const dm = Math.hypot((u.lat - dv.pt.lat) * 111320, (u.lng - dv.pt.lng) * 111320 * Math.cos(u.lat * Math.PI / 180)); sp = dm / Math.max(.3, (t - dv.pt.t) / 1000); }
+      dv.pt = { lat: u.lat, lng: u.lng, t };
       const v = (sp ?? 0) * 3.6; dv.speed = v;
       wrap.classList.toggle('drive-moving', v > 2);
-      if (Date.now() > dv.manualUntil && !dv.ext) dv.tZ = v > 70 ? 15 : v > 45 ? 16 : 17;
+      if (t > dv.manualUntil && !pinch) dv.tZ = v > 70 ? 15.6 : v > 45 ? 16.4 : 17.3;
     },
-    zoom(dz) { dv.manualUntil = Date.now() + 25000; dv.tZ = Math.max(13, Math.min(19, Math.round(map.getZoom()) + dz)); },
-    toggleTilt() { dv.tilt = dv.tilt ? 0 : 45; dvVars(); return dv.tilt; },
-    toggleNorth() { dv.northUp = !dv.northUp; dv.rot = dv.northUp ? 0 : -dv.hdg; dvVars(); return dv.northUp; },
+    zoom(dz) { manual(); dv.tZ = clampZ(Math.round(dv.tZ) + dz); },
+    toggleTilt() { if (dv.mode === 'css') return dv.tilt; dv.tilt = dv.tilt ? 0 : 45; setVars(); return dv.tilt; },
+    toggleNorth() { if (dv.mode === 'css') return true; dv.northUp = !dv.northUp; setVars(); return dv.northUp; },
   };
   return {
     provider: 'leaflet', raw: map, drive,
@@ -131,7 +198,8 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
       const m = L.marker([lat, lng], { icon: L.divIcon({ className: '', html: pinHtml(cls + (pulse ? ' pulse' : ''), icon), iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28] }) });
       if (popup) m.bindPopup(popup, { maxWidth: 260 });
       if (onClick) m.on('click', onClick);
-      m.addTo(layers); return { remove: () => layers.removeLayer(m), open: () => m.openPopup() };
+      const f = reg({ t: 'pin', layer: true, lat, lng, popup, onClick, html: () => pinHtml(cls + (pulse ? ' pulse' : ''), icon) });
+      m.addTo(layers); return { remove: () => { layers.removeLayer(m); unreg(f); }, open: () => m.openPopup() };
     },
     // flow: 'route' (vía alterna con flechas que avanzan) | 'river' (agua que corre)
     addPolyline({ coords, status, popup, onClick, dashed, weight, flow }) {
@@ -142,9 +210,10 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
       const over = flow ? L.polyline(coords, { color: '#fff', weight: flow === 'river' ? Math.max(2, w * .35) : Math.max(3, w * .5), opacity: flow === 'river' ? .75 : 1, lineCap: 'round', interactive: false, className: `flow-${flow} ${status || ''}` }).addTo(layers) : null;
       if (popup) line.bindPopup(popup, { maxWidth: 260 });
       if (onClick) line.on('click', onClick);
-      return { remove: () => { layers.removeLayer(line); layers.removeLayer(halo); over && layers.removeLayer(over); }, open: () => line.openPopup(), bounds: () => line.getBounds(),
-        addClass: c => { line.getElement()?.classList.add(c); halo.getElement()?.classList.add(c + '-halo'); line.bringToFront(); over?.bringToFront(); },
-        removeClass: c => { line.getElement()?.classList.remove(c); halo.getElement()?.classList.remove(c + '-halo'); } };
+      const f = reg({ t: 'line', layer: true, coords, color, w, hw: w + (flow === 'river' ? 6 : 4), hop: flow === 'river' ? .55 : .9, op: .95, dash: dashed && !flow, flow, status, popup, onClick, cls: new Set() });
+      return { remove: () => { layers.removeLayer(line); layers.removeLayer(halo); over && layers.removeLayer(over); unreg(f); }, open: () => line.openPopup(), bounds: () => line.getBounds(),
+        addClass: c => { line.getElement()?.classList.add(c); halo.getElement()?.classList.add(c + '-halo'); line.bringToFront(); over?.bringToFront(); f.cls.add(c); touch(f); },
+        removeClass: c => { line.getElement()?.classList.remove(c); halo.getElement()?.classList.remove(c + '-halo'); f.cls.delete(c); touch(f); } };
     },
     addVertex({ lat, lng }) { const c = L.circleMarker([lat, lng], { radius: 6, color: '#fff', weight: 2, fillColor: '#0B6E99', fillOpacity: 1 }).addTo(layers); return { remove: () => layers.removeLayer(c) }; },
     // Zona de desborde (polígono animado)
@@ -152,7 +221,8 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
       const color = ZONE[severity] || ZONE.alta;
       const pg = L.polygon(coords, { color, weight: 2.5, fillColor: color, fillOpacity: .22, dashArray: '8 6', className: draft ? 'zone-draft' : `zone ${severity}` }).addTo(layers);
       if (popup) pg.bindPopup(popup, { maxWidth: 260 });
-      return { remove: () => layers.removeLayer(pg), open: () => pg.openPopup(), bounds: () => pg.getBounds() };
+      const f = draft ? null : reg({ t: 'poly', layer: true, coords, color, popup });
+      return { remove: () => { layers.removeLayer(pg); f && unreg(f); }, open: () => pg.openPopup(), bounds: () => pg.getBounds() };
     },
     // Capas subidas (GeoJSON). Se dibujan debajo de las alertas.
     addGeoJSON({ data, color = '#6B4DD6', name = '' }) {
@@ -163,24 +233,30 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
         onEachFeature: (f, l) => { const pr = f.properties || {}; const title = pr.name || pr.nombre || pr.NOMBRE || pr.Name || ''; const extra = Object.entries(pr).filter(([k, v]) => v != null && v !== '' && typeof v !== 'object' && !/^(name|nombre|stroke.*|fill.*|marker.*|styleUrl)$/i.test(k)).slice(0, 6).map(([k, v]) => `<br><span style="color:#5A6B7D">${k}:</span> ${String(v).slice(0, 80)}`).join(''); l.bindPopup(`<b>${title || name}</b>${title ? `<br><span style="color:#5A6B7D">${name}</span>` : ''}${extra}`, { maxWidth: 280 }); },
       });
       g.addTo(layers); g.bringToBack?.();
-      return { remove: () => layers.removeLayer(g), bounds: () => g.getBounds() };
+      const f = reg({ t: 'geo', layer: true, data, color });
+      return { remove: () => { layers.removeLayer(g); unreg(f); }, bounds: () => g.getBounds() };
     },
     // Desborde activo: agua expandiéndose (persiste hasta que el equipo lo retire)
     addOverflow({ lat, lng, popup, iconSvg = '' }) {
       const m = L.marker([lat, lng], { zIndexOffset: 800, icon: L.divIcon({ className: '', iconSize: [0, 0], popupAnchor: [0, -18],
         html: `<div class="ovf"><span class="pool"></span><span class="rip"></span><span class="rip"></span><span class="rip"></span><span class="drop d1"></span><span class="drop d2"></span><span class="drop d3"></span><span class="core">${iconSvg}</span></div>` }) });
       if (popup) m.bindPopup(popup, { maxWidth: 260 });
-      m.addTo(layers); return { remove: () => layers.removeLayer(m), open: () => m.openPopup() };
+      const f = reg({ t: 'html', layer: true, lat, lng, popup, z: 800, html: () => m.options.icon.options.html });
+      m.addTo(layers); return { remove: () => { layers.removeLayer(m); unreg(f); }, open: () => m.openPopup() };
     },
     // Efecto de sonar (anillos) en un punto de peligro
     addPulse({ lat, lng, tone = 'roja' }) {
       const m = L.marker([lat, lng], { interactive: false, zIndexOffset: 900, icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div class="sonar ${tone}"><i></i><i></i><i></i><b></b></div>` }) }).addTo(map);
-      return { remove: () => map.removeLayer(m), move: (p) => m.setLatLng([p.lat, p.lng]), setTone: t => { const el = m.getElement()?.querySelector('.sonar'); if (el) el.className = `sonar ${t}`; } };
+      const f = reg({ t: 'html', lat, lng, z: 900, tone, html: () => `<div class="sonar ${f.tone}"><i></i><i></i><i></i><b></b></div>` });
+      return { remove: () => { map.removeLayer(m); unreg(f); }, move: (p) => { m.setLatLng([p.lat, p.lng]); f.lat = p.lat; f.lng = p.lng; glv?.move(f); },
+        setTone: t => { const el = m.getElement()?.querySelector('.sonar'); if (el) el.className = `sonar ${t}`; f.tone = t; const g = f.el?.querySelector('.sonar'); if (g) g.className = `sonar ${t}`; } };
     },
     // Línea animada entre el usuario y el peligro
     addLink(a, b, tone = 'roja') {
       const l = L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { className: `threat-link ${tone}`, weight: 3, interactive: false }).addTo(map);
-      return { remove: () => map.removeLayer(l), set: (p, q, t) => { l.setLatLngs([[p.lat, p.lng], [q.lat, q.lng]]); const el = l.getElement(); if (el && t) el.setAttribute('class', `leaflet-interactive threat-link ${t}`); } };
+      const TC = t => t === 'roja' ? '#C62E2E' : '#E36A17';
+      const f = reg({ t: 'line', live: true, coords: [[a.lat, a.lng], [b.lat, b.lng]], color: TC(tone) });
+      return { remove: () => { map.removeLayer(l); unreg(f); }, set: (p, q, t) => { l.setLatLngs([[p.lat, p.lng], [q.lat, q.lng]]); const el = l.getElement(); if (el && t) el.setAttribute('class', `leaflet-interactive threat-link ${t}`); f.coords = [[p.lat, p.lng], [q.lat, q.lng]]; if (t) f.color = TC(t); touch(f); } };
     },
     // Marcador de ubicación del usuario (GPS) con flecha de rumbo y círculo de precisión
     addUser({ lat, lng }) {
@@ -192,7 +268,7 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
       };
     },
     onClick(cb) { clickCb = cb; },
-    clear() { layers.clearLayers(); },
+    clear() { layers.clearLayers(); for (const [k, f] of scene) if (f.layer) scene.delete(k); glv?.touch(); },
     setCenter(c, z) { map.setView([c.lat, c.lng], z || map.getZoom()); },
     fitBounds(coords, pad = {}) { if (coords.length) map.fitBounds(L.latLngBounds(coords), { paddingTopLeft: [40, (pad.top ?? 0) + 40], paddingBottomRight: [40, (pad.bottom ?? 0) + 40], maxZoom: 18 }); },
     panTo({ lat, lng }, z) { map.flyTo([lat, lng], z || Math.max(map.getZoom(), 15), { duration: .6 }); },

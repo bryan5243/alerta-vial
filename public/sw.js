@@ -2,12 +2,14 @@
 // - La página, estilos y scripts se guardan al instalar y se actualizan cada vez que hay red.
 // - Los cuadros del mapa (OpenStreetMap) que ya viste quedan guardados para verlos sin conexión.
 // - Los datos (calles, zonas, vías alternas) los guarda la propia página en el teléfono.
-const VER = 'av-shell-v102', TILES = 'av-tiles-v3', MAX_TILES = 1500;
-const SHELL = ['/', '/css/app.css', '/js/app.js', '/js/common.js', '/js/gps.js', '/js/nav.js', '/js/map-provider.js', '/js/weather-fx.js', '/js/guide.js', '/js/near-streets.js',
+const VER = 'av-shell-v103', TILES = 'av-tiles-v3', MAX_TILES = 1500;
+const SHELL = ['/', '/css/app.css', '/js/app.js', '/js/common.js', '/js/gps.js', '/js/nav.js', '/js/map-provider.js', '/js/weather-fx.js', '/js/guide.js', '/js/near-streets.js', '/js/drive-gl.js',
   '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css', '/img/emovtt-logo.png', '/img/emovtt-logo-blanco.png', '/manifest.webmanifest', '/img/icons/icon-192.png'];
 
+const LAZY = ['/vendor/maplibre/maplibre-gl.js', '/vendor/maplibre/maplibre-gl.css'];
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VER).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // La vista 3D (MapLibre, ~800 KB) se guarda después, sin retrasar la instalación, para que funcione sin señal.
+  e.waitUntil(caches.open(VER).then(c => c.addAll(SHELL).then(() => { c.addAll(LAZY).catch(() => {}); })).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VER && k !== TILES).map(k => caches.delete(k)))).then(() => self.clients.claim()));

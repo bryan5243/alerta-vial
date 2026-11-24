@@ -140,16 +140,23 @@
   .pin-w{width:30px;height:30px}
   .drive-horizon,.drive-me,.drive-ctl,.drive-attr{display:none}
   .mapwrap.drive{background:linear-gradient(#bcd3e6,#e7eef4 45%);overflow:clip;contain:paint}
-  .mapwrap.drive #map{inset:auto;left:50%;top:64%;width:210%;height:240%;transform-origin:50% 50%;will-change:transform;
-    transform:translate(-50%,-50%) perspective(820px) rotateX(var(--tilt,55deg)) rotateZ(var(--rot,0deg))}
-  .mapwrap.drive.drive-flat #map{top:60%}
+  /* Vista 3D con WebGL: el lienzo cubre todo el panel; el mapa normal queda oculto debajo */
+  .mapwrap>.drive-gl{position:absolute;inset:0;z-index:420;opacity:0;transition:opacity .25s ease;touch-action:none;-webkit-user-select:none;user-select:none;font:inherit}
+  .mapwrap>.drive-gl[hidden]{display:none}
+  .mapwrap>.drive-gl *{touch-action:none}
+  .mapwrap.drive.gl-ready>.drive-gl{opacity:1}
+  .mapwrap.drive.gl-ready #map{visibility:hidden}
+  .mapwrap.drive-gl:not(.gl-ready) .drive-me{opacity:0}
+  .drive-gl .dgl-pin{width:30px;height:30px;cursor:pointer} .drive-gl .dgl-0{width:0;height:0}
+  .drive-gl .maplibregl-popup-content{border-radius:14px;padding:12px 14px;font:inherit;font-size:.9rem;box-shadow:var(--shadow-2)}
+  /* Respaldo sin WebGL: mapa plano (norte arriba) con el vehículo un poco más abajo del centro */
+  .mapwrap.drive-css #map{inset:auto;left:0;top:0;width:100%;height:128%}
   .mapwrap.drive .leaflet-control-container,.mapwrap.drive .me,.mapwrap.drive .map-fallback{display:none}
-  .mapwrap.drive .leaflet-marker-icon .pin-w{transform:rotate(calc(var(--rot,0deg) * -1)) scaleY(var(--unsq,1.7));transform-origin:50% 100%}
-  .mapwrap.drive.drive-flat .leaflet-marker-icon .pin-w{transform:rotate(calc(var(--rot,0deg) * -1))}
-  .mapwrap.drive .drive-horizon{display:block;position:absolute;left:0;right:0;top:0;height:38%;z-index:430;pointer-events:none;background:linear-gradient(#bcd3e6 0%,#bcd3e6 26%,rgb(200 220 236/.75) 50%,rgb(214 228 240/.3) 75%,rgb(231 238 244/0) 100%)}
-  .mapwrap.drive.drive-flat .drive-horizon{display:none}
-  .mapwrap.drive .drive-me{display:block;position:absolute;left:50%;top:64%;width:30px;height:95px;margin:-66px 0 0 -15px;z-index:640;pointer-events:none;transform:rotate(var(--me,0deg));filter:drop-shadow(0 4px 6px rgb(0 0 0/.35))}
-  .mapwrap.drive.drive-flat .drive-me{top:60%}
+  .mapwrap.drive-css #drive-tilt{display:none}
+  /* Bruma suave arriba: da profundidad y ayuda a leer el aviso de giro (no tapa el mapa) */
+  .mapwrap.drive.gl-ready .drive-horizon{display:block;position:absolute;left:0;right:0;top:0;height:20%;z-index:430;pointer-events:none;background:linear-gradient(rgb(222 232 241/.7),rgb(222 232 241/0))}
+  .mapwrap.drive.drive-flat .drive-horizon{opacity:0}
+  .mapwrap.drive .drive-me{display:block;position:absolute;left:50%;top:64%;width:30px;height:95px;margin:-66px 0 0 -15px;z-index:640;pointer-events:none;transform:rotate(var(--me,0deg));filter:drop-shadow(0 4px 6px rgb(0 0 0/.35));transition:opacity .2s}
   .drive-me svg{width:100%;height:100%;overflow:visible}
   .drive-me .body{fill:#F5A623;stroke:#fff;stroke-width:3;stroke-linejoin:round}
   .drive-me .roof{fill:#1B2B8B}
