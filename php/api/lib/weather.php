@@ -191,7 +191,7 @@ function metar_parse(?array $awc, ?array $noaa, string $station): array {
 
 // ---------- OpenWeatherMap (opcional) ----------
 function owm_parse(array $res): array {
-  $base = ['id' => 'owm', 'kind' => 'observación', 'name' => 'OpenWeatherMap'];
+  $base = ['id' => 'owm', 'kind' => 'pronóstico', 'name' => 'OpenWeatherMap'];
   try {
     $j = http_json($res); $id = $j['weather'][0]['id'] ?? 800;
     $mm = r1($j['rain']['1h'] ?? (isset($j['rain']['3h']) ? $j['rain']['3h'] / 3 : 0));
@@ -354,7 +354,7 @@ function weather_fetch(array $cfg): array {
     if (!$station) $metar = null;
     elseif (isset($res['awc'])) { $metar = metar_parse($res['awc'], $res['noaa'] ?? null, $station); cache_put('metar', ['station' => $station, 'until' => $now + ($metar['ok'] ? AV_TTL : 180000), 'data' => $metar]); }
     else $metar = $mt['data'];
-    if (!$owmKey) $owm = ['id' => 'owm', 'kind' => 'observación', 'name' => 'OpenWeatherMap', 'ok' => false, 'disabled' => true, 'intensity' => 0, 'error' => 'sin API key'];
+    if (!$owmKey) $owm = ['id' => 'owm', 'kind' => 'pronóstico', 'name' => 'OpenWeatherMap', 'ok' => false, 'disabled' => true, 'intensity' => 0, 'error' => 'sin API key'];
     elseif (isset($res['owm'])) { $owm = owm_parse($res['owm']); cache_put('owm', ['key' => "$lat,$lng,$owmKey", 'at' => $now, 'data' => $owm]); } else $owm = $ow['data'];
     if (isset($res['wttr'])) { $wttr = wttr_parse($res['wttr']); cache_put('wttr', ['key' => "$lat,$lng", 'at' => $now, 'data' => $wttr]); } else $wttr = $wt['data'];
     if (isset($res['rvmaps'])) { $radar = radar_source($lat, $lng, $res['rvmaps']); cache_put('radarsrc', ['key' => "$lat,$lng", 'at' => $now, 'data' => $radar]); } else $radar = $rv['data'];
@@ -376,6 +376,8 @@ function combine(array $remote, array $extra = []): array {
   // Los modelos y wttr.in son pronósticos: el respaldo tiene que ser una observación real (radar o aeropuerto)
   $rOk = !empty($radar['ok']); $mOk = !empty($metar['ok']);
   $corro = ($rOk && (($radar['intensity'] ?? 0) > 0 || !empty($radar['near']))) || ($mOk && (($metar['intensity'] ?? 0) > 0 || !empty($metar['near'])));
+  // OpenWeatherMap: su "clima actual" es un modelo. Su lluvia solo cuenta si el radar o el aeropuerto la confirman.
+  if (!empty($owm['ok']) && !empty($owm['intensity']) && !$corro) $owm = array_merge($owm, ['intensity' => 0, 'rainNow' => 0, 'detail' => ($owm['detail'] ?? '') . ' · el radar y el aeropuerto no ven lluvia: no cuenta']);
   $dryPre = ($rOk && empty($radar['intensity']) && empty($radar['near'])) || ($mOk && empty($metar['intensity']) && empty($metar['near']));
   $obsDry = !$corro && $dryPre;
   $fcStrong = !$dryPre && !empty($wttr['ok']) && ($wttr['mm'] ?? 0) >= 2.5 && first_of($okM, fn($m) => ($m['rainNow'] ?? 0) >= 2.5);
