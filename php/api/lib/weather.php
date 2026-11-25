@@ -196,9 +196,14 @@ function owm_parse(array $res): array {
   try {
     $j = http_json($res); $id = $j['weather'][0]['id'] ?? 800;
     $mm = r1($j['rain']['1h'] ?? (isset($j['rain']['3h']) ? $j['rain']['3h'] / 3 : 0));
-    $codeInt = $id >= 200 && $id < 300 ? ([200 => 1, 230 => 1, 201 => 2, 231 => 2, 202 => 3, 232 => 3][$id] ?? 0) : (in_array($id, [501, 521, 511]) ? 2 : ($id >= 502 && $id < 600 ? 3 : 0));
-    $intensity = max($codeInt, mm_int($mm));
-    return $base + ['ok' => true, 'at' => gmdate('c', $j['dt'] ?? time()), 'intensity' => $intensity, 'storm' => ($id >= 200 && $id < 300) ?: null, 'rainNow' => max($mm, $intensity ? INT_MM[$intensity] / 2 : 0),
+    // Códigos OWM: 500 leve, 501 moderada, 502–504 fuerte, 511 moderada, 520 chubasco leve, 521 chubasco, 522 chubasco fuerte, 531 irregular.
+    // Antes 520/522/531 se tomaban todos como "fuerte". 500/520 (leve) sin milímetros no cuentan.
+    $codeInt = $id >= 200 && $id < 300 ? ([200 => 1, 230 => 1, 201 => 2, 231 => 2, 202 => 3, 232 => 3][$id] ?? 0)
+      : ([501 => 2, 502 => 3, 503 => 3, 504 => 3, 511 => 2, 521 => 2, 522 => 3, 531 => 2][$id] ?? 0);
+    // Si OWM informa los milímetros, mandan los milímetros; el código solo se usa si no hay medida, y como mucho moderada.
+    $hasMm = isset($j['rain']['1h']) || isset($j['rain']['3h']);
+    $intensity = $hasMm ? mm_int($mm) : min(2, $codeInt);
+    return $base + ['ok' => true, 'at' => gmdate('c', $j['dt'] ?? time()), 'intensity' => $intensity, 'storm' => ($id >= 200 && $id < 300) ?: null, 'rainNow' => $hasMm ? $mm : ($intensity ? INT_MM[$intensity] / 2 : 0),
       'temperature' => $j['main']['temp'] ?? null, 'cloudCover' => $j['clouds']['all'] ?? null, 'detail' => ($j['weather'][0]['description'] ?? '') . ($mm ? " · $mm mm/h" : '')];
   } catch (Throwable $e) { return $base + ['ok' => false, 'intensity' => 0, 'error' => $e->getMessage()]; }
 }
@@ -381,6 +386,11 @@ function combine(array $remote, array $extra = []): array {
   $corro = ($rOk && (($radar['intensity'] ?? 0) > 0 || !empty($radar['near']))) || ($mOk && (($metar['intensity'] ?? 0) > 0 || !empty($metar['near'])));
   // OpenWeatherMap: su "clima actual" es un modelo. Su lluvia solo cuenta si el radar o el aeropuerto la confirman.
   if (!empty($owm['ok']) && !empty($owm['intensity']) && !$corro) $owm = array_merge($owm, ['intensity' => 0, 'rainNow' => 0, 'detail' => ($owm['detail'] ?? '') . ' · el radar y el aeropuerto no ven lluvia: no cuenta']);
+  // Y aun confirmada, OWM no puede decir que llueve más fuerte que lo que ven el radar o el aeropuerto (si solo la ven cerca: leve).
+  elseif (!empty($owm['ok']) && !empty($owm['intensity'])) {
+    $obsMax = max($rOk ? ($radar['intensity'] ?? 0) : 0, $mOk ? ($metar['intensity'] ?? 0) : 0, 1);
+    if ($owm['intensity'] > $obsMax) $owm = array_merge($owm, ['intensity' => $obsMax, 'rainNow' => min($owm['rainNow'] ?? 0, INT_MM[$obsMax]), 'detail' => ($owm['detail'] ?? '') . ' · el radar/aeropuerto ven ' . mb_strtolower(INT_TXT[$obsMax]) . ': se cuenta así']);
+  }
   $dryPre = ($rOk && empty($radar['intensity']) && empty($radar['near'])) || ($mOk && empty($metar['intensity']) && empty($metar['near']));
   $obsDry = !$corro && $dryPre;
   $fcStrong = !$dryPre && !empty($wttr['ok']) && ($wttr['mm'] ?? 0) >= 2.5 && first_of($okM, fn($m) => ($m['rainNow'] ?? 0) >= 2.5);
