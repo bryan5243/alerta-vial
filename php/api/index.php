@@ -89,13 +89,29 @@ function compute_status(): array {
   $sev = !empty($flood['ok']) ? array_map(fn($g) => $g['severity'] ?? '', $flood['gauges'] ?? []) : [];
   $riverLevel = in_array('EXTREME', $sev, true) || $over >= 2 || ($over >= 1 && ($weather['intensity'] ?? 0) >= 2) ? 'roja'
     : (in_array('SEVERE', $sev, true) || $over >= 1 ? 'naranja' : (in_array('ABOVE_NORMAL', $sev, true) || $high >= 1 ? 'amarilla' : 'normal'));
-  $suggested = max_level(max_level(level_from_weather($weather, $cfg), $risk['level']), $riverLevel);
+  // El índice combinado no deja la roja con lluvia leve o sin lluvia: como mucho naranja
+  $riskLevel = $risk['level'] === 'roja' && ($weather['intensity'] ?? 0) < 2 ? 'naranja' : $risk['level'];
+  $wl = level_why($weather, $cfg);
+  $suggested = max_level(max_level($wl['level'], $riskLevel), $riverLevel);
+  $why = $suggested === 'normal' ? '' : (LV[$riverLevel] >= LV[$suggested] && $riverLevel !== 'normal'
+    ? ($over ? ($over === 1 ? 'un río desbordado' : "$over ríos desbordados") . ($sev ? ' (o aviso de Google Flood)' : '') : ($high ? 'río crecido' : 'aviso de crecida de Google Flood'))
+    : (LV[$wl['level']] >= LV[$suggested] ? $wl['why'] : "índice de riesgo {$risk['value']}/100 (lluvia, pronóstico, ríos y marea)"));
   // Durante una simulación el nivel publicado sigue al clima simulado, aunque la alerta esté en manual.
   // La simulación es solo una prueba: muestra el nivel simulado pero no deja huella (ni bajada gradual ni drenaje)
   $sim = (bool)sim_on();
   $effective = $sim ? $suggested : ($db['alert']['mode'] === 'manual' ? $db['alert']['level'] : step_down($suggested));
   $drain = $sim ? ['draining' => false, 'until' => null, 'reportOn' => LV[$effective] >= 2] : sync_auto_points($effective, $weather);
-  return compact('weather', 'suggested', 'effective', 'risk', 'tide', 'flood', 'drain');
+  // Bajada gradual: desde qué hora paró la lluvia intensa y a qué hora pasa a cada color
+  $now = now_ms(); $a = db_load()['alert'];
+  if (!$sim && ($weather['intensity'] ?? 0) >= 2 && $now - ($a['lastHeavyAt'] ?? 0) > 60000) { db_lock(); $d = &db(); $d['alert']['lastHeavyAt'] = $now; db_save(); $a['lastHeavyAt'] = $now; }
+  $stepdown = null;
+  if (!$sim && ($a['mode'] ?? 'auto') !== 'manual' && LV[$effective] > LV[$suggested]) {
+    $hold = ((float)($db['config']['weather']['stepDownMin'] ?? 0) ?: 45) * 60000; $names = array_keys(LV); $steps = [];
+    $t = max($now, ($a['autoStepAt'] ?? $now) + $hold);
+    for ($l = LV[$effective] - 1; $l >= LV[$suggested]; $l--) { $steps[] = ['level' => $names[$l], 'at' => gmdate('Y-m-d\TH:i:s\Z', (int)($t / 1000))]; $t += $hold; }
+    $stepdown = ['heavyEndAt' => !empty($a['lastHeavyAt']) && ($weather['intensity'] ?? 0) < 2 ? gmdate('Y-m-d\TH:i:s\Z', (int)($a['lastHeavyAt'] / 1000)) : null, 'steps' => $steps, 'everyMin' => $hold / 60000];
+  }
+  return compact('weather', 'suggested', 'effective', 'risk', 'tide', 'flood', 'drain', 'why', 'stepdown');
 }
 // Al dejar de llover el semáforo no cae de golpe: baja un color cada cierto tiempo (por defecto 45 min),
 // porque el agua tarda en irse. Si vuelve a llover, sube de inmediato.
@@ -189,7 +205,7 @@ try {
     $act = fn($x) => ($x['active'] ?? true) !== false;
     out(['config' => ['city' => $db['config']['city'], 'center' => $db['config']['center'], 'zoom' => $db['config']['zoom'], 'mapProvider' => $db['config']['mapProvider'], 'baseStyle' => $db['config']['baseStyle'] ?? 'osm', 'googleMapsKey' => $db['config']['googleMapsKey'] ?? '', 'mapVersion' => $db['config']['mapVersion'] ?? 0,
         'rainThresholdMm' => $db['config']['weather']['rainThresholdMm'], 'gps' => gps_cfg($db), 'levelMessages' => level_msgs($db), 'features' => $f, 'noCar' => nocar_cfg($db)],
-      'alert' => array_merge($db['alert'], ['effective' => $effective, 'suggested' => $st['suggested'], 'draining' => (bool)$drain['draining'], 'drainUntil' => $drain['until']]),
+      'alert' => array_merge($db['alert'], ['effective' => $effective, 'suggested' => $st['suggested'], 'why' => $st['why'], 'stepdown' => $st['stepdown'], 'draining' => (bool)$drain['draining'], 'drainUntil' => $drain['until']]),
       'weather' => weather_out($st['weather']), 'risk' => $st['risk'], 'tide' => $st['tide'], 'flood' => $st['flood'],
       'layers' => $on('layers', array_filter($db['layers'] ?? [], $act)), 'rivers' => $on('rivers', array_filter($db['rivers'] ?? [], $act)), 'zones' => $on('rivers', array_filter($db['zones'] ?? [], $act)),
       'points' => $on('points', array_map(fn($p) => array_merge($p, ['active' => true]), array_filter($db['points'], $pointOn))),
@@ -292,7 +308,7 @@ function admin_routes(string $method, array $seg): void {
     unset($db['push']);
     $dpts = LV[$eff] < 2 ? count(array_filter($db['points'], fn($p) => !empty($p['auto']) && (($p['source'] ?? '') === 'reporte' ? $drain['reportOn'] : $drain['draining']))) : 0;
     out(array_merge($db, ['pushCount' => push_count(), 'config' => array_merge($db['config'], ['gps' => gps_cfg($db), 'levelMessages' => level_msgs($db), 'features' => features_cfg($db), 'noCar' => nocar_cfg($db)]),
-      'alert' => array_merge($db['alert'], ['effective' => $eff, 'suggested' => $st['suggested'], 'draining' => $drain['draining'] || (LV[$eff] < 2 && $drain['reportOn']), 'drainUntil' => $drain['until'], 'drainPoints' => $dpts]), 'weather' => weather_out($st['weather']), 'risk' => $st['risk'], 'tide' => $st['tide'],
+      'alert' => array_merge($db['alert'], ['effective' => $eff, 'suggested' => $st['suggested'], 'why' => $st['why'], 'stepdown' => $st['stepdown'], 'draining' => $drain['draining'] || (LV[$eff] < 2 && $drain['reportOn']), 'drainUntil' => $drain['until'], 'drainPoints' => $dpts]), 'weather' => weather_out($st['weather']), 'risk' => $st['risk'], 'tide' => $st['tide'],
       'reports' => array_map('rep_out', $db['reports'] ?? []), 'layers' => $db['layers'] ?? [], 'rivers' => $db['rivers'] ?? [], 'zones' => $db['zones'] ?? []]));
   }
   if ($r === 'config' && $method === 'PUT') {

@@ -652,14 +652,22 @@ function risk_index(array $w, array $cfg, $flood, $tide, array $rivers): array {
   return ['value' => $value, 'parts' => $parts, 'level' => $value >= 70 ? 'roja' : ($value >= 50 ? 'naranja' : ($value >= 30 ? 'amarilla' : 'normal'))];
 }
 // Nivel sugerido por el clima. Los acumulados (3, 6 y 12 h) y las horas seguidas de lluvia solo cuentan mientras sigue lloviendo.
-function level_from_weather(array $w, array $cfg): string {
-  if (empty($w['ok'])) return 'normal';
-  $t = (float)($cfg['rainThresholdMm'] ?? 2.4) ?: 2.4; $t3 = (float)($cfg['rainThresholdMm3h'] ?? 7) ?: 7; $i = $w['intensity'] ?? 0;
-  $p3 = $w['rainPast3h'] ?? 0; $p6 = $w['rainPast6h'] ?? 0; $p12 = $w['rainPast12h'] ?? 0; $wet = $w['wetHours'] ?? 0; $raining = $i >= 1; $now = $w['rainNow'] ?? 0;
-  if (!$raining) return (($w['probNext3h'] ?? 0) >= 80 && ($w['rainNext3h'] ?? 0) >= $t / 2) ? 'amarilla' : 'normal';
-  if ($now >= $t * 3 || $p3 >= $t3 * 2 || $p6 >= $t3 * 3 || $p12 >= $t3 * 5 || ($i >= 4 && $now >= $t)) return 'roja';
-  if ($now >= $t || $p3 >= $t3 || $p6 >= $t3 * 1.6 || $p12 >= $t3 * 2.7 || $i >= 3 || ($wet >= 3 && $p6 >= $t3 * 0.9) || ($p3 >= $t3 * 0.6 && $now >= $t / 2)) return 'naranja';
-  return 'amarilla';
+function level_from_weather(array $w, array $cfg): string { return level_why($w, $cfg)['level']; }
+// El mismo cálculo con el motivo en palabras. Con lluvia leve ya no se queda en roja por lo que cayó antes: baja a naranja.
+function mm_txt(float $x): string { return str_replace('.', ',', (string)(round($x * 10) / 10)) . ' mm'; }
+function level_why(array $w, array $cfg): array {
+  if (empty($w['ok'])) return ['level' => 'normal', 'why' => ''];
+  $t = (float)($cfg['rainThresholdMm'] ?? 2.4) ?: 2.4; $t3 = (float)($cfg['rainThresholdMm3h'] ?? 7) ?: 7; $i = min(3, (int)($w['intensity'] ?? 0));
+  $p3 = $w['rainPast3h'] ?? 0; $p6 = $w['rainPast6h'] ?? 0; $p12 = $w['rainPast12h'] ?? 0; $wet = $w['wetHours'] ?? 0; $now = $w['rainNow'] ?? 0;
+  $it = ['', 'lluvia leve', 'lluvia moderada', 'lluvia fuerte'][$i];
+  if (!$i) return (($w['probNext3h'] ?? 0) >= 80 && ($w['rainNext3h'] ?? 0) >= $t / 2) ? ['level' => 'amarilla', 'why' => "lluvia casi segura en las próximas 3 h ({$w['probNext3h']} %)"] : ['level' => 'normal', 'why' => ''];
+  if ($now >= $t * 3) return ['level' => 'roja', 'why' => "$it de " . mm_txt($now) . '/h'];
+  if ($i >= 2 && ($p3 >= $t3 * 2 || $p6 >= $t3 * 3 || $p12 >= $t3 * 5)) { [$v, $h] = $p3 >= $t3 * 2 ? [$p3, 3] : ($p6 >= $t3 * 3 ? [$p6, 6] : [$p12, 12]); return ['level' => 'roja', 'why' => "$it con " . mm_txt($v) . " acumulados en $h h"]; }
+  if ($now >= $t || $i >= 3) return ['level' => 'naranja', 'why' => "$it de " . mm_txt($now) . '/h'];
+  if ($p3 >= $t3 || $p6 >= $t3 * 1.6 || $p12 >= $t3 * 2.7) { [$v, $h] = $p3 >= $t3 ? [$p3, 3] : ($p6 >= $t3 * 1.6 ? [$p6, 6] : [$p12, 12]); return ['level' => 'naranja', 'why' => "sigue la $it con " . mm_txt($v) . " acumulados en $h h"]; }
+  if ($wet >= 3 && $p6 >= $t3 * 0.9) return ['level' => 'naranja', 'why' => "$wet h seguidas lloviendo (" . mm_txt($p6) . ' en 6 h)'];
+  if ($p3 >= $t3 * 0.6 && $now >= $t / 2) return ['level' => 'naranja', 'why' => "$it con " . mm_txt($p3) . ' en las últimas 3 h'];
+  return ['level' => 'amarilla', 'why' => "$it en curso"];
 }
 
 // ---------- Pronóstico por días (ayer, hoy y 2 días) ----------
