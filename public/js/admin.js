@@ -166,7 +166,7 @@ const SIM = {
 };
 const WCODES = { 0: 'Sin lluvia (despejado)', 51: 'Llovizna', 61: 'Lluvia leve', 63: 'Lluvia moderada', 65: 'Lluvia fuerte', 80: 'Chubascos leves', 82: 'Chubascos fuertes', 95: 'Tormenta eléctrica' };
 // "Está lloviendo ahora": el equipo confirma la lluvia que ve en la calle
-const OBS = [[1, 'Leve', 'Llovizna o lluvia suave'], [2, 'Moderada', 'Lluvia constante'], [3, 'Fuerte', 'Aguacero, calles con agua'], [4, 'Tormenta', 'Con truenos y rayos']];
+const OBS = [[1, 'Leve', 'Llovizna o lluvia suave'], [2, 'Moderada', 'Lluvia constante'], [3, 'Fuerte', 'Aguacero, calles con agua'], [4, 'Tormenta', 'Truenos y rayos con lluvia (el semáforo la cuenta como moderada)']];
 function obsCard(a) {
   const o = a.observed && new Date(a.observed.until) > Date.now() ? a.observed : null;
   const until = o ? wxTime(o.until) : '';
