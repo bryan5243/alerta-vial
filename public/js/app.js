@@ -150,7 +150,7 @@ function renderWx(w) {
   const i = w.intensity || 0, ic = skyIcon(w);
   chip.hidden = false; chip.className = `wx-chip i${i} sky-${skyOf(w)}`;
   const extra = w.rainNow > 0 ? `<span>${dec(w.rainNow)} mm/h</span>` : w.probNext3h >= 80 ? `<span>${w.probNext3h}% en 3 h</span>` : '';
-  const ol = !i && ['atencion', 'probable'].includes(w.outlook?.level) ? `<span class="ol-tag ol-${w.outlook.level}">${w.outlook.level === 'probable' ? 'Lluvia probable' : 'Podría llover'}${w.outlook.from ? ` ${w.outlook.from.slice(11, 16)}` : ''}</span>` : '';
+  const ol = !i && ['atencion', 'probable'].includes(w.outlook?.level) ? `<span class="ol-tag ol-${w.outlook.level}">${w.outlook.level === 'probable' ? 'Lluvia probable' : 'Podría llover'}${w.outlook.from && !w.outlook.fromNow ? ` ${w.outlook.from.slice(11, 16)}` : ''}</span>` : '';
   const th = !i && ['moderada', 'alta'].includes(w.thunder?.level) ? `<span class="ol-tag ol-probable">Tormenta ${w.thunder.prob} %</span>` : '';
   const uv = ol || th || (!i && uvOn(w) && w.sun.uvIndex >= 3 ? `<span class="uv-tag uv-${w.sun.uv.key}">UV ${dec(w.sun.uvIndex)}</span>` : '');
   // aviso una sola vez cuando la lluvia pasa a "probable"

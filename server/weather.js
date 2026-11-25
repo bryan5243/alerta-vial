@@ -528,7 +528,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
   if (intensity !== w.intensity) Object.assign(w, { intensity, raining: intensity > 0, condition: intensity ? INT_TXT[intensity] : w.condition });
   // Sin lluvia: de día y despejado es "Soleado"; de noche, "Noche despejada"
   if (!w.intensity && w.sun && ['Despejado', 'Parcialmente nublado'].includes(w.condition) && (w.condition === 'Despejado' || w.sun.sky === 'soleado')) w.condition = w.sun.sky === 'noche' ? 'Noche despejada' : 'Soleado';
-  w.outlook = outlookOf(w, { okM, metar, need, base });
+  w.outlook = outlookOf(w, { okM, metar, need, base, radarDry });
   w.thunder = thunderOf(w, { okM, metar, radar, wttr, lightning, extra });
   // Tormenta eléctrica en curso: se muestra (ícono, rayos, aviso), pero el semáforo de inundación sigue la lluvia que cae.
   w.storm = !!w.thunder.now;
@@ -583,9 +583,12 @@ export function dayParts(hourly) {
 // probabilidad llega a NOTICE_PROB (80 %): con menos, el aviso se cae a "calma" aunque haya otras señales,
 // porque avisar de una lluvia que no llega confunde a la gente. Las demás señales solo explican el aviso.
 export const NOTICE_PROB = 80;
-function outlookOf(w, { okM, metar, need, base }) {
+function outlookOf(w, { okM, metar, need, base, radarDry }) {
   const reasons = []; let score = 0;
-  const peak = Math.max(0, ...(w.hourly || []).slice(0, 7).map(h => h.probability ?? 0));
+  // Para la hora en curso manda el radar: si no ve nada sobre la ciudad ni cerca, el pronóstico de "esta hora" ya falló
+  // (decía "Lluvia probable 11:00" a las 11:42 sin una gota). Se miran las horas siguientes.
+  const hrs = (w.hourly || []).slice(radarDry ? 1 : 0, 7);
+  const peak = Math.max(0, ...hrs.map(h => h.probability ?? 0));
   if (peak >= NOTICE_PROB) { score += 3; reasons.push(`probabilidad de lluvia de ${peak} % en las próximas 6 h`); }
   const wet = okM.filter(m => (m.rainNext3h || 0) >= MIN_MM);
   if (wet.length) {
@@ -599,7 +602,7 @@ function outlookOf(w, { okM, metar, need, base }) {
   else if (metar?.ok && metar.near) { score += 2; reasons.push('el aeropuerto ve lluvia en los alrededores'); }
   else if (metar?.ok && metar.cb) { score += 1; reasons.push('el aeropuerto ve nubes de tormenta (cumulonimbos) cerca'); }
   // ¿desde qué hora? la primera hora con probabilidad alta o lluvia prevista
-  const from = (w.hourly || []).slice(0, 7).find(h => (h.probability ?? 0) >= NOTICE_PROB)?.time || null;
+  const from = hrs.find(h => (h.probability ?? 0) >= NOTICE_PROB)?.time || null;
   // Si esa hora es la que está corriendo (p. ej. son las 09:16 y la hora es 09:00), no se dice "desde las 09:00": ya empezó
   const fromNow = !!from && from === w.hourly[0]?.time;
   const level = w.intensity > 0 ? 'lloviendo' : peak >= NOTICE_PROB ? 'probable' : 'calma';
