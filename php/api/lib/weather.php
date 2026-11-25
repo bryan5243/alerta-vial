@@ -422,6 +422,9 @@ function combine(array $remote, array $extra = []): array {
   $modelSrc = ['id' => 'modelos', 'kind' => 'pronóstico', 'name' => "$provs · $n de " . count($models) . ' modelos', 'ok' => $n > 0, 'at' => $base['observedAt'] ?? null,
     'intensity' => $mInt, 'rainNow' => $mRain, 'detail' => $detail, 'error' => $okM ? null : ($models[0]['error'] ?? null),
     'models' => array_map(fn($m) => ['name' => $m['name'], 'ok' => $m['ok'], 'rainNow' => $m['rainNow'] ?? 0, 'intensity' => $m['intensity'] ?? 0, 'error' => $m['error'] ?? null, 'stale' => !empty($m['stale']) ? $m['staleMin'] : null], $models)];
+  // El radar no ve lluvia sobre la ciudad ni cerca y ninguna otra observación la ve: los modelos (pronóstico) solos no dicen "está lloviendo ahora"
+  if ($radarDry && !$corro && $modelSrc['intensity'] > 0)
+    $modelSrc = array_merge($modelSrc, ['intensity' => 0, 'rainNow' => 0, 'detail' => $modelSrc['detail'] . ' · el radar no ve lluvia sobre la ciudad ni cerca: no cuenta como lluvia ahora']);
   $sources = array_values(array_filter(array_merge([$modelSrc, $metar, $owm, $radar, $wttr, $lightning], $extra)));
   // El equipo marcó "no llueve" en el centro: ni los pronósticos ni el aeropuerto (a unos 4 km) ni el radar encienden "lloviendo" mientras dure la marca.
   if (first_of($extra, fn($x) => ($x['id'] ?? '') === 'equipo' && !empty($x['ok']) && !empty($x['dry'])))
