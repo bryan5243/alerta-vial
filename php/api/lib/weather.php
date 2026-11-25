@@ -520,12 +520,14 @@ function outlook_of(array $w, array $okM, $metar, int $need): array {
   elseif (!empty($metar['ok']) && !empty($metar['near'])) { $score += 2; $reasons[] = 'el aeropuerto ve lluvia en los alrededores'; }
   elseif (!empty($metar['ok']) && !empty($metar['cb'])) { $score += 1; $reasons[] = 'el aeropuerto ve nubes de tormenta (cumulonimbos) cerca'; }
   $from = null; foreach (array_slice($w['hourly'] ?? [], 0, 7) as $h) if (($h['probability'] ?? 0) >= NOTICE_PROB) { $from = $h['time']; break; }
+  // Si esa hora es la que está corriendo (p. ej. son las 09:16 y la hora es 09:00), no se dice "desde las 09:00": ya empezó
+  $fromNow = $from !== null && $from === ($w['hourly'][0]['time'] ?? null);
   $level = $w['intensity'] > 0 ? 'lloviendo' : ($peak >= NOTICE_PROB ? 'probable' : 'calma');
   $title = ['lloviendo' => 'Está lloviendo', 'probable' => 'Lluvia probable en las próximas horas', 'calma' => 'Sin lluvia a la vista'][$level];
   $text = $level === 'lloviendo' ? 'Revisa las calles inundadas y las vías alternas antes de salir.'
     : ($level === 'calma' ? 'No hay una probabilidad alta de lluvia (' . NOTICE_PROB . ' % o más) en las próximas 6 horas.'
-    : 'Ahora no llueve, pero es probable un aguacero' . ($from ? ' desde las ' . substr($from, 11, 5) . ', aproximadamente' : '') . '. Lleva paraguas y evita las calles que suelen inundarse.');
-  return ['level' => $level, 'score' => $score, 'title' => $title, 'text' => $text, 'reasons' => $level === 'calma' ? [] : $reasons, 'from' => $from, 'peak' => $peak, 'min' => NOTICE_PROB];
+    : 'Ahora no llueve, pero es probable un aguacero' . ($fromNow ? ' en cualquier momento de esta hora' : ($from ? ' desde las ' . substr($from, 11, 5) . ', aproximadamente' : '')) . '. Lleva paraguas y evita las calles que suelen inundarse.');
+  return ['level' => $level, 'score' => $score, 'title' => $title, 'text' => $text, 'reasons' => $level === 'calma' ? [] : $reasons, 'from' => $from, 'fromNow' => $fromNow, 'peak' => $peak, 'min' => NOTICE_PROB];
 }
 
 // Probabilidad de tormenta eléctrica en las próximas 6 h (modelos, CAPE, aeropuerto, radar, wttr.in y el equipo)
