@@ -166,23 +166,24 @@ const SIM = {
 };
 const WCODES = { 0: 'Sin lluvia (despejado)', 51: 'Llovizna', 61: 'Lluvia leve', 63: 'Lluvia moderada', 65: 'Lluvia fuerte', 80: 'Chubascos leves', 82: 'Chubascos fuertes', 95: 'Tormenta eléctrica' };
 // "Está lloviendo ahora": el equipo confirma la lluvia que ve en la calle
-const OBS = [[1, 'Leve', 'Llovizna o lluvia suave'], [2, 'Moderada', 'Lluvia constante'], [3, 'Fuerte', 'Aguacero, calles con agua'], [4, 'Tormenta', 'Truenos y rayos con lluvia (el semáforo la cuenta como moderada)']];
+const OBS = [[0, 'No llueve', 'Seco en el centro: los pronósticos no cuentan'], [1, 'Leve', 'Llovizna o lluvia suave'], [2, 'Moderada', 'Lluvia constante'], [3, 'Fuerte', 'Aguacero, calles con agua'], [4, 'Tormenta', 'Truenos y rayos con lluvia (el semáforo la cuenta como moderada)']];
 function obsCard(a) {
   const o = a.observed && new Date(a.observed.until) > Date.now() ? a.observed : null;
   const until = o ? wxTime(o.until) : '';
-  return `<div class="card obs-card${o ? ' on' : ''}">
-    <div class="section-head"><h3>${ICON.cloud} ¿Está lloviendo ahora en Santa Rosa?</h3>${o ? `<span class="chip naranja">Marcado: ${OBS[o.intensity - 1][1]} · hasta ${until}</span>` : ''}</div>
-    <p class="small muted" style="margin:6px 0 12px">Si llueve y el sistema no lo detecta, márcalo aquí. Cuenta como una fuente más del clima (la del equipo EMOVTT) y el semáforo sube solo según la intensidad; se apaga sola al terminar el tiempo. No dice "simulación": es lluvia real.</p>
-    <div class="obs-opts">${OBS.map(([i, l, d]) => `<button type="button" class="obs-opt${o?.intensity === i ? ' on' : ''}" data-obs="${i}"><b>${l}</b><small>${d}</small></button>`).join('')}</div>
+  const name = o ? (OBS.find(x => x[0] === (o.dry ? 0 : o.intensity)) || OBS[1])[1] : '';
+  return `<div class="card obs-card${o ? ' on' : ''}${o?.dry ? ' dry' : ''}">
+    <div class="section-head"><h3>${ICON.cloud} ¿Está lloviendo ahora en Santa Rosa?</h3>${o ? `<span class="chip ${o.dry ? 'normal' : 'naranja'}">Marcado: ${name} · hasta ${until}</span>` : ''}</div>
+    <p class="small muted" style="margin:6px 0 12px">Si llueve y el sistema no lo detecta, márcalo aquí: el semáforo sube solo según la intensidad. Si las fuentes marcan lluvia pero en el centro está seco, toca <b>No llueve</b>: los pronósticos y las estaciones de afuera dejan de contar como "lloviendo" mientras dure la marca. Se apaga sola al terminar el tiempo.</p>
+    <div class="obs-opts">${OBS.map(([i, l, d]) => `<button type="button" class="obs-opt${o && (o.dry ? i === 0 : o.intensity === i) ? ' on' : ''}" data-obs="${i}"><b>${l}</b><small>${d}</small></button>`).join('')}</div>
     <div class="sim-foot"><label class="small" for="obs-min">Durante</label><select id="obs-min">${[[60, '1 hora'], [120, '2 horas'], [180, '3 horas'], [360, '6 horas']].map(([m, l]) => `<option value="${m}" ${m === 120 ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      ${o ? `<button type="button" class="btn ghost" id="obs-off">Ya no llueve</button>` : ''}</div>
+      ${o ? `<button type="button" class="btn ghost" id="obs-off">${o.dry ? 'Quitar la marca' : 'Ya no llueve'}</button>` : ''}</div>
   </div>`;
 }
 // Pruebas encendidas (simulación, lluvia marcada, modo manual, nivel arrastrado): un solo botón las apaga todas
 function testsCard(a, w) {
   const on = [];
   if (w.simulated) on.push('simulación de lluvia');
-  if (a.observed && new Date(a.observed.until) > Date.now()) on.push('lluvia marcada por el equipo');
+  if (a.observed && new Date(a.observed.until) > Date.now()) on.push(a.observed.dry ? '"no llueve" marcado por el equipo' : 'lluvia marcada por el equipo');
   if (a.mode === 'manual') on.push(`modo manual (${LEVELS[a.level]})`);
   if (!on.length && a.effective !== a.suggested) on.push(`nivel ${LEVELS[a.effective]} que baja de a poco (el clima ahora sugiere ${LEVELS[a.suggested]})`);
   if (!on.length) return '';
@@ -213,7 +214,7 @@ function bindObs() {
     try { const r = await api('/api/admin/drain-end', { method: 'POST' }); toast(r.turnedOff ? `Listo: ${r.turnedOff} punto(s) apagados` : 'Listo: drenaje terminado', 'ok'); } catch {}
     refresh();
   };
-  q('[data-obs]').forEach(b => b.onclick = async () => { await api('/api/admin/observed', { method: 'PUT', body: { intensity: +b.dataset.obs, minutes: +id('obs-min').value } }); toast(`Lluvia ${OBS[b.dataset.obs - 1][1].toLowerCase()} marcada por el equipo`, 'ok'); refresh(); });
+  q('[data-obs]').forEach(b => b.onclick = async () => { await api('/api/admin/observed', { method: 'PUT', body: +b.dataset.obs ? { intensity: +b.dataset.obs, minutes: +id('obs-min').value } : { dry: true, minutes: +id('obs-min').value } }); toast(+b.dataset.obs ? `Lluvia ${OBS[+b.dataset.obs][1].toLowerCase()} marcada por el equipo` : 'Marcado: no llueve en el centro', 'ok'); refresh(); });
   const off = id('obs-off'); if (off) off.onclick = async () => { await api('/api/admin/observed', { method: 'PUT', body: { intensity: 0 } }); toast('Listo: el clima vuelve a las fuentes en línea', 'ok'); refresh(); };
 }
 // Resumen de un vistazo al entrar al panel: cada ficha lleva a su sección

@@ -284,7 +284,7 @@ app.post('/api/admin/drain-end', auth, async (req, res) => {
 app.post('/api/admin/reset-real', auth, async (req, res) => {
   const db = load(), a = db.alert, done = [];
   if (simOn()) done.push('simulación de lluvia'); simulation = null;
-  if (a.observed) { done.push('lluvia marcada por el equipo'); delete a.observed; }
+  if (a.observed) { done.push(a.observed.dry ? '"no llueve" marcado por el equipo' : 'lluvia marcada por el equipo'); delete a.observed; }
   if (a.mode === 'manual') { done.push('modo manual'); a.mode = 'auto'; }
   delete a.autoLevel; a.autoStepAt = Date.now(); save();
   const st = await computeStatus();
@@ -344,9 +344,9 @@ app.post('/api/admin/restore', auth, (req, res) => {
 // Se guarda en la base (sobrevive a reinicios) y vence sola.
 app.put('/api/admin/observed', auth, (req, res) => {
   const db = load(), b = req.body || {};
-  const i = Math.round(+b.intensity || 0);
-  if (!i) delete db.alert.observed;
-  else db.alert.observed = { intensity: Math.max(1, Math.min(4, i)), at: new Date().toISOString(), until: new Date(Date.now() + Math.max(15, Math.min(720, +b.minutes || 120)) * 60000).toISOString() };
+  const i = Math.round(+b.intensity || 0), dry = !!b.dry;
+  if (!i && !dry) delete db.alert.observed;
+  else db.alert.observed = { intensity: dry ? 0 : Math.max(1, Math.min(4, i)), ...(dry ? { dry: true } : {}), at: new Date().toISOString(), until: new Date(Date.now() + Math.max(15, Math.min(720, +b.minutes || 120)) * 60000).toISOString() };
   save();
   res.json(db.alert.observed || { intensity: 0 }); setTimeout(pushTick, 300);
 });
