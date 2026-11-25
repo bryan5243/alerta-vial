@@ -506,6 +506,9 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
   };
   // Si una fuente confirma que está lloviendo, la hora en curso es 100 % (ya no es pronóstico)
   if (intensity > 0 && w.hourly.length) w.hourly[0] = rainingNow(w.hourly[0], w.rainNow);
+  // No llueve y el radar no ve nada sobre la ciudad ni cerca: la columna "Ahora" muestra lo observado, no el pronóstico
+  // (marcaba 100 % y 2,3 mm con el cielo seco). Queda una probabilidad baja por si se forma algo dentro de la hora.
+  else if (radarDry && w.hourly.length) w.hourly[0] = { ...w.hourly[0], probability: Math.min(w.hourly[0].probability, NOW_DRY_PROB), precipitation: 0, estimated: undefined, observed: true };
   // Probabilidad de lluvia: la de la hora en curso y las 3 siguientes, y la mayor de las próximas 24 h
   if (w.hourly.length) {
     w.probNext3h = Math.max(...w.hourly.slice(0, 4).map(h => h.probability));
@@ -543,6 +546,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
 // Así nunca queda en 0 % por falta de dato cuando varios modelos sí ven lluvia. Con 1 o 2 modelos se estima por los milímetros.
 const P_MM = [[5, 90], [2.5, 80], [1, 70], [0.5, 55], [0.2, 40], [0.1, 25]];
 const WET_MM = 0.1; // desde 0,1 mm el modelo "ve lluvia" en esa hora
+const FC_MAX_PROB = 90, NOW_DRY_PROB = 20;
 export function mergeHourly(okM) {
   const withH = okM.filter(m => m.hourly?.length);
   if (!withH.length) return [];
@@ -559,7 +563,8 @@ export function mergeHourly(okM) {
     const p = Math.max(pApi ?? 0, pModels);
     // Milímetros de la hora: si al menos un tercio de los modelos ve lluvia, el promedio de esos ("si llueve, cae esto"); si no, el promedio de todos
     const avg = arr => (arr.length ? arr.reduce((a, v) => a + v, 0) / arr.length : 0), wetMm = mm.filter(v => v >= WET_MM);
-    return { time, probability: Math.min(100, Math.round(p / 5) * 5), precipitation: r1(wet * 3 >= n ? avg(wetMm) : avg(mm)), precipMax: r1(max),
+    // Un pronóstico nunca es seguro: tope de 90 %. El 100 % queda solo para la hora en que una observación confirma que llueve.
+    return { time, probability: Math.min(FC_MAX_PROB, Math.round(p / 5) * 5), precipitation: r1(wet * 3 >= n ? avg(wetMm) : avg(mm)), precipMax: r1(max),
       wet, of: n, estimated: pApi == null || pModels > pApi || undefined, thunder: at.some(h => h.thunder) || undefined };
   });
 }
