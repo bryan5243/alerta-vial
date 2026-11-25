@@ -409,12 +409,13 @@ export function logForecast(w, now = Date.now()) {
   const hour = h0.time, fc = h0.fc ?? h0.probability ?? 0, rain = w.intensity > 0;
   const e = fcLog.find(x => x.h === hour);
   if (e) { e.fc = Math.max(e.fc, fc); e.rain ||= rain; } else fcLog.push({ h: hour, fc, rain });
-  fcLog = fcLog.filter(x => x.h >= localHour(now - 6 * 3600e3));
+  fcLog = fcLog.filter(x => x.h >= localHour(now - 13 * 3600e3));
 }
 export function verifyFromLog(now = Date.now(), log = fcLog) {
   const cur = localHour(now), from = localHour(now - 3 * 3600e3);
-  const past = log.filter(x => x.h < cur && x.h >= from);
-  return { busts: past.filter(x => x.fc >= NOWCAST.bustProb && !x.rain).length, hits: past.filter(x => x.rain).length, hours: past.length };
+  const past = log.filter(x => x.h < cur && x.h >= from), day = log.filter(x => x.h < cur && x.h >= localHour(now - 12 * 3600e3) && x.fc >= NOWCAST.bustProb);
+  return { busts: past.filter(x => x.fc >= NOWCAST.bustProb && !x.rain).length, hits: past.filter(x => x.rain).length, hours: past.length,
+    fc12: day.length, hit12: day.filter(x => x.rain).length };
 }
 function applyRainLog(w, now = Date.now()) {
   logRain(w.intensity > 0 ? w.rainNow : 0, now);
@@ -571,13 +572,19 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at, verify
 
 // Ajusta las próximas horas (no la actual) con el radar y con los aciertos recientes de los modelos. Devuelve qué hizo.
 function nowcast(w, radar, verify) {
-  const H = w.hourly || [], out = { factor: 1, busts: verify?.busts || 0, hits: verify?.hits || 0, caps: [] };
+  const H = w.hourly || [], v = verify || {}, out = { factor: 1, busts: v.busts || 0, hits: v.hits || 0, caps: [] };
   if (!H.length || w.intensity > 0) return out;
+  const short = out.busts >= 2 && !out.hits ? (out.busts >= 3 ? 0.6 : 0.75) : 1;
+  const rate = v.fc12 >= 4 ? v.hit12 / v.fc12 : 1, day = rate < 0.2 ? 0.6 : rate < 0.4 ? 0.75 : 1;
   const cap = (i, p, why) => { if (H[i] && H[i].probability > p) { H[i] = { ...H[i], fc: H[i].fc ?? H[i].probability, probability: p, nowcast: why }; out.caps.push(i); } };
-  if (out.busts >= 2 && !out.hits) {
-    out.factor = out.busts >= 3 ? 0.6 : 0.75;
-    for (let i = 1; i <= 6 && i < H.length; i++) cap(i, Math.round(H[i].probability * out.factor / 5) * 5, 'fallos');
-    out.note = `los modelos anunciaron lluvia ${out.busts} de las últimas 3 horas y no llovió: su probabilidad se bajó`;
+  out.factor = Math.min(short, day);
+  if (out.factor < 1) {
+    for (let i = 1; i < H.length && i <= 24; i++) {
+      const f = 1 - (1 - out.factor) * (i <= 6 ? 1 : i <= 12 ? 0.75 : 0.5);
+      cap(i, Math.round(H[i].probability * f / 5) * 5, 'fallos');
+    }
+    out.note = short <= day ? `los modelos anunciaron lluvia ${out.busts} de las últimas 3 horas y no llovió: se bajó su probabilidad para las próximas horas`
+      : `hoy los modelos acertaron ${v.hit12} de ${v.fc12} horas en que anunciaban lluvia: se bajó su probabilidad para las próximas horas`;
   }
   if (radar?.ok && !radar.intensity && !radar.near) {
     const e = radar.echoKm, s = radar.scanKm || 0;
@@ -598,7 +605,9 @@ const WET_MM = 0.1; // desde 0,1 mm el modelo "ve lluvia" en esa hora
 const FC_MAX_PROB = 90, NOW_DRY_PROB = 20, ECHO_R = 40;
 // Corrección de las próximas horas con lo que se ve ahora (radar) y con cuánto vienen acertando los modelos hoy:
 //  · radar sin lluvia en 25 km → la próxima hora como mucho 35 % (con lluvia a más de 25 km, 50 %); sin lluvia en 45 km → la siguiente, 60 %
-//  · si en las últimas 3 horas los modelos dieron ≥ 70 % y no llovió (2 o 3 veces), las próximas 6 h se multiplican por 0,75 o 0,6
+//  · aciertos de los modelos: si en las últimas 3 h dieron ≥ 70 % y no llovió (2 o 3 veces), o si en las últimas 12 h
+//    acertaron menos del 40 % (o del 20 %) de las horas en que dieron ≥ 70 %, se baja la probabilidad de las próximas 24 h:
+//    entera en las próximas 6 h, 3/4 de la corrección de 7 a 12 h y la mitad de 13 a 24 h (cuanto más lejos, menos se sabe)
 export const NOWCAST = { h1Clear: 35, h1Far: 50, h2Clear: 60, near1: 25, near2: 45, bustProb: 70 };
 export function mergeHourly(okM) {
   const withH = okM.filter(m => m.hourly?.length);
