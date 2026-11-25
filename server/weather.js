@@ -464,7 +464,11 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
     detail: !okM.length ? `Sin conexión con los pronósticos (${[...new Set(models.map(m => m.error).filter(Boolean))].join(' · ')})`
       : `${stale ? `Dato de Open-Meteo de hace ${stale.staleMin} min (${stale.staleWhy}) · ` : ''}${raining.length} de ${okM.length} modelos ven lluvia medible${raining.length ? ` (${raining.map(m => m.name).join(', ')})` : ''}; ${need > okM.length ? (okM.length < 3 ? 'con tan pocos modelos hace falta que el radar o el aeropuerto confirmen' : 'el radar/aeropuerto no ven lluvia: hace falta la mitad de los modelos') : `hacen falta ${need}`}${obsDry && need <= okM.length ? ' (radar/aeropuerto secos)' : ''}${clear && raining.length ? ' · no cuenta: el cielo está casi despejado' : ''} · nubosidad ${base?.cloudCover ?? '—'} %`,
     error: okM.length ? undefined : models[0]?.error, models: models.map(m => ({ name: m.name, ok: m.ok, rainNow: m.rainNow ?? 0, intensity: m.intensity || 0, error: m.error, stale: m.stale ? m.staleMin : undefined })) };
-  const sources = [modelSrc, metar, owm, radar, wttr, lightning, ...extra].filter(Boolean);
+  let sources = [modelSrc, metar, owm, radar, wttr, lightning, ...extra].filter(Boolean);
+  // El equipo marcó "no llueve" en el centro: lo ven en la calle, así que ni los pronósticos (modelos, OWM, wttr) ni el aeropuerto
+  // (a unos 4 km) ni el radar (píxeles de ~1 km) encienden "lloviendo" mientras dure la marca. Los reportes ciudadanos siguen contando.
+  if (extra.some(x => x.id === 'equipo' && x.ok && x.dry))
+    sources = sources.map(s => s.id !== 'reportes' && s.id !== 'equipo' && s.intensity > 0 ? { ...s, intensity: 0, rainNow: 0, detail: `${s.detail || INT_TXT[s.intensity]} · el equipo marcó que no llueve en el centro: no cuenta` } : s);
   const live = sources.filter(s => s.ok);
   if (!live.length) return { ok: false, source: 'Open-Meteo', error: modelSrc.error || 'sin conexión', rainNow: 0, rainPast3h: 0, rainNext3h: 0, rainNext24h: 0, hourly: [], sources, checkedAt: at };
   // Entre fuentes gana la que vea la lluvia más fuerte (cada una ya es confiable por sí sola: observación o consenso de modelos)
@@ -682,7 +686,11 @@ function sunInfo(s, cloud, intensity) {
 // Fuentes locales: lo que marca el equipo y los reportes ciudadanos de la última hora
 export function localSources({ observed, reports = [] }) {
   const out = [];
-  if (observed && new Date(observed.until) > Date.now()) {
+  const hasta = observed && new Date(observed.until).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Guayaquil', hourCycle: 'h23' });
+  // "No llueve": el equipo ve la calle seca en el centro. Manda sobre los pronósticos y las estaciones de afuera (ver combine).
+  if (observed?.dry && new Date(observed.until) > Date.now())
+    out.push({ id: 'equipo', kind: 'observación', name: 'Equipo EMOVTT', ok: true, at: observed.at, intensity: 0, rainNow: 0, dry: true, detail: `No llueve en el centro (marcado en el panel) · vigente hasta ${hasta}` });
+  else if (observed && new Date(observed.until) > Date.now()) {
     // "Tormenta" (4) del equipo = truenos y rayos con lluvia moderada: el semáforo sigue a la lluvia, la tormenta se avisa aparte.
     const o = Math.max(0, Math.min(4, +observed.intensity || 0)), i = o >= 4 ? 2 : o;
     out.push({ id: 'equipo', kind: 'observación', name: 'Equipo EMOVTT', ok: true, at: observed.at, intensity: i, rainNow: INT_MM[i], storm: o >= 4 || undefined,
