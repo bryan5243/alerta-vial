@@ -596,12 +596,14 @@ function outlookOf(w, { okM, metar, need, base }) {
   else if (metar?.ok && metar.cb) { score += 1; reasons.push('el aeropuerto ve nubes de tormenta (cumulonimbos) cerca'); }
   // ¿desde qué hora? la primera hora con probabilidad alta o lluvia prevista
   const from = (w.hourly || []).slice(0, 7).find(h => (h.probability ?? 0) >= NOTICE_PROB)?.time || null;
+  // Si esa hora es la que está corriendo (p. ej. son las 09:16 y la hora es 09:00), no se dice "desde las 09:00": ya empezó
+  const fromNow = !!from && from === w.hourly[0]?.time;
   const level = w.intensity > 0 ? 'lloviendo' : peak >= NOTICE_PROB ? 'probable' : 'calma';
   const title = { lloviendo: 'Está lloviendo', probable: 'Lluvia probable en las próximas horas', calma: 'Sin lluvia a la vista' }[level];
   const text = level === 'lloviendo' ? 'Revisa las calles inundadas y las vías alternas antes de salir.'
     : level === 'calma' ? `No hay una probabilidad alta de lluvia (${NOTICE_PROB} % o más) en las próximas 6 horas.`
-    : `Ahora no llueve, pero es probable un aguacero${from ? ` desde las ${from.slice(11, 16)}, aproximadamente` : ''}. Lleva paraguas y evita las calles que suelen inundarse.`;
-  return { level, score, title, text, reasons: level === 'calma' ? [] : reasons, from, peak, min: NOTICE_PROB };
+    : `Ahora no llueve, pero es probable un aguacero${fromNow ? ' en cualquier momento de esta hora' : from ? ` desde las ${from.slice(11, 16)}, aproximadamente` : ''}. Lleva paraguas y evita las calles que suelen inundarse.`;
+  return { level, score, title, text, reasons: level === 'calma' ? [] : reasons, from, fromNow, peak, min: NOTICE_PROB };
 }
 
 

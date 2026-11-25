@@ -154,7 +154,7 @@ function renderWx(w) {
   const th = !i && ['moderada', 'alta'].includes(w.thunder?.level) ? `<span class="ol-tag ol-probable">Tormenta ${w.thunder.prob} %</span>` : '';
   const uv = ol || th || (!i && uvOn(w) && w.sun.uvIndex >= 3 ? `<span class="uv-tag uv-${w.sun.uv.key}">UV ${dec(w.sun.uvIndex)}</span>` : '');
   // aviso una sola vez cuando la lluvia pasa a "probable"
-  if (!i && w.outlook?.level === 'probable') { const k = `av_ol_${w.outlook.from || ''}`; try { if (!sessionStorage.getItem(k)) { sessionStorage.setItem(k, '1'); toast(`Lluvia probable${w.outlook.from ? ` desde las ${w.outlook.from.slice(11, 16)}` : ' en las próximas horas'}. Lleva paraguas.`); } } catch {} }
+  if (!i && w.outlook?.level === 'probable') { const k = `av_ol_${w.outlook.from || ''}`; try { if (!sessionStorage.getItem(k)) { sessionStorage.setItem(k, '1'); toast(`Lluvia probable${w.outlook.fromNow ? ' en cualquier momento' : w.outlook.from ? ` desde las ${w.outlook.from.slice(11, 16)}` : ' en las próximas horas'}. Lleva paraguas.`); } } catch {} }
   chip.innerHTML = `<span class="wx-ic">${WX_IC[ic]}</span><b>${esc(w.condition || 'Clima')}</b>${w.temperature != null && !i ? `<span>${Math.round(w.temperature)}°C</span>` : ''}${ol ? '' : extra}${uv}${w.simulated ? '<em>prueba</em>' : ''}<u aria-hidden="true">${wxFx.enabled ? 'efectos' : 'sin efectos'}</u>`;
   chip.title = `${w.decidedBy ? `Lo detectó: ${w.decidedBy}` : `Fuente: ${w.source}`} · dato de las ${wxTime(w.observedAt)} · toca para mostrar u ocultar el clima sobre el mapa`;
 }
