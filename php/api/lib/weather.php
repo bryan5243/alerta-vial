@@ -379,6 +379,11 @@ function combine(array $remote, array $extra = []): array {
   // wttr.in es pronóstico: su "tormenta ahora" solo cuenta si el aeropuerto la confirma
   if (!empty($wttr['ok']) && !empty($wttr['thunderNow']) && !(($lightning['strikes15'] ?? 0) > 0 || !empty($metar['ts'])))
     $wttr = array_merge($wttr, ['thunderNow' => false, 'detail' => ($wttr['detail'] ?? '') . ' · sin rayos detectados: no cuenta como tormenta']);
+  // El aeropuerto reporta cada hora; el radar, cada 10 min. Si un radar al menos 30 min más reciente ya no ve lluvia ni sobre la ciudad
+  // ni cerca, la lluvia de ese reporte viejo ya pasó: no cuenta ni como lluvia ni para respaldar a los pronósticos (modelos, OWM).
+  if (!empty($metar['ok']) && (!empty($metar['intensity']) || !empty($metar['near'])) && !empty($radar['ok']) && empty($radar['intensity']) && empty($radar['near'])
+      && strtotime($radar['at']) - strtotime($metar['at']) >= 1800)
+    $metar = array_merge($metar, ['intensity' => 0, 'rainNow' => 0, 'near' => false, 'detail' => ($metar['detail'] ?? '') . ' · el radar, más reciente, ya no ve lluvia: no cuenta']);
   $okM = array_values(array_filter($models, fn($m) => !empty($m['ok'])));
   $base = first_of($okM, fn($m) => $m['model'] === 'best_match') ?? first_of($okM, fn($m) => $m['model'] === 'met_no') ?? ($okM[0] ?? null);
   // Los modelos y wttr.in son pronósticos: el respaldo tiene que ser una observación real (radar o aeropuerto)
