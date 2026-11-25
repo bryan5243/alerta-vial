@@ -756,22 +756,27 @@ export function riskIndex({ weather: w, cfg, flood, reports = [], tide, rivers =
 }
 
 // Nivel sugerido por el clima: normal | amarilla | naranja | roja
-export function levelFromWeather(w, cfg) {
-  if (!w.ok) return 'normal';
-  const t = +cfg.rainThresholdMm || 2.4, t3 = +cfg.rainThresholdMm3h || 7, i = w.intensity || 0;
+export function levelFromWeather(w, cfg) { return levelWhy(w, cfg).level; }
+// El mismo cálculo, con el motivo en palabras (se muestra en el mapa para que se entienda por qué está en ese color)
+const mmTxt = x => `${String(Math.round(x * 10) / 10).replace('.', ',')} mm`;
+export function levelWhy(w, cfg) {
+  if (!w.ok) return { level: 'normal', why: '' };
+  const t = +cfg.rainThresholdMm || 2.4, t3 = +cfg.rainThresholdMm3h || 7, i = Math.min(3, w.intensity || 0);
   // Lo que inunda las calles no es solo la intensidad de ahora, sino cuánta agua cayó y por cuánto tiempo:
   // 6 h y 12 h de lluvia acumulada y horas seguidas lloviendo.
-  const p3 = w.rainPast3h || 0, p6 = w.rainPast6h || 0, p12 = w.rainPast12h || 0, wet = w.wetHours || 0, raining = i >= 1;
-  // Los acumulados solo cuentan mientras sigue lloviendo: cuando para, el semáforo baja de a un color (stepDown en index.js)
-  // y los puntos críticos se mantienen durante el drenaje. Antes 12 h de acumulado dejaban la roja fija aunque ya no lloviera.
-  if (!raining) return (w.probNext3h ?? 0) >= 80 && w.rainNext3h >= t / 2 ? 'amarilla' : 'normal';
-  if (w.rainNow >= t * 3 || p3 >= t3 * 2 || p6 >= t3 * 3 || p12 >= t3 * 5 || (i >= 4 && w.rainNow >= t)) return 'roja';
-  if (w.rainNow >= t || p3 >= t3 || p6 >= t3 * 1.6 || p12 >= t3 * 2.7 || i >= 3
-    || (raining && wet >= 3 && p6 >= t3 * 0.9)        // lleva horas lloviendo y ya acumuló bastante
-    || (raining && p3 >= t3 * 0.6 && w.rainNow >= t / 2)) return 'naranja'; // sigue lloviendo con buena cantidad en las últimas 3 h
-  // Lluvia confirmada en curso, o lluvia casi segura (≥ 80 % y varios modelos con ≥ la mitad del umbral) en las próximas 3 h: amarilla.
-  if (i >= 1 || ((w.probNext3h ?? 0) >= 80 && w.rainNext3h >= t / 2)) return 'amarilla';
-  return 'normal';
+  const p3 = w.rainPast3h || 0, p6 = w.rainPast6h || 0, p12 = w.rainPast12h || 0, wet = w.wetHours || 0, now = w.rainNow || 0;
+  const it = ['', 'lluvia leve', 'lluvia moderada', 'lluvia fuerte'][i];
+  // Los acumulados solo cuentan mientras sigue lloviendo: cuando para, el semáforo baja de a un color (stepDown en index.js).
+  if (!i) return (w.probNext3h ?? 0) >= 80 && w.rainNext3h >= t / 2 ? { level: 'amarilla', why: `lluvia casi segura en las próximas 3 h (${w.probNext3h} %)` } : { level: 'normal', why: '' };
+  // Roja: aguacero fuerte ahora, o lluvia moderada/fuerte sobre mucha agua acumulada. Con lluvia leve ya no se queda en roja
+  // por lo que cayó antes: baja a naranja (de a un color cada 45 min) aunque siga lloviznando.
+  if (now >= t * 3) return { level: 'roja', why: `${it} de ${mmTxt(now)}/h` };
+  if (i >= 2 && (p3 >= t3 * 2 || p6 >= t3 * 3 || p12 >= t3 * 5)) return { level: 'roja', why: `${it} con ${mmTxt(p3 >= t3 * 2 ? p3 : p6 >= t3 * 3 ? p6 : p12)} acumulados en ${p3 >= t3 * 2 ? 3 : p6 >= t3 * 3 ? 6 : 12} h` };
+  if (now >= t || i >= 3) return { level: 'naranja', why: `${it} de ${mmTxt(now)}/h` };
+  if (p3 >= t3 || p6 >= t3 * 1.6 || p12 >= t3 * 2.7) return { level: 'naranja', why: `sigue la ${it} con ${mmTxt(p3 >= t3 ? p3 : p6 >= t3 * 1.6 ? p6 : p12)} acumulados en ${p3 >= t3 ? 3 : p6 >= t3 * 1.6 ? 6 : 12} h` };
+  if (wet >= 3 && p6 >= t3 * 0.9) return { level: 'naranja', why: `${wet} h seguidas lloviendo (${mmTxt(p6)} en 6 h)` };
+  if (p3 >= t3 * 0.6 && now >= t / 2) return { level: 'naranja', why: `${it} con ${mmTxt(p3)} en las últimas 3 h` };
+  return { level: 'amarilla', why: `${it} en curso` };
 }
 
 // Pronóstico por días: ayer (dato ya ocurrido), hoy y los 2 días siguientes. Una sola consulta a Open-Meteo,

@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { load, save, nextId, reset } from './db.js';
-import { getDays, getWeather, getTide, levelFromWeather, riskIndex, describe, localSources, dayParts, rainingNow } from './weather.js';
+import { getDays, getWeather, getTide, levelWhy, riskIndex, describe, localSources, dayParts, rainingNow } from './weather.js';
 import { getFloodForecast } from './flood.js';
 import { seedIfEmpty } from './seed.js';
 import fs from 'node:fs';
@@ -103,14 +103,31 @@ async function computeStatus() {
   const gaugeSev = flood?.ok ? (flood.gauges || []).map(g => g.severity) : [];
   const riverLevel = gaugeSev.includes('EXTREME') || over >= 2 || (over >= 1 && (weather?.intensity || 0) >= 2) ? 'roja'
     : gaugeSev.includes('SEVERE') || over >= 1 ? 'naranja' : gaugeSev.includes('ABOVE_NORMAL') || high >= 1 ? 'amarilla' : 'normal';
-  const suggested = maxLevel(maxLevel(levelFromWeather(weather, db.config.weather), risk.level), riverLevel);
+  // El índice combinado no deja la roja con lluvia leve o sin lluvia (sería por acumulados o marea): como mucho naranja.
+  const riskLevel = risk.level === 'roja' && (weather?.intensity || 0) < 2 ? 'naranja' : risk.level;
+  const wl = levelWhy(weather, db.config.weather);
+  const suggested = maxLevel(maxLevel(wl.level, riskLevel), riverLevel);
+  // Por qué está en ese color (se muestra en el mapa)
+  const why = suggested === 'normal' ? '' : LV[riverLevel] >= LV[suggested] && riverLevel !== 'normal'
+    ? (over ? `${over === 1 ? 'un río desbordado' : `${over} ríos desbordados`}${gaugeSev.length ? ' (o aviso de Google Flood)' : ''}` : high ? 'río crecido' : 'aviso de crecida de Google Flood')
+    : LV[wl.level] >= LV[suggested] ? wl.why : `índice de riesgo ${risk.value}/100 (lluvia, pronóstico, ríos y marea)`;
   // Durante una simulación el nivel publicado sigue al clima simulado, aunque la alerta esté en manual.
   // La simulación es solo una prueba: muestra el nivel simulado pero no deja huella (ni bajada gradual ni drenaje).
   // Antes, al terminar una simulación en roja, el semáforo se quedaba en roja y bajaba de a un color cada 45 min.
   const sim = !!simOn();
   const effective = sim ? suggested : db.alert.mode === 'manual' ? db.alert.level : stepDown(db, suggested);
   const drain = sim ? { draining: false, until: null, reportOn: LV[effective] >= 2 } : syncAutoPoints(db, effective, Date.now(), weather);
-  return { weather, suggested, effective, risk, tide, flood, drain };
+  // Bajada gradual: desde qué hora paró la lluvia intensa y a qué hora pasa a cada color (uno cada 45 min)
+  const now = Date.now(), a = db.alert;
+  if (!sim && (weather?.intensity || 0) >= 2 && (!a.lastHeavyAt || now - a.lastHeavyAt > 60e3)) { a.lastHeavyAt = now; save(); }
+  let stepdown = null;
+  if (!sim && a.mode !== 'manual' && LV[effective] > LV[suggested]) {
+    const hold = (+db.config.weather?.stepDownMin || 45) * 60e3, names = Object.keys(LV), steps = [];
+    let t = Math.max(now, (a.autoStepAt || now) + hold);
+    for (let l = LV[effective] - 1; l >= LV[suggested]; l--) { steps.push({ level: names[l], at: new Date(t).toISOString() }); t += hold; }
+    stepdown = { heavyEndAt: a.lastHeavyAt && (weather?.intensity || 0) < 2 ? new Date(a.lastHeavyAt).toISOString() : null, steps, everyMin: hold / 60e3 };
+  }
+  return { weather, suggested, effective, risk, tide, flood, drain, why, stepdown };
 }
 // Al dejar de llover el semáforo no cae de golpe: baja un color cada cierto tiempo (por defecto 45 min),
 // porque el agua tarda en irse. Si vuelve a llover, sube de inmediato.
@@ -151,7 +168,7 @@ const REPORT_DRAIN_MS = 2 * 3600e3, REPORT_TTL_MS = 3600e3;
 // ---------- API pública ----------
 app.get('/api/public/state', async (req, res) => {
   const db = load();
-  const { weather, suggested, effective, risk, tide, flood, drain } = await computeStatus();
+  const { weather, suggested, effective, risk, tide, flood, drain, why, stepdown } = await computeStatus();
   const f = featuresCfg(db); const on = (k, list) => (f[k] ? list : []);
   // Un punto con "auto" se enciende con naranja o roja y sigue encendido mientras el agua drena.
   const pointOn = p => p.active || (p.auto && (p.source === 'reporte' ? drain?.reportOn : (LV[effective] >= 2 || drain?.draining)));
@@ -166,7 +183,7 @@ app.get('/api/public/state', async (req, res) => {
     config: { city: db.config.city, center: db.config.center, zoom: db.config.zoom,
       mapProvider: db.config.mapProvider, baseStyle: db.config.baseStyle || 'osm', googleMapsKey: db.config.googleMapsKey || '',
       mapVersion: db.config.mapVersion || 0, rainThresholdMm: db.config.weather.rainThresholdMm, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: f, noCar: noCarCfg(db) },
-    alert: { ...db.alert, effective, suggested, draining: !!drain?.draining, drainUntil: drain?.until || null },
+    alert: { ...db.alert, effective, suggested, why, stepdown, draining: !!drain?.draining, drainUntil: drain?.until || null },
     weather: { ...weather, hourly: weather.hourly?.slice(0, 25) },
     risk, tide, flood,
     layers: on('layers', (db.layers || []).filter(l => l.active !== false)),
@@ -248,9 +265,9 @@ app.get('/api/public/radar', async (req, res) => {
 // ---------- API administrativa ----------
 app.get('/api/admin/state', auth, async (req, res) => {
   const db = load();
-  const { weather, suggested, effective, risk, tide, drain } = await computeStatus();
+  const { weather, suggested, effective, risk, tide, drain, why, stepdown } = await computeStatus();
   const pts = db.points.filter(p => p.auto && (p.source === 'reporte' ? drain?.reportOn : drain?.draining) && LV[effective] < 2).length;
-  res.json({ ...db, push: undefined, pushCount: push.subCount(), config: { ...db.config, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: featuresCfg(db), noCar: noCarCfg(db) }, alert: { ...db.alert, effective, suggested, draining: !!(drain?.draining || (LV[effective] < 2 && drain?.reportOn)), drainUntil: drain?.until || null, drainPoints: pts }, weather: { ...weather, hourly: weather.hourly?.slice(0, 25) }, risk, tide, reports: db.reports || [], layers: db.layers || [], rivers: db.rivers || [], zones: db.zones || [] });
+  res.json({ ...db, push: undefined, pushCount: push.subCount(), config: { ...db.config, gps: gpsCfg(db), levelMessages: levelMsgs(db), features: featuresCfg(db), noCar: noCarCfg(db) }, alert: { ...db.alert, effective, suggested, why, stepdown, draining: !!(drain?.draining || (LV[effective] < 2 && drain?.reportOn)), drainUntil: drain?.until || null, drainPoints: pts }, weather: { ...weather, hourly: weather.hourly?.slice(0, 25) }, risk, tide, reports: db.reports || [], layers: db.layers || [], rivers: db.rivers || [], zones: db.zones || [] });
 });
 
 // "El agua ya bajó": termina el tiempo de drenaje antes de lo previsto y apaga los puntos críticos automáticos

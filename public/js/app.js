@@ -355,6 +355,16 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   $('#ins-x').addEventListener('click', () => hide(7));
 })();
 
+// Por qué está en ese color y, si viene bajando, desde qué hora paró la lluvia intensa y a qué hora cambia cada color
+const hm = iso => new Date(iso).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' }).replace(/\.$/, '');
+const LVN = { roja: 'roja', naranja: 'naranja', amarilla: 'amarilla', normal: 'verde (normal)' };
+function stepTxt(a) {
+  const sd = a.stepdown, why = a.why && a.effective !== 'normal' ? a.why : '';
+  if (!sd?.steps?.length) return why ? `<span class="lvl-extra lvl-why">Motivo: ${esc(why)}.</span>` : '';
+  const head = sd.heavyEndAt ? `La lluvia intensa paró a las ${hm(sd.heavyEndAt)}.` : 'Ya bajó lo que causó este color.';
+  const plan = sd.steps.map(s => `<b>${LVN[s.level]}</b> ≈ ${hm(s.at)}`).join(' · ');
+  return `<span class="lvl-extra lvl-step">${head} El semáforo baja de a un color cada ${sd.everyMin} min, porque el agua tarda en irse: ${plan}.${why ? ` <small>Ahora: ${esc(why)}.</small>` : ''}</span>`;
+}
 function render(reports) {
   const { alert, weather, config } = state;
   const overflows = reports.filter(r => r.type === 'desborde');
@@ -366,9 +376,10 @@ function render(reports) {
   const lvl = alert.effective; const band = $('#band');
   band.className = `level-band ${lvl}${band.classList.contains('open') ? ' open' : ''}`;
   $('#band-icon').innerHTML = lvl === 'normal' ? ICON.check : ICON.warn;
-  $('#band-label').textContent = LEVELS[lvl];
+  const nx = alert.stepdown?.steps?.[0];
+  $('#band-label').textContent = LEVELS[lvl] + (nx ? ` · baja a ${nx.level === 'normal' ? 'verde' : nx.level} ≈ ${hm(nx.at)}` : '');
   const lvlMsg = config.levelMessages?.[lvl] || LEVEL_DESC[lvl];
-  $('#band-msg').innerHTML = `${weather.simulated ? '<span class="sim-tag">Simulación de prueba</span>' : ''}${esc(lvlMsg)}${alert.message ? `<span class="lvl-extra">${esc(alert.message)}</span>` : ''}${alert.draining ? `<span class="lvl-extra">Ya no llueve, pero el agua aún no baja: los puntos críticos siguen activos hasta las ${new Date(alert.drainUntil).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' }).replace(/\.$/, '')}.</span>` : ''}`;
+  $('#band-msg').innerHTML = `${weather.simulated ? '<span class="sim-tag">Simulación de prueba</span>' : ''}${esc(lvlMsg)}${alert.message ? `<span class="lvl-extra">${esc(alert.message)}</span>` : ''}${stepTxt(alert)}${alert.draining ? `<span class="lvl-extra">Ya no llueve, pero el agua aún no baja: los puntos críticos siguen activos hasta las ${new Date(alert.drainUntil).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' }).replace(/\.$/, '')}.</span>` : ''}`;
 
   // Clima
   const w = weather; renderWx(w);
