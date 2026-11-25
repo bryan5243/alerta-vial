@@ -388,7 +388,10 @@ function combine(array $remote, array $extra = []): array {
   $base = first_of($okM, fn($m) => $m['model'] === 'best_match') ?? first_of($okM, fn($m) => $m['model'] === 'met_no') ?? ($okM[0] ?? null);
   // Los modelos y wttr.in son pronósticos: el respaldo tiene que ser una observación real (radar o aeropuerto)
   $rOk = !empty($radar['ok']); $mOk = !empty($metar['ok']);
-  $corro = ($rOk && (($radar['intensity'] ?? 0) > 0 || !empty($radar['near']))) || ($mOk && (($metar['intensity'] ?? 0) > 0 || !empty($metar['near'])));
+  // "Lluvia en los alrededores" del aeropuerto (VCSH) no respalda a los pronósticos si el radar no ve nada sobre la ciudad ni cerca
+  $radarDry = $rOk && empty($radar['intensity']) && empty($radar['near']);
+  $corro = ($rOk && (($radar['intensity'] ?? 0) > 0 || !empty($radar['near']))) || ($mOk && (($metar['intensity'] ?? 0) > 0 || (!empty($metar['near']) && !$radarDry)));
+  if ($mOk && empty($metar['intensity']) && !empty($metar['near']) && $radarDry) $metar = array_merge($metar, ['detail' => ($metar['detail'] ?? '') . ' · el radar no la ve cerca de la ciudad: no respalda a los pronósticos']);
   // OpenWeatherMap: su "clima actual" es un modelo. Su lluvia solo cuenta si el radar o el aeropuerto la confirman.
   if (!empty($owm['ok']) && !empty($owm['intensity']) && !$corro) $owm = array_merge($owm, ['intensity' => 0, 'rainNow' => 0, 'detail' => ($owm['detail'] ?? '') . ' · el radar y el aeropuerto no ven lluvia: no cuenta']);
   // Y aun confirmada, OWM no puede decir que llueve más fuerte que lo que ven el radar o el aeropuerto (si solo la ven cerca: leve).
