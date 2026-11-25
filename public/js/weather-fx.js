@@ -68,7 +68,7 @@ export function createWeatherFx({ canvas, flash }) {
   function stopAnim() { cancelAnimationFrame(raf); raf = null; ctx.clearRect(0, 0, w, h); }
 
   function apply() {
-    const show = enabled && intensity > 0;
+    const show = enabled && (intensity > 0 || storm); // tormenta sin lluvia: solo relámpagos
     canvas.parentElement.classList.toggle('wx-rain', show);
     canvas.parentElement.classList.toggle('wx-storm', show && storm);
     canvas.parentElement.dataset.wx = show ? intensity : 0;
@@ -80,7 +80,7 @@ export function createWeatherFx({ canvas, flash }) {
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopAnim(); else apply(); });
 
   return {
-    set(w) { const i = w?.ok ? (w.intensity || 0) : 0, st = i >= 4; if (i === intensity && st === storm) return; intensity = i; storm = st; nextBolt = performance.now() + 1500; apply(); },
+    set(w) { const i = w?.ok ? (w.intensity || 0) : 0, st = i >= 4 || !!w?.storm; if (i === intensity && st === storm) return; intensity = i; storm = st; nextBolt = performance.now() + 1500; apply(); },
     toggle() { enabled = !enabled; try { localStorage.setItem('av_wx_fx', enabled ? 'on' : 'off'); } catch {} apply(); return enabled; },
     get enabled() { return enabled; },
   };

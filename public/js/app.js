@@ -59,7 +59,7 @@ const WX_IC = {
 };
 // Cielo según el clima real: decide el ícono, el color de la tarjeta y el efecto sobre el mapa
 const skyOf = w => (w?.intensity || 0) > 0 ? 'lluvia' : w?.sun?.sky || ((w?.cloudCover ?? 0) >= 80 ? 'nublado' : (w?.cloudCover ?? 0) >= 40 ? 'parcial' : 'soleado');
-const skyIcon = w => { const i = w?.intensity || 0, sky = skyOf(w); return i >= 4 ? 'storm' : i > 0 ? 'rain' : sky === 'noche' ? 'moon' : sky === 'nublado' ? 'cloud' : sky === 'parcial' ? 'partly' : 'sun'; };
+const skyIcon = w => { const i = w?.intensity || 0, sky = skyOf(w); return i >= 4 || w?.storm ? 'storm' : i > 0 ? 'rain' : sky === 'noche' ? 'moon' : sky === 'nublado' ? 'cloud' : sky === 'parcial' ? 'partly' : 'sun'; };
 const uvOn = w => w?.sun?.uvIndex != null && w.sun.isDay !== 0;
 // Efecto del cielo sobre el mapa (sol, nubes, noche); la lluvia la dibuja el canvas
 function applySky(w) {

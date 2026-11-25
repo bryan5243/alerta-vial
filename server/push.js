@@ -52,7 +52,7 @@ export async function checkAndNotify(st, { levelMessage, simulated } = {}) {
   const pre = simulated ? 'Prueba: ' : '';
   const out = out0;
   const w = st.weather || {}, ol = w.outlook?.level;
-  const storm = (w.intensity >= 4) || (w.outlook?.reasons || []).some(r => /prevé tormenta|reporta tormenta/.test(r));
+  const storm = !!w.storm || !!w.thunder?.now || (w.intensity >= 4) || (w.outlook?.reasons || []).some(r => /prevé tormenta|reporta tormenta/.test(r));
   const rainy = ol === 'lloviendo' || w.intensity > 0;
   const soon = ol === 'probable';
   const can = k => simulated || !L[k + 'At'] || now - L[k + 'At'] > COOLDOWN;

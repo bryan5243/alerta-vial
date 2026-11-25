@@ -19,6 +19,8 @@ const MIN_MM = 0.5;
 const mmInt = mm => (mm >= 8 ? 3 : mm >= 2.5 ? 2 : mm >= MIN_MM ? 1 : 0);
 const INT_MM = [0, 1, 4, 10, 20]; // lluvia típica (mm/h) para una intensidad observada sin medición
 const INT_TXT = ['Sin lluvia', 'Lluvia leve', 'Lluvia moderada', 'Lluvia fuerte', 'Tormenta eléctrica'];
+// Intensidad de lluvia: 0 nada, 1 leve, 2 moderada, 3 fuerte. La tormenta eléctrica va aparte (w.storm / w.thunder.now):
+// puede haber rayos sin lluvia fuerte, y lo que inunda las calles es el agua, no los rayos.
 const INT_CODE = [0, 61, 63, 65, 95];
 
 async function getJson(url, ms = 8000) {
@@ -60,14 +62,14 @@ function omParse(model, j, sfx) {
   const curMm = useCur ? Math.max(cur.precipitation ?? 0, (cur.rain ?? 0) + (cur.showers ?? 0)) * k : 0;
   const rainNow = r1(Math.max(curMm, hours[nowIdx]?.precipitation ?? 0));
   // El código del cielo solo cuenta si viene con lluvia medible: un "llovizna" con 0 mm no es lluvia.
-  // Tormenta (95–99) con al menos 1 mm/h sí se toma como tormenta.
-  const code = useCur ? cur.weather_code : undefined, storm = code >= 95 && rainNow >= 1;
+  // Tormenta eléctrica (95–99): se anota aparte. La intensidad de lluvia sale solo de los milímetros: puede haber rayos sin aguacero.
+  const code = useCur ? cur.weather_code : undefined, storm = code >= 95;
   const D = j.daily || {};
   // Sol: si es de día, índice UV (OMS), radiación solar en W/m² y horas de salida y puesta del sol
   const sun = useCur ? { isDay: cur.is_day ?? null, uvIndex: cur.uv_index ?? null, radiation: cur.shortwave_radiation ?? null,
     uvMax: g(D, 'uv_index_max')?.[0] ?? null, sunrise: g(D, 'sunrise')?.[0] ?? null, sunset: g(D, 'sunset')?.[0] ?? null } : null;
   return { model, name: MODELS[model], ok: true, observedAt: cur.time, temperature: useCur ? cur.temperature_2m : undefined, apparent: useCur ? cur.apparent_temperature : undefined, humidity: useCur ? cur.relative_humidity_2m : undefined, wind: useCur ? cur.wind_speed_10m : undefined, gust: useCur ? cur.wind_gusts_10m : undefined, cloudCover: useCur ? cur.cloud_cover : undefined, sun,
-    weatherCode: code, rainNow, intensity: storm ? 4 : mmInt(rainNow),
+    weatherCode: code, rainNow, intensity: mmInt(rainNow), storm: storm || undefined,
     rainPast3h: sum(hours.slice(Math.max(0, nowIdx - 3), nowIdx + 1)), rainPast6h: sum(hours.slice(Math.max(0, nowIdx - 6), nowIdx + 1)), rainPast12h: sum(hours.slice(Math.max(0, nowIdx - 12), nowIdx + 1)),
     wetHours: (() => { let n = 0; for (let i = nowIdx; i >= 0 && (hours[i]?.precipitation ?? 0) >= 0.5; i--) n++; return n; })(), rainNext3h: sum(hours.slice(nowIdx + 1, nowIdx + 4)),
     rainNext24h: sum(hours.slice(nowIdx + 1, nowIdx + 25)),
@@ -140,7 +142,7 @@ async function metnoSource(lat, lng) {
     const t0 = ts[0]; if (!t0) throw new Error('sin datos para este punto');
     const det = t0.data?.instant?.details || {}, n1 = t0.data?.next_1_hours || {}, sym = n1.summary?.symbol_code || t0.data?.next_6_hours?.summary?.symbol_code || '';
     const mm = i => ts[i]?.data?.next_1_hours?.details?.precipitation_amount ?? 0;
-    const rainNow = r1(mm(0)), code = METNO_CODE(sym), storm = code >= 95 && rainNow >= 1;
+    const rainNow = r1(mm(0)), code = METNO_CODE(sym), storm = code >= 95;
     const local = new Date(new Date(t0.time).getTime() - 5 * 3600e3), hr = local.getUTCHours();
     const isDay = /_night/.test(sym) ? 0 : /_day/.test(sym) ? 1 : hr >= 6 && hr < 18 ? 1 : 0;
     // UV con cielo despejado corregido por la nubosidad (factor empírico de Kasten-Czeplak)
@@ -152,7 +154,7 @@ async function metnoSource(lat, lng) {
     const hourly = ts.slice(0, 25).filter(x => x.data?.next_1_hours).map(x => ({ time: locHour(x.time), precipitation: x.data.next_1_hours.details?.precipitation_amount ?? 0,
       probability: x.data.next_1_hours.details?.probability_of_precipitation ?? null, thunder: /thunder/.test(x.data.next_1_hours.summary?.symbol_code || '') || undefined }));
     data = { model: 'met_no', name: 'MET Norway (yr.no)', ok: true, observedAt: local.toISOString().slice(0, 16),
-      temperature: det.air_temperature, humidity: det.relative_humidity, wind: det.wind_speed == null ? undefined : r1(det.wind_speed * 3.6), apparent: apparentTemp(det.air_temperature, det.relative_humidity, det.wind_speed), cloudCover: cloud == null ? undefined : Math.round(cloud), weatherCode: code, rainNow, intensity: storm ? 4 : mmInt(rainNow),
+      temperature: det.air_temperature, humidity: det.relative_humidity, wind: det.wind_speed == null ? undefined : r1(det.wind_speed * 3.6), apparent: apparentTemp(det.air_temperature, det.relative_humidity, det.wind_speed), cloudCover: cloud == null ? undefined : Math.round(cloud), weatherCode: code, rainNow, intensity: mmInt(rainNow), storm: storm || undefined,
       sun: { isDay: isDay ? 1 : 0, uvIndex: isDay ? uv : 0, radiation: null, uvMax: null, sunrise: null, sunset: null },
       rainPast3h: 0, rainNext3h: r1(mm(1) + mm(2) + mm(3)), rainNext24h: r1(ts.slice(1, 25).reduce((a, _, i) => a + mm(i + 1), 0)),
       probNext3h: prob.length ? Math.max(...prob) : null, maxProbability24h: null, hourly,
@@ -170,11 +172,12 @@ export function parseMetar(raw) {
     const m = t.match(/^(\+|-|VC)?(TS|SH)?((?:DZ|RA|GR|GS|UP)*)$/);
     if (!m || (!m[2] && !m[3])) continue;
     if (m[1] === 'VC') { near = true; continue; }
+    // TS = tormenta eléctrica. La lluvia se mide aparte: "TS" solo (sin RA) es tormenta sin lluvia; "-TSRA" es tormenta con lluvia leve.
     const ts = m[2] === 'TS', rain = /RA|DZ|GR|GS|UP/.test(m[3]);
-    let i = ts ? (rain ? 4 : 3) : /RA|GR|GS|UP/.test(m[3]) ? 2 : /DZ/.test(m[3]) ? 1 : 0;
-    if (!ts && m[1] === '-') i = Math.max(1, i - 1);
-    if (!ts && m[1] === '+') i = 3;
-    if (i > intensity) { intensity = i; txt = ts ? (rain ? 'Tormenta con lluvia' : 'Tormenta eléctrica') : `${m[1] === '+' ? 'Lluvia fuerte' : m[1] === '-' ? 'Lluvia leve' : /DZ/.test(m[3]) && !/RA/.test(m[3]) ? 'Llovizna' : 'Lluvia'}${m[2] === 'SH' ? ' (chubasco)' : ''}`; }
+    let i = /RA|GR|GS|UP/.test(m[3]) ? 2 : /DZ/.test(m[3]) ? 1 : 0;
+    if (i && m[1] === '-') i = Math.max(1, i - 1);
+    if (i && m[1] === '+') i = 3;
+    if (i > intensity || (ts && !txt.startsWith('Tormenta'))) { intensity = Math.max(intensity, i); txt = ts ? (rain ? `Tormenta con ${INT_TXT[i].toLowerCase()}` : 'Tormenta eléctrica sin lluvia') : `${m[1] === '+' ? 'Lluvia fuerte' : m[1] === '-' ? 'Lluvia leve' : /DZ/.test(m[3]) && !/RA/.test(m[3]) ? 'Llovizna' : 'Lluvia'}${m[2] === 'SH' ? ' (chubasco)' : ''}`; }
   }
   // VC = lluvia a 8–16 km del aeropuerto, no sobre él: se informa pero no sube el semáforo.
   const air = metarAir(body);
@@ -315,8 +318,7 @@ export function parseWttr(j, hourNow) {
   const mm = n(cur.precipMM), code = n(cur.weatherCode);
   const chance = Math.max(0, ...near.map(h => n(h.chanceofthunder)));
   const thunderNow = WWO_THUNDER.has(code) && mm >= 0.2;
-  const intensity = thunderNow ? 4 : mmInt(mm);
-  return { mm, code, chance, thunderNow, intensity };
+  return { mm, code, chance, thunderNow, intensity: 0 };
 }
 async function wttrSource(lat, lng) {
   const base = { id: 'wttr', kind: 'pronóstico', name: 'World Weather Online (wttr.in)' };
@@ -328,7 +330,7 @@ async function wttrSource(lat, lng) {
     const hour = +new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'America/Guayaquil' }).slice(0, 2) || 0;
     const p = parseWttr(j, hour);
     // wttr.in es un modelo (pronóstico): sus mm solo respaldan a otra fuente; por sí solo no enciende "lloviendo" (salvo tormenta en curso).
-    d = { ...base, ok: true, at: new Date().toISOString(), mm: p.mm, intensity: p.thunderNow ? 4 : 0, rainNow: p.thunderNow ? Math.max(p.mm, INT_MM[4] / 2) : 0, thunderChance: p.chance, thunderNow: p.thunderNow,
+    d = { ...base, ok: true, at: new Date().toISOString(), mm: p.mm, intensity: 0, rainNow: 0, thunderChance: p.chance, thunderNow: p.thunderNow,
       detail: `${p.mm} mm ahora · probabilidad de tormenta eléctrica ${p.chance} %${p.thunderNow ? ' · tormenta ahora' : ''}` };
   } catch (e) { d = { ...base, ok: false, intensity: 0, error: e.message }; }
   wttrCache = { at: Date.now(), key: ck, data: d };
@@ -346,9 +348,10 @@ async function owmSource(lat, lng, key) {
     const j = await getJson(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lng}&appid=${encodeURIComponent(key)}&units=metric&lang=es`);
     const id = j.weather?.[0]?.id || 800, mm = r1(j.rain?.['1h'] ?? (j.rain?.['3h'] ? j.rain['3h'] / 3 : 0));
     // Llovizna/lluvia leve sin milímetros no cuenta (mismo criterio que los modelos)
-    const codeInt = id >= 200 && id < 300 ? 4 : [501, 521, 511].includes(id) ? 2 : id >= 502 && id < 600 ? 3 : 0;
+    // Tormentas (2xx): la lluvia según el código (200/230 leve, 201/231 moderada, 202/232 fuerte; 210–221 sin lluvia)
+    const codeInt = id >= 200 && id < 300 ? ({ 200: 1, 230: 1, 201: 2, 231: 2, 202: 3, 232: 3 }[id] || 0) : [501, 521, 511].includes(id) ? 2 : id >= 502 && id < 600 ? 3 : 0;
     const intensity = Math.max(codeInt, mmInt(mm));
-    d = { ...base, ok: true, at: new Date((j.dt || Date.now() / 1000) * 1000).toISOString(), intensity, rainNow: Math.max(mm, intensity ? INT_MM[intensity] / 2 : 0),
+    d = { ...base, ok: true, at: new Date((j.dt || Date.now() / 1000) * 1000).toISOString(), intensity, storm: (id >= 200 && id < 300) || undefined, rainNow: Math.max(mm, intensity ? INT_MM[intensity] / 2 : 0),
       temperature: j.main?.temp, cloudCover: j.clouds?.all, detail: `${j.weather?.[0]?.description || ''}${mm ? ` · ${mm} mm/h` : ''}` };
   } catch (e) { d = { ...base, ok: false, intensity: 0, error: e.message }; }
   owmCache = { at: Date.now(), key: ck, data: d };
@@ -420,7 +423,7 @@ export async function getWeather({ lat, lng, metarStation = 'SERO', owmKey = '' 
 const obsDryPre = (radar, metar) => (radar?.ok && !radar.intensity && !radar.near) || (metar?.ok && !metar.intensity && !metar.near);
 export function combine({ models, metar, owm, radar, wttr, lightning, at }, extra = []) {
   // wttr.in es pronóstico: su "tormenta ahora" solo cuenta si el detector de rayos o el aeropuerto la confirman.
-  if (wttr?.ok && wttr.intensity && !(lightning?.strikes15 > 0 || metar?.ts)) wttr = { ...wttr, intensity: 0, rainNow: 0, detail: `${wttr.detail} · sin rayos detectados: no cuenta como tormenta` };
+  if (wttr?.ok && wttr.thunderNow && !(lightning?.strikes15 > 0 || metar?.ts)) wttr = { ...wttr, thunderNow: false, detail: `${wttr.detail} · sin rayos detectados: no cuenta como tormenta` };
   const okM = models.filter(m => m.ok), base = okM.find(m => m.model === 'best_match') || okM.find(m => m.model === 'met_no') || okM[0];
   // Como Amaru: las señales tienen que coincidir. Un modelo solo no basta: hace falta que al menos
   // un tercio de los modelos (3 de 9) vean lluvia medible. Y si el mejor modelo dice cielo casi despejado, los modelos no cuentan.
@@ -455,7 +458,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
   if (!live.length) return { ok: false, source: 'Open-Meteo', error: modelSrc.error || 'sin conexión', rainNow: 0, rainPast3h: 0, rainNext3h: 0, rainNext24h: 0, hourly: [], sources, checkedAt: at };
   // Entre fuentes gana la que vea la lluvia más fuerte (cada una ya es confiable por sí sola: observación o consenso de modelos)
   const top = live.reduce((x, s) => (s.intensity > x.intensity || (s.intensity === x.intensity && (s.rainNow || 0) > (x.rainNow || 0)) ? s : x), live[0]);
-  const intensity = top.intensity || 0;
+  const intensity = Math.min(3, top.intensity || 0); // 0–3: la tormenta eléctrica no es una intensidad de lluvia
   // Milímetros de las últimas/próximas horas: el valor en que coinciden los modelos; si responden muy pocos, el mayor de ellos
   const pick = k => { const v = okM.map(m => m[k] || 0); return r1(v.length >= need ? kth(v) : Math.max(0, ...v)); };
   const baseCode = base?.weatherCode ?? 0, baseRainy = baseCode >= 50; // códigos de lluvia del modelo
@@ -500,6 +503,9 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
   if (!w.intensity && w.sun && ['Despejado', 'Parcialmente nublado'].includes(w.condition) && (w.condition === 'Despejado' || w.sun.sky === 'soleado')) w.condition = w.sun.sky === 'noche' ? 'Noche despejada' : 'Soleado';
   w.outlook = outlookOf(w, { okM, metar, need, base });
   w.thunder = thunderOf(w, { okM, metar, radar, wttr, lightning, extra });
+  // Tormenta eléctrica en curso: se muestra (ícono, rayos, aviso), pero el semáforo de inundación sigue la lluvia que cae.
+  w.storm = !!w.thunder.now;
+  if (w.storm) w.condition = w.intensity ? `Tormenta con ${INT_TXT[Math.min(3, w.intensity)].toLowerCase()}` : 'Tormenta eléctrica sin lluvia';
   return w;
 }
 
@@ -598,15 +604,18 @@ function thunderOf(w, { okM, metar, radar, wttr, lightning, extra = [] }) {
   if (lg?.strikes15 > 0) { p = 90; reasons.push(`se detectaron ${lg.strikes10 || lg.strikes15} rayo${(lg.strikes10 || lg.strikes15) > 1 ? 's' : ''} a menos de 15 km en los últimos minutos`); }
   else if (lg?.strikes30 > 0) { p = Math.max(p, 75); reasons.push(`hay rayos a menos de 30 km (el más cercano a ${lg.nearestKm} km)`); }
   else if (lg?.strikes60 > 0) { p = Math.max(p, 55); reasons.push(`hay rayos a menos de 60 km (el más cercano a ${lg.nearestKm} km)`); }
-  const team = extra.some(x => x.id === 'equipo' && x.ok && x.intensity >= 4);
+  const team = extra.some(x => x.id === 'equipo' && x.ok && x.storm);
   if (team) reasons.push('el equipo EMOVTT confirma tormenta eléctrica');
-  const now = w.weatherCode >= 95 || !!(metar?.ok && metar.ts) || team || !!(wttr?.ok && wttr.thunderNow) || (lg?.strikes15 > 0);
+  // Tormenta ahora: la confirma el aeropuerto, el detector de rayos o el equipo; o la ven a la vez tantos modelos como los que se piden para la lluvia
+  const mStorm = okM.filter(m => m.storm).length >= (w.modelsNeeded || 99);
+  if (mStorm) reasons.push('varios modelos ven tormenta eléctrica en este momento');
+  const now = mStorm || w.weatherCode >= 95 || !!(metar?.ok && metar.ts) || team || !!(wttr?.ok && wttr.thunderNow) || (lg?.strikes15 > 0);
   if (metar?.ok && metar.ts) { p = Math.max(p, 90); reasons.push('el aeropuerto reporta tormenta en la zona'); }
   if (w.weatherCode >= 95) { p = Math.max(p, 90); reasons.push('hay tormenta eléctrica ahora mismo'); }
   // Intensidad de la tormenta en curso (como "lluvia leve / moderada / fuerte"): por los mm/h que reportan las fuentes y los núcleos del radar
   let activity = null;
   if (now) {
-    const rm = Math.max(radar?.ok ? radar.rainNow || 0 : 0, wttr?.ok ? wttr.mm || 0 : 0, ...okM.map(m => m.rainNow || 0), ...extra.filter(x => x.ok && x.intensity >= 4).map(x => INT_MM[x.intensity]));
+    const rm = Math.max(radar?.ok ? radar.rainNow || 0 : 0, wttr?.ok ? wttr.mm || 0 : 0, ...okM.map(m => m.rainNow || 0), ...extra.filter(x => x.ok && x.storm).map(x => x.rainNow || 0));
     const dbz = radar?.ok ? radar.dbz : -1;
     const rate = lg?.strikes10 || 0, lv = dbz >= 50 || rm >= 8 || rate >= 20 ? 3 : dbz >= 45 || rm >= 2.5 || rate >= 6 ? 2 : 1;
     activity = { level: lv, label: ['', 'Tormenta leve', 'Tormenta moderada', 'Tormenta intensa'][lv], mm: r1(rm) };
@@ -663,9 +672,10 @@ function sunInfo(s, cloud, intensity) {
 export function localSources({ observed, reports = [] }) {
   const out = [];
   if (observed && new Date(observed.until) > Date.now()) {
-    const i = Math.max(0, Math.min(4, +observed.intensity || 0));
-    out.push({ id: 'equipo', kind: 'observación', name: 'Equipo EMOVTT', ok: true, at: observed.at, intensity: i, rainNow: INT_MM[i],
-      detail: `${INT_TXT[i]} marcada en el panel · vigente hasta ${new Date(observed.until).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Guayaquil', hourCycle: 'h23' })}` });
+    // "Tormenta" (4) del equipo = truenos y rayos con lluvia moderada: el semáforo sigue a la lluvia, la tormenta se avisa aparte.
+    const o = Math.max(0, Math.min(4, +observed.intensity || 0)), i = o >= 4 ? 2 : o;
+    out.push({ id: 'equipo', kind: 'observación', name: 'Equipo EMOVTT', ok: true, at: observed.at, intensity: i, rainNow: INT_MM[i], storm: o >= 4 || undefined,
+      detail: `${INT_TXT[o]} marcada en el panel · vigente hasta ${new Date(observed.until).toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Guayaquil', hourCycle: 'h23' })}` });
   }
   const recent = reports.filter(r => r.status !== 'descartado' && Date.now() - new Date(r.createdAt) < 3600e3);
   if (recent.length) {
@@ -680,14 +690,15 @@ export function localSources({ observed, reports = [] }) {
 // Códigos WMO de Open-Meteo → intensidad de lluvia (0 nada, 1 llovizna/leve, 2 moderada, 3 fuerte, 4 tormenta)
 const CODE = { 51: [1, 'Llovizna'], 53: [1, 'Llovizna'], 55: [2, 'Llovizna intensa'], 56: [1, 'Llovizna'], 57: [2, 'Llovizna intensa'],
   61: [1, 'Lluvia leve'], 63: [2, 'Lluvia moderada'], 65: [3, 'Lluvia fuerte'], 66: [1, 'Lluvia leve'], 67: [3, 'Lluvia fuerte'],
-  80: [1, 'Chubascos leves'], 81: [2, 'Chubascos moderados'], 82: [3, 'Chubascos fuertes'], 95: [4, 'Tormenta eléctrica'], 96: [4, 'Tormenta con granizo'], 99: [4, 'Tormenta con granizo'] };
+  80: [1, 'Chubascos leves'], 81: [2, 'Chubascos moderados'], 82: [3, 'Chubascos fuertes'], 95: [0, 'Tormenta eléctrica'], 96: [0, 'Tormenta con granizo'], 99: [0, 'Tormenta con granizo'] };
 export function describe(w) {
   const [codeInt, codeTxt] = CODE[w.weatherCode] || [0, ''];
   const mmInt = w.rainNow >= 8 ? 3 : w.rainNow >= 2.5 ? 2 : w.rainNow >= MIN_MM ? 1 : 0;
   const intensity = Math.max(codeInt, mmInt);
   const condition = codeTxt || (mmInt === 3 ? 'Lluvia fuerte' : mmInt === 2 ? 'Lluvia moderada' : mmInt === 1 ? 'Lluvia leve'
     : (w.cloudCover ?? 0) >= 70 ? 'Nublado' : (w.cloudCover ?? 0) >= 30 ? 'Parcialmente nublado' : 'Despejado');
-  return { raining: intensity > 0, intensity, condition };
+  // Tormenta (95–99): la intensidad de lluvia sale de los milímetros; la tormenta se marca aparte
+  return { raining: intensity > 0, intensity, condition, storm: w.weatherCode >= 95 };
 }
 
 // Marea (nivel del mar) desde Open-Meteo Marine. Útil en ciudades costeras como Santa Rosa (El Oro).
