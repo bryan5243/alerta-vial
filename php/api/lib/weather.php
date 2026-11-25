@@ -314,7 +314,7 @@ function get_weather(array $cfg, array $extra = []): array {
   $key = "$lat,$lng,$station," . ($owmKey ? 1 : 0); $now = now_ms();
   $c = cache_get('weather'); $have = $c && ($c['key'] ?? '') === $key;
   if ($have && $now - $c['at'] < AV_TTL) $remote = $c['remote'];
-  elseif ($have && $now - $c['at'] < 3600000) {
+  elseif ($have) { // aunque el dato sea viejo: la página vuelve a pedir a los 12 s y recibe el nuevo
     // Nadie espera a las fuentes: se responde con el último dato y se renueva después de enviar la respuesta
     $remote = $c['remote'];
     $lk = cache_get('wx_refresh');
