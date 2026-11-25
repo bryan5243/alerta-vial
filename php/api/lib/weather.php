@@ -325,13 +325,15 @@ function log_forecast(array $w, ?int $now = null): void {
   $log = cache_get('fclog')['log'] ?? []; $found = false;
   foreach ($log as &$x) if ($x['h'] === $hour) { $x['fc'] = max($x['fc'], $fc); $x['rain'] = $x['rain'] || $rain; $found = true; } unset($x);
   if (!$found) $log[] = ['h' => $hour, 'fc' => $fc, 'rain' => $rain];
-  $cut = local_hour($now - 6 * 3600000); $log = array_values(array_filter($log, fn($x) => $x['h'] >= $cut));
+  $cut = local_hour($now - 13 * 3600000); $log = array_values(array_filter($log, fn($x) => $x['h'] >= $cut));
   cache_put('fclog', ['log' => $log]);
 }
 function verify_from_log(?int $now = null, ?array $log = null): array {
   $now = $now ?? now_ms(); $log = $log ?? (cache_get('fclog')['log'] ?? []); $cur = local_hour($now); $from = local_hour($now - 3 * 3600000);
   $past = array_values(array_filter($log, fn($x) => $x['h'] < $cur && $x['h'] >= $from));
-  return ['busts' => count(array_filter($past, fn($x) => $x['fc'] >= NOWCAST['bustProb'] && !$x['rain'])), 'hits' => count(array_filter($past, fn($x) => $x['rain'])), 'hours' => count($past)];
+  $f12 = local_hour($now - 12 * 3600000); $day = array_values(array_filter($log, fn($x) => $x['h'] < $cur && $x['h'] >= $f12 && $x['fc'] >= NOWCAST['bustProb']));
+  return ['busts' => count(array_filter($past, fn($x) => $x['fc'] >= NOWCAST['bustProb'] && !$x['rain'])), 'hits' => count(array_filter($past, fn($x) => $x['rain'])), 'hours' => count($past),
+    'fc12' => count($day), 'hit12' => count(array_filter($day, fn($x) => $x['rain']))];
 }
 function apply_rain_log(array $w): array {
   log_rain(($w['intensity'] ?? 0) > 0 ? $w['rainNow'] : 0); $log = rain_log(); $now = now_ms();
@@ -508,15 +510,22 @@ function combine(array $remote, array $extra = []): array {
 
 // Ajusta las próximas horas (no la actual) con el radar y con los aciertos recientes de los modelos. Devuelve qué hizo.
 function nowcast(array &$w, $radar, $verify): array {
-  $out = ['factor' => 1, 'busts' => (int)($verify['busts'] ?? 0), 'hits' => (int)($verify['hits'] ?? 0), 'caps' => []];
+  $v = $verify ?? []; $out = ['factor' => 1, 'busts' => (int)($v['busts'] ?? 0), 'hits' => (int)($v['hits'] ?? 0), 'caps' => []];
   if (empty($w['hourly']) || ($w['intensity'] ?? 0) > 0) return $out;
+  // Próximas 24 h: entera en 1–6 h, 3/4 en 7–12 h, la mitad en 13–24 h
+  $short = $out['busts'] >= 2 && !$out['hits'] ? ($out['busts'] >= 3 ? 0.6 : 0.75) : 1;
+  $fc12 = (int)($v['fc12'] ?? 0); $hit12 = (int)($v['hit12'] ?? 0); $rate = $fc12 >= 4 ? $hit12 / $fc12 : 1; $day = $rate < 0.2 ? 0.6 : ($rate < 0.4 ? 0.75 : 1);
   $cap = function (int $i, $p, string $why) use (&$w, &$out) {
     if (isset($w['hourly'][$i]) && $w['hourly'][$i]['probability'] > $p) { $h = $w['hourly'][$i]; $w['hourly'][$i] = array_merge($h, ['fc' => $h['fc'] ?? $h['probability'], 'probability' => (int)$p, 'nowcast' => $why]); $out['caps'][] = $i; }
   };
-  if ($out['busts'] >= 2 && !$out['hits']) {
-    $out['factor'] = $out['busts'] >= 3 ? 0.6 : 0.75;
-    for ($i = 1; $i <= 6 && $i < count($w['hourly']); $i++) $cap($i, round($w['hourly'][$i]['probability'] * $out['factor'] / 5) * 5, 'fallos');
-    $out['note'] = "los modelos anunciaron lluvia {$out['busts']} de las últimas 3 horas y no llovió: su probabilidad se bajó";
+  $out['factor'] = min($short, $day);
+  if ($out['factor'] < 1) {
+    for ($i = 1; $i < count($w['hourly']) && $i <= 24; $i++) {
+      $f = 1 - (1 - $out['factor']) * ($i <= 6 ? 1 : ($i <= 12 ? 0.75 : 0.5));
+      $cap($i, round($w['hourly'][$i]['probability'] * $f / 5) * 5, 'fallos');
+    }
+    $out['note'] = $short <= $day ? "los modelos anunciaron lluvia {$out['busts']} de las últimas 3 horas y no llovió: se bajó su probabilidad para las próximas horas"
+      : "hoy los modelos acertaron $hit12 de $fc12 horas en que anunciaban lluvia: se bajó su probabilidad para las próximas horas";
   }
   if (!empty($radar['ok']) && empty($radar['intensity']) && empty($radar['near'])) {
     $e = $radar['echoKm'] ?? null; $s = $radar['scanKm'] ?? 0;
