@@ -271,6 +271,17 @@ export function radarPixel(lat, lng, z = 7) {
   const tx = Math.floor(fx), ty = Math.floor(fy);
   return { z, tx, ty, px: Math.min(255, Math.floor((fx - tx) * 256)), py: Math.min(255, Math.floor((fy - ty) * 256)) };
 }
+// Lluvia medible más cercana en la imagen del radar (hasta ~50 km): sirve para saber si en la próxima hora puede llegar algo.
+// A zoom 7 cada píxel mide ~1,2 km. Si la ciudad queda cerca del borde de la imagen, el radio que se revisa es menor (scanKm).
+export function radarEcho(img, px, py, lat, z = 7) {
+  const kmPx = 40075 * Math.cos(lat * Math.PI / 180) / (256 * 2 ** z), R = Math.min(ECHO_R, px, py, 255 - px, 255 - py);
+  let best = Infinity;
+  for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+    const d2 = dx * dx + dy * dy; if (d2 > R * R || d2 >= best) continue;
+    if (radarIntensity(img.at(px + dx, py + dy)) > 0) best = d2;
+  }
+  return { echoKm: best === Infinity ? null : Math.round(Math.sqrt(best) * kmPx), scanKm: Math.round(R * kmPx) };
+}
 async function radarSource(lat, lng) {
   const base = { id: 'radar', kind: 'observación', name: 'Radar de lluvia (RainViewer)' };
   const ck = `${lat},${lng}`;
@@ -298,9 +309,10 @@ async function radarSource(lat, lng) {
     let dbzHere = -1, dbzNear = -1;
     for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) { const v = radarDbz(at(px + dx, py + dy)); dbzNear = Math.max(dbzNear, v); if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) dbzHere = Math.max(dbzHere, v); }
     let nearest = 0; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) nearest = Math.max(nearest, radarIntensity(at(px + dx, py + dy)));
+    const { echoKm, scanKm } = radarEcho(img, px, py, lat);
     const fresh = ageMin <= 25;
-    d = { ...base, ok: fresh, at: new Date(fr.time * 1000).toISOString(), intensity: fresh ? here : 0, rainNow: fresh ? mmHere : 0, near: fresh && nearest > 0, dbz: fresh ? dbzHere : -1, dbzNear: fresh ? dbzNear : -1,
-      detail: `${here ? `El radar ve lluvia sobre la ciudad (${INT_TXT[here].toLowerCase()}, ~${mmHere} mm/h)` : nearest ? 'El radar ve lluvia cerca (a pocos km), no sobre la ciudad' : 'El radar no ve lluvia sobre la ciudad'} · imagen de hace ${ageMin} min`,
+    d = { ...base, ok: fresh, at: new Date(fr.time * 1000).toISOString(), intensity: fresh ? here : 0, rainNow: fresh ? mmHere : 0, near: fresh && nearest > 0, echoKm: fresh ? echoKm : null, scanKm: fresh ? scanKm : 0, dbz: fresh ? dbzHere : -1, dbzNear: fresh ? dbzNear : -1,
+      detail: `${here ? `El radar ve lluvia sobre la ciudad (${INT_TXT[here].toLowerCase()}, ~${mmHere} mm/h)` : nearest ? 'El radar ve lluvia cerca (a pocos km), no sobre la ciudad' : 'El radar no ve lluvia sobre la ciudad'}${here ? '' : echoKm != null ? ` · la lluvia más cercana está a ~${echoKm} km` : ` · sin lluvia en ${scanKm} km a la redonda`} · imagen de hace ${ageMin} min`,
       error: fresh ? undefined : `imagen de radar de hace ${ageMin} min` };
   } catch (e) { d = { ...base, ok: false, intensity: 0, error: e.message }; }
   radarCache = { at: Date.now(), key: ck, data: d };
@@ -389,8 +401,24 @@ export function wetHoursFromLog(now = Date.now()) {
   }
   return end != null && now - end < 30 * 60 * 1000 ? r1((end - start) / 3600e3) : 0;
 }
+// Registro de aciertos: por cada hora, la probabilidad que daban los modelos para esa hora y si de verdad llovió.
+let fcLog = [];
+const localHour = (now = Date.now()) => new Date(now - 5 * 3600e3).toISOString().slice(0, 13) + ':00';
+export function logForecast(w, now = Date.now()) {
+  const h0 = w.hourly?.[0]; if (!h0) return;
+  const hour = h0.time, fc = h0.fc ?? h0.probability ?? 0, rain = w.intensity > 0;
+  const e = fcLog.find(x => x.h === hour);
+  if (e) { e.fc = Math.max(e.fc, fc); e.rain ||= rain; } else fcLog.push({ h: hour, fc, rain });
+  fcLog = fcLog.filter(x => x.h >= localHour(now - 6 * 3600e3));
+}
+export function verifyFromLog(now = Date.now(), log = fcLog) {
+  const cur = localHour(now), from = localHour(now - 3 * 3600e3);
+  const past = log.filter(x => x.h < cur && x.h >= from);
+  return { busts: past.filter(x => x.fc >= NOWCAST.bustProb && !x.rain).length, hits: past.filter(x => x.rain).length, hours: past.length };
+}
 function applyRainLog(w, now = Date.now()) {
   logRain(w.intensity > 0 ? w.rainNow : 0, now);
+  logForecast(w, now);
   const h = n => rainFromLog(n, now);
   w.rainPast3h = Math.max(w.rainPast3h || 0, h(3)); w.rainPast6h = Math.max(w.rainPast6h || 0, h(6)); w.rainPast12h = Math.max(w.rainPast12h || 0, h(12));
   w.wetHours = Math.max(w.wetHours || 0, Math.floor(wetHoursFromLog(now)));
@@ -422,12 +450,12 @@ export async function getWeather({ lat, lng, metarStation = 'SERO', owmKey = '' 
     if (!have) await refreshing.catch(() => {});
   }
   const remote = cache.data && cache.key === key ? cache.data : await fetchRemote(lat, lng, metarStation, owmKey);
-  const w = combine({ ...remote, lightning: lightningSnapshot() }, extra);
+  const w = combine({ ...remote, lightning: lightningSnapshot(), verify: verifyFromLog() }, extra);
   return w.ok ? applyRainLog(w) : w;
 }
 
 const obsDryPre = (radar, metar) => (radar?.ok && !radar.intensity && !radar.near) || (metar?.ok && !metar.intensity && !metar.near);
-export function combine({ models, metar, owm, radar, wttr, lightning, at }, extra = []) {
+export function combine({ models, metar, owm, radar, wttr, lightning, at, verify }, extra = []) {
   // wttr.in es pronóstico: su "tormenta ahora" solo cuenta si el detector de rayos o el aeropuerto la confirman.
   if (wttr?.ok && wttr.thunderNow && !(lightning?.strikes15 > 0 || metar?.ts)) wttr = { ...wttr, thunderNow: false, detail: `${wttr.detail} · sin rayos detectados: no cuenta como tormenta` };
   // El aeropuerto reporta cada hora; el radar, cada 10 min. Si un radar al menos 30 min más reciente ya no ve lluvia ni sobre la ciudad
@@ -508,7 +536,8 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
   if (intensity > 0 && w.hourly.length) w.hourly[0] = rainingNow(w.hourly[0], w.rainNow);
   // No llueve y el radar no ve nada sobre la ciudad ni cerca: la columna "Ahora" muestra lo observado, no el pronóstico
   // (marcaba 100 % y 2,3 mm con el cielo seco). Queda una probabilidad baja por si se forma algo dentro de la hora.
-  else if (radarDry && w.hourly.length) w.hourly[0] = { ...w.hourly[0], probability: Math.min(w.hourly[0].probability, NOW_DRY_PROB), precipitation: 0, estimated: undefined, observed: true };
+  else if (radarDry && w.hourly.length) w.hourly[0] = { ...w.hourly[0], fc: w.hourly[0].probability, probability: Math.min(w.hourly[0].probability, NOW_DRY_PROB), precipitation: 0, estimated: undefined, observed: true };
+  w.nowcast = nowcast(w, radar, verify);
   // Probabilidad de lluvia: la de la hora en curso y las 3 siguientes, y la mayor de las próximas 24 h
   if (w.hourly.length) {
     w.probNext3h = Math.max(...w.hourly.slice(0, 4).map(h => h.probability));
@@ -532,11 +561,31 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
   // Sin lluvia: de día y despejado es "Soleado"; de noche, "Noche despejada"
   if (!w.intensity && w.sun && ['Despejado', 'Parcialmente nublado'].includes(w.condition) && (w.condition === 'Despejado' || w.sun.sky === 'soleado')) w.condition = w.sun.sky === 'noche' ? 'Noche despejada' : 'Soleado';
   w.outlook = outlookOf(w, { okM, metar, need, base, radarDry });
+  if (w.outlook.level !== 'calma' && w.nowcast.note) w.outlook.reasons.push(w.nowcast.note);
   w.thunder = thunderOf(w, { okM, metar, radar, wttr, lightning, extra });
   // Tormenta eléctrica en curso: se muestra (ícono, rayos, aviso), pero el semáforo de inundación sigue la lluvia que cae.
   w.storm = !!w.thunder.now;
   if (w.storm) w.condition = w.intensity ? `Tormenta con ${INT_TXT[Math.min(3, w.intensity)].toLowerCase()}` : 'Tormenta eléctrica sin lluvia';
   return w;
+}
+
+// Ajusta las próximas horas (no la actual) con el radar y con los aciertos recientes de los modelos. Devuelve qué hizo.
+function nowcast(w, radar, verify) {
+  const H = w.hourly || [], out = { factor: 1, busts: verify?.busts || 0, hits: verify?.hits || 0, caps: [] };
+  if (!H.length || w.intensity > 0) return out;
+  const cap = (i, p, why) => { if (H[i] && H[i].probability > p) { H[i] = { ...H[i], fc: H[i].fc ?? H[i].probability, probability: p, nowcast: why }; out.caps.push(i); } };
+  if (out.busts >= 2 && !out.hits) {
+    out.factor = out.busts >= 3 ? 0.6 : 0.75;
+    for (let i = 1; i <= 6 && i < H.length; i++) cap(i, Math.round(H[i].probability * out.factor / 5) * 5, 'fallos');
+    out.note = `los modelos anunciaron lluvia ${out.busts} de las últimas 3 horas y no llovió: su probabilidad se bajó`;
+  }
+  if (radar?.ok && !radar.intensity && !radar.near) {
+    const e = radar.echoKm, s = radar.scanKm || 0;
+    if (e == null && s >= NOWCAST.near1) cap(1, NOWCAST.h1Clear, 'radar');
+    else if (e != null && e > NOWCAST.near1) cap(1, NOWCAST.h1Far, 'radar');
+    if (e == null && s >= NOWCAST.near2) cap(2, NOWCAST.h2Clear, 'radar');
+  }
+  return out;
 }
 
 // Pronóstico hora por hora juntando todos los modelos que respondieron (próximas 24 h).
@@ -546,7 +595,11 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
 // Así nunca queda en 0 % por falta de dato cuando varios modelos sí ven lluvia. Con 1 o 2 modelos se estima por los milímetros.
 const P_MM = [[5, 90], [2.5, 80], [1, 70], [0.5, 55], [0.2, 40], [0.1, 25]];
 const WET_MM = 0.1; // desde 0,1 mm el modelo "ve lluvia" en esa hora
-const FC_MAX_PROB = 90, NOW_DRY_PROB = 20;
+const FC_MAX_PROB = 90, NOW_DRY_PROB = 20, ECHO_R = 40;
+// Corrección de las próximas horas con lo que se ve ahora (radar) y con cuánto vienen acertando los modelos hoy:
+//  · radar sin lluvia en 25 km → la próxima hora como mucho 35 % (con lluvia a más de 25 km, 50 %); sin lluvia en 45 km → la siguiente, 60 %
+//  · si en las últimas 3 horas los modelos dieron ≥ 70 % y no llovió (2 o 3 veces), las próximas 6 h se multiplican por 0,75 o 0,6
+export const NOWCAST = { h1Clear: 35, h1Far: 50, h2Clear: 60, near1: 25, near2: 45, bustProb: 70 };
 export function mergeHourly(okM) {
   const withH = okM.filter(m => m.hourly?.length);
   if (!withH.length) return [];
