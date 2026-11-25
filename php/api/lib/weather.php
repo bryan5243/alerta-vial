@@ -6,7 +6,7 @@
 //  · World Weather Online (wttr.in): respaldo y probabilidad de tormenta eléctrica
 //  · OpenWeatherMap (opcional) y lo que marca el equipo en el panel
 // Los pronósticos solos no confirman lluvia: hace falta radar o aeropuerto (o varios modelos de acuerdo).
-const AV_TTL = 300000, OM_TTL = 600000, OM_BLOCK = 900000, OM_STALE = 3600000, MIN_MM = 0.5, WET_MM = 0.1, NOTICE_PROB = 80;
+const AV_TTL = 300000, OM_TTL = 600000, OM_BLOCK = 900000, OM_STALE = 3600000, MIN_MM = 0.5, WET_MM = 0.1, NOTICE_PROB = 80, FC_MAX_PROB = 90, NOW_DRY_PROB = 20;
 const AV_UA = 'AlertaVial/1.0 (alertas de inundacion)', METNO_UA = 'AlertaVial/1.0 github.com/bryan5243/alerta-vial';
 const MODELS = ['best_match' => 'Mejor modelo', 'ecmwf_ifs025' => 'ECMWF (Europa)', 'gfs_seamless' => 'GFS (EE. UU.)', 'icon_seamless' => 'ICON (Alemania)',
   'jma_seamless' => 'JMA (Japón)', 'meteofrance_seamless' => 'Météo-France', 'ukmo_seamless' => 'UK Met Office', 'gem_seamless' => 'GEM (Canadá)'];
@@ -447,6 +447,8 @@ function combine(array $remote, array $extra = []): array {
     'rainNext3h' => $pick('rainNext3h'), 'rainNext24h' => $pick('rainNext24h'), 'probNext3h' => null, 'maxProbability24h' => null,
     'weatherCode' => $intensity ? INT_CODE[$intensity] : ($baseRainy ? 3 : $baseCode), 'hourly' => merge_hourly($okM)];
   if ($intensity > 0 && $w['hourly']) $w['hourly'][0] = raining_now($w['hourly'][0], $w['rainNow']);
+  // No llueve y el radar no ve nada sobre la ciudad ni cerca: la columna "Ahora" muestra lo observado, no el pronóstico
+  elseif ($radarDry && $w['hourly']) { $h0 = $w['hourly'][0]; unset($h0['estimated']); $w['hourly'][0] = array_merge($h0, ['probability' => min($h0['probability'], NOW_DRY_PROB), 'precipitation' => 0, 'observed' => true]); }
   if ($w['hourly']) {
     $w['probNext3h'] = max(array_map(fn($h) => $h['probability'], array_slice($w['hourly'], 0, 4)));
     $w['maxProbability24h'] = max(array_map(fn($h) => $h['probability'], array_slice($w['hourly'], 1, 24)) ?: [0]);
@@ -490,7 +492,8 @@ function merge_hourly(array $okM): array {
     if ($n >= 3) $pModels = ($wet / $n) * 100; else { $pModels = 0; foreach (P_MM as [$min, $p]) if ($max >= $min) { $pModels = $p; break; } }
     $p = max($pApi ?? 0, $pModels);
     $avg = fn($arr) => $arr ? array_sum($arr) / count($arr) : 0; $wetMm = array_values(array_filter($mm, fn($v) => $v >= WET_MM));
-    $row = ['time' => $time, 'probability' => (int)min(100, round($p / 5) * 5), 'precipitation' => r1($wet * 3 >= $n ? $avg($wetMm) : $avg($mm)), 'precipMax' => r1($max), 'wet' => $wet, 'of' => $n];
+    // Un pronóstico nunca es seguro: tope de 90 %. El 100 % queda para la hora en que una observación confirma que llueve.
+    $row = ['time' => $time, 'probability' => (int)min(FC_MAX_PROB, round($p / 5) * 5), 'precipitation' => r1($wet * 3 >= $n ? $avg($wetMm) : $avg($mm)), 'precipMax' => r1($max), 'wet' => $wet, 'of' => $n];
     if ($pApi === null || $pModels > $pApi) $row['estimated'] = true;
     if (array_filter($at, fn($h) => !empty($h['thunder']))) $row['thunder'] = true;
     $out[] = $row;
