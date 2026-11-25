@@ -6,7 +6,9 @@
 //  · World Weather Online (wttr.in): respaldo y probabilidad de tormenta eléctrica
 //  · OpenWeatherMap (opcional) y lo que marca el equipo en el panel
 // Los pronósticos solos no confirman lluvia: hace falta radar o aeropuerto (o varios modelos de acuerdo).
-const AV_TTL = 300000, OM_TTL = 600000, OM_BLOCK = 900000, OM_STALE = 3600000, MIN_MM = 0.5, WET_MM = 0.1, NOTICE_PROB = 80, FC_MAX_PROB = 90, NOW_DRY_PROB = 20;
+const AV_TTL = 300000, OM_TTL = 600000, OM_BLOCK = 900000, OM_STALE = 3600000, MIN_MM = 0.5, WET_MM = 0.1, NOTICE_PROB = 80, FC_MAX_PROB = 90, NOW_DRY_PROB = 20, ECHO_R = 40;
+// Corrección de las próximas horas con el radar y con los aciertos recientes de los modelos (igual que en Node)
+const NOWCAST = ['h1Clear' => 35, 'h1Far' => 50, 'h2Clear' => 60, 'near1' => 25, 'near2' => 45, 'bustProb' => 70];
 const AV_UA = 'AlertaVial/1.0 (alertas de inundacion)', METNO_UA = 'AlertaVial/1.0 github.com/bryan5243/alerta-vial';
 const MODELS = ['best_match' => 'Mejor modelo', 'ecmwf_ifs025' => 'ECMWF (Europa)', 'gfs_seamless' => 'GFS (EE. UU.)', 'icon_seamless' => 'ICON (Alemania)',
   'jma_seamless' => 'JMA (Japón)', 'meteofrance_seamless' => 'Météo-France', 'ukmo_seamless' => 'UK Met Office', 'gem_seamless' => 'GEM (Canadá)'];
@@ -247,6 +249,15 @@ function radar_dbz(array $p): int {
   $best = null; $bd = 1e9; foreach (radar_scale() as $e) { $d = ($e[1] - $r) ** 2 + ($e[2] - $g) ** 2 + ($e[3] - $b) ** 2; if ($d < $bd) { $bd = $d; $best = $e; } }
   return $bd < 40 * 40 * 3 ? $best[0] : -1;
 }
+// Lluvia medible más cercana en la imagen del radar (hasta ~50 km); si la ciudad queda cerca del borde, el radio es menor
+function radar_echo($img, int $px, int $py, $lat, int $z = 7): array {
+  $kmPx = 40075 * cos($lat * M_PI / 180) / (256 * 2 ** $z); $R = min(ECHO_R, $px, $py, 255 - $px, 255 - $py); $best = INF;
+  for ($dy = -$R; $dy <= $R; $dy++) for ($dx = -$R; $dx <= $R; $dx++) {
+    $d2 = $dx * $dx + $dy * $dy; if ($d2 > $R * $R || $d2 >= $best) continue;
+    if (mm_int(dbz_to_mm(radar_dbz(px_rgba($img, $px + $dx, $py + $dy)))) > 0) $best = $d2;
+  }
+  return ['echoKm' => $best === INF ? null : (int)round(sqrt($best) * $kmPx), 'scanKm' => (int)round($R * $kmPx)];
+}
 function dbz_to_mm(int $dbz): float { return $dbz < 0 ? 0.0 : r1(pow(pow(10, $dbz / 10) / 200, 1 / 1.6)); }
 function radar_pixel($lat, $lng, int $z = 7): array {
   $n = 2 ** $z; $fx = ($lng + 180) / 360 * $n; $s = sin($lat * M_PI / 180); $fy = (0.5 - log((1 + $s) / (1 - $s)) / (4 * M_PI)) * $n;
@@ -275,10 +286,10 @@ function radar_source($lat, $lng, ?array $mapsRes): array {
       if (abs($dx) <= 1 && abs($dy) <= 1) { $dbzHere = max($dbzHere, $v); $mmHere = max($mmHere, dbz_to_mm($v)); }
       if (abs($dx) <= 2 && abs($dy) <= 2) $nearest = max($nearest, mm_int(dbz_to_mm($v)));
     }
-    $here = mm_int($mmHere); $fresh = $ageMin <= 25;
-    return $base + ['ok' => $fresh, 'at' => gmdate('c', $fr['time']), 'intensity' => $fresh ? $here : 0, 'rainNow' => $fresh ? $mmHere : 0, 'near' => $fresh && $nearest > 0,
+    $here = mm_int($mmHere); $fresh = $ageMin <= 25; ['echoKm' => $echoKm, 'scanKm' => $scanKm] = radar_echo($img, $px, $py, $lat);
+    return $base + ['ok' => $fresh, 'at' => gmdate('c', $fr['time']), 'intensity' => $fresh ? $here : 0, 'rainNow' => $fresh ? $mmHere : 0, 'near' => $fresh && $nearest > 0, 'echoKm' => $fresh ? $echoKm : null, 'scanKm' => $fresh ? $scanKm : 0,
       'dbz' => $fresh ? $dbzHere : -1, 'dbzNear' => $fresh ? $dbzNear : -1,
-      'detail' => ($here ? 'El radar ve lluvia sobre la ciudad (' . mb_strtolower(INT_TXT[$here]) . ", ~$mmHere mm/h)" : ($nearest ? 'El radar ve lluvia cerca (a pocos km), no sobre la ciudad' : 'El radar no ve lluvia sobre la ciudad')) . " · imagen de hace $ageMin min",
+      'detail' => ($here ? 'El radar ve lluvia sobre la ciudad (' . mb_strtolower(INT_TXT[$here]) . ", ~$mmHere mm/h)" : ($nearest ? 'El radar ve lluvia cerca (a pocos km), no sobre la ciudad' : 'El radar no ve lluvia sobre la ciudad')) . ($here ? '' : ($echoKm !== null ? " · la lluvia más cercana está a ~$echoKm km" : " · sin lluvia en $scanKm km a la redonda")) . " · imagen de hace $ageMin min",
       'error' => $fresh ? null : "imagen de radar de hace $ageMin min"];
   } catch (Throwable $e) { return $base + ['ok' => false, 'intensity' => 0, 'error' => $e->getMessage()]; }
 }
@@ -306,8 +317,25 @@ function wet_hours_from_log(?int $now = null, ?array $log = null): float {
   }
   return $end !== null && $now - $end < 1800000 ? r1(($end - $start) / 3600000) : 0;
 }
+// Registro de aciertos: por cada hora, la probabilidad que daban los modelos para esa hora y si de verdad llovió
+function local_hour(int $ms): string { return gmdate('Y-m-d\TH:00', intdiv($ms, 1000) - 18000); }
+function log_forecast(array $w, ?int $now = null): void {
+  $now = $now ?? now_ms(); $h0 = $w['hourly'][0] ?? null; if (!$h0) return;
+  $hour = $h0['time']; $fc = $h0['fc'] ?? ($h0['probability'] ?? 0); $rain = ($w['intensity'] ?? 0) > 0;
+  $log = cache_get('fclog')['log'] ?? []; $found = false;
+  foreach ($log as &$x) if ($x['h'] === $hour) { $x['fc'] = max($x['fc'], $fc); $x['rain'] = $x['rain'] || $rain; $found = true; } unset($x);
+  if (!$found) $log[] = ['h' => $hour, 'fc' => $fc, 'rain' => $rain];
+  $cut = local_hour($now - 6 * 3600000); $log = array_values(array_filter($log, fn($x) => $x['h'] >= $cut));
+  cache_put('fclog', ['log' => $log]);
+}
+function verify_from_log(?int $now = null, ?array $log = null): array {
+  $now = $now ?? now_ms(); $log = $log ?? (cache_get('fclog')['log'] ?? []); $cur = local_hour($now); $from = local_hour($now - 3 * 3600000);
+  $past = array_values(array_filter($log, fn($x) => $x['h'] < $cur && $x['h'] >= $from));
+  return ['busts' => count(array_filter($past, fn($x) => $x['fc'] >= NOWCAST['bustProb'] && !$x['rain'])), 'hits' => count(array_filter($past, fn($x) => $x['rain'])), 'hours' => count($past)];
+}
 function apply_rain_log(array $w): array {
   log_rain(($w['intensity'] ?? 0) > 0 ? $w['rainNow'] : 0); $log = rain_log(); $now = now_ms();
+  log_forecast($w, $now);
   $w['rainPast3h'] = max($w['rainPast3h'] ?? 0, rain_from_log(3, $now, $log)); $w['rainPast6h'] = max($w['rainPast6h'] ?? 0, rain_from_log(6, $now, $log)); $w['rainPast12h'] = max($w['rainPast12h'] ?? 0, rain_from_log(12, $now, $log));
   $w['wetHours'] = max($w['wetHours'] ?? 0, floor(wet_hours_from_log($now, $log)));
   return $w;
@@ -326,7 +354,7 @@ function get_weather(array $cfg, array $extra = []): array {
     if (!$lk || $now - ($lk['at'] ?? 0) > 60000) { cache_put('wx_refresh', ['at' => $now]); register_shutdown_function(function () use ($cfg) { if (function_exists('fastcgi_finish_request')) fastcgi_finish_request(); weather_fetch($cfg); }); }
   }
   else $remote = weather_fetch($cfg);
-  $w = combine($remote, $extra);
+  $w = combine($remote + ['verify' => verify_from_log()], $extra);
   return !empty($w['ok']) ? apply_rain_log($w) : $w;
 }
 // Pide a la vez todas las fuentes vencidas y guarda el resultado
@@ -448,7 +476,8 @@ function combine(array $remote, array $extra = []): array {
     'weatherCode' => $intensity ? INT_CODE[$intensity] : ($baseRainy ? 3 : $baseCode), 'hourly' => merge_hourly($okM)];
   if ($intensity > 0 && $w['hourly']) $w['hourly'][0] = raining_now($w['hourly'][0], $w['rainNow']);
   // No llueve y el radar no ve nada sobre la ciudad ni cerca: la columna "Ahora" muestra lo observado, no el pronóstico
-  elseif ($radarDry && $w['hourly']) { $h0 = $w['hourly'][0]; unset($h0['estimated']); $w['hourly'][0] = array_merge($h0, ['probability' => min($h0['probability'], NOW_DRY_PROB), 'precipitation' => 0, 'observed' => true]); }
+  elseif ($radarDry && $w['hourly']) { $h0 = $w['hourly'][0]; unset($h0['estimated']); $w['hourly'][0] = array_merge($h0, ['fc' => $h0['probability'], 'probability' => min($h0['probability'], NOW_DRY_PROB), 'precipitation' => 0, 'observed' => true]); }
+  $w['nowcast'] = nowcast($w, $radar, $remote['verify'] ?? null);
   if ($w['hourly']) {
     $w['probNext3h'] = max(array_map(fn($h) => $h['probability'], array_slice($w['hourly'], 0, 4)));
     $w['maxProbability24h'] = max(array_map(fn($h) => $h['probability'], array_slice($w['hourly'], 1, 24)) ?: [0]);
@@ -469,6 +498,7 @@ function combine(array $remote, array $extra = []): array {
   if (!$w['intensity'] && $w['sun'] && in_array($w['condition'], ['Despejado', 'Parcialmente nublado'], true) && ($w['condition'] === 'Despejado' || $w['sun']['sky'] === 'soleado'))
     $w['condition'] = $w['sun']['sky'] === 'noche' ? 'Noche despejada' : 'Soleado';
   $w['outlook'] = outlook_of($w, $okM, $metar, $need, $radarDry);
+  if ($w['outlook']['level'] !== 'calma' && !empty($w['nowcast']['note'])) $w['outlook']['reasons'][] = $w['nowcast']['note'];
   $w['thunder'] = thunder_of($w, $okM, $metar, $radar, $wttr, $lightning, $extra);
   // Tormenta eléctrica en curso: se muestra y se avisa, pero el semáforo de inundación sigue la lluvia que cae
   $w['storm'] = !empty($w['thunder']['now']);
@@ -476,6 +506,26 @@ function combine(array $remote, array $extra = []): array {
   return $w;
 }
 
+// Ajusta las próximas horas (no la actual) con el radar y con los aciertos recientes de los modelos. Devuelve qué hizo.
+function nowcast(array &$w, $radar, $verify): array {
+  $out = ['factor' => 1, 'busts' => (int)($verify['busts'] ?? 0), 'hits' => (int)($verify['hits'] ?? 0), 'caps' => []];
+  if (empty($w['hourly']) || ($w['intensity'] ?? 0) > 0) return $out;
+  $cap = function (int $i, $p, string $why) use (&$w, &$out) {
+    if (isset($w['hourly'][$i]) && $w['hourly'][$i]['probability'] > $p) { $h = $w['hourly'][$i]; $w['hourly'][$i] = array_merge($h, ['fc' => $h['fc'] ?? $h['probability'], 'probability' => (int)$p, 'nowcast' => $why]); $out['caps'][] = $i; }
+  };
+  if ($out['busts'] >= 2 && !$out['hits']) {
+    $out['factor'] = $out['busts'] >= 3 ? 0.6 : 0.75;
+    for ($i = 1; $i <= 6 && $i < count($w['hourly']); $i++) $cap($i, round($w['hourly'][$i]['probability'] * $out['factor'] / 5) * 5, 'fallos');
+    $out['note'] = "los modelos anunciaron lluvia {$out['busts']} de las últimas 3 horas y no llovió: su probabilidad se bajó";
+  }
+  if (!empty($radar['ok']) && empty($radar['intensity']) && empty($radar['near'])) {
+    $e = $radar['echoKm'] ?? null; $s = $radar['scanKm'] ?? 0;
+    if ($e === null && $s >= NOWCAST['near1']) $cap(1, NOWCAST['h1Clear'], 'radar');
+    elseif ($e !== null && $e > NOWCAST['near1']) $cap(1, NOWCAST['h1Far'], 'radar');
+    if ($e === null && $s >= NOWCAST['near2']) $cap(2, NOWCAST['h2Clear'], 'radar');
+  }
+  return $out;
+}
 function merge_hourly(array $okM): array {
   $withH = array_values(array_filter($okM, fn($m) => !empty($m['hourly'])));
   if (!$withH) return [];
