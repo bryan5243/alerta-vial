@@ -430,6 +430,10 @@ const obsDryPre = (radar, metar) => (radar?.ok && !radar.intensity && !radar.nea
 export function combine({ models, metar, owm, radar, wttr, lightning, at }, extra = []) {
   // wttr.in es pronóstico: su "tormenta ahora" solo cuenta si el detector de rayos o el aeropuerto la confirman.
   if (wttr?.ok && wttr.thunderNow && !(lightning?.strikes15 > 0 || metar?.ts)) wttr = { ...wttr, thunderNow: false, detail: `${wttr.detail} · sin rayos detectados: no cuenta como tormenta` };
+  // El aeropuerto reporta cada hora; el radar, cada 10 min. Si un radar al menos 30 min más reciente ya no ve lluvia ni sobre la ciudad
+  // ni cerca, la lluvia de ese reporte viejo ya pasó: no cuenta ni como lluvia ni para respaldar a los pronósticos (modelos, OWM).
+  if (metar?.ok && (metar.intensity || metar.near) && radar?.ok && !radar.intensity && !radar.near && Date.parse(radar.at) - Date.parse(metar.at) >= 30 * 60000)
+    metar = { ...metar, intensity: 0, rainNow: 0, near: false, detail: `${metar.detail} · el radar, más reciente, ya no ve lluvia: no cuenta` };
   const okM = models.filter(m => m.ok), base = okM.find(m => m.model === 'best_match') || okM.find(m => m.model === 'met_no') || okM[0];
   // Como Amaru: las señales tienen que coincidir. Un modelo solo no basta: hace falta que al menos
   // un tercio de los modelos (3 de 9) vean lluvia medible. Y si el mejor modelo dice cielo casi despejado, los modelos no cuentan.
