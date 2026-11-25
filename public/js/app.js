@@ -389,7 +389,7 @@ function render(reports) {
   const srcOpen = $('#srcline details')?.open;
   $('#srcline').innerHTML = `<details class="src"${srcOpen ? ' open' : ''}><summary>${ICON.info}<span>De dónde salen los datos${w.ok ? ` <small>· ${wxTime(w.observedAt)}</small>` : ''}</span></summary><div class="src-b">
     <p><b>Clima:</b> ${esc(w.source)}${w.ok ? `, dato de las ${wxTime(w.observedAt)}` : ''}.${w.decidedBy ? ` Lluvia detectada por ${esc(w.decidedBy)}.` : ''}</p>
-    ${w.ok && w.hourly?.length ? `<p><b>Probabilidad de lluvia:</b> la mayor entre la que publican los modelos y la parte de los modelos que prevén lluvia en cada hora${w.hourly[0]?.of ? ` (${w.hourly[0].of} modelos ahora)` : ''}.</p>` : ''}
+    ${w.ok && w.hourly?.length ? `<p><b>Probabilidad de lluvia:</b> la mayor entre la que publican los modelos y la parte de los modelos que prevén lluvia en cada hora${w.hourly[0]?.of ? ` (${w.hourly[0].of} modelos ahora)` : ''}, con tope de 90 %. "Ahora" sigue al radar, y las próximas horas bajan si el radar no ve lluvia cerca o si los modelos vienen fallando hoy.</p>` : ''}
     <p><b>Semáforo:</b> sube con lluvia medida desde ${dec(config.rainThresholdMm)} mm/h. Nivel sugerido por el clima: <span class="chip ${alert.suggested}">${LEVELS[alert.suggested]}</span></p></div></details>`;
 
   // Google Flood Forecasting
