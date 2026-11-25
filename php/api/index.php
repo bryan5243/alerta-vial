@@ -349,7 +349,7 @@ function admin_routes(string $method, array $seg): void {
   if ($r === 'reset-real' && $method === 'POST') { push_tick_now();
     $done = []; if (sim_on()) $done[] = 'simulación de lluvia'; @unlink(data_dir() . '/cache/sim.json');
     db_lock(); $db = &db(); $a = &$db['alert'];
-    if (!empty($a['observed'])) { $done[] = 'lluvia marcada por el equipo'; unset($a['observed']); }
+    if (!empty($a['observed'])) { $done[] = !empty($a['observed']['dry']) ? '"no llueve" marcado por el equipo' : 'lluvia marcada por el equipo'; unset($a['observed']); }
     if (($a['mode'] ?? '') === 'manual') { $done[] = 'modo manual'; $a['mode'] = 'auto'; }
     unset($a['autoLevel']); $a['autoStepAt'] = now_ms(); unset($a); db_save();
     $st = compute_status(); $off = 0;
@@ -377,9 +377,9 @@ function admin_routes(string $method, array $seg): void {
     out(['ok' => true, 'counts' => $counts]);
   }
   if ($r === 'observed' && $method === 'PUT') { push_tick_now();
-    db_lock(); $db = &db(); $i = (int)round((float)($b['intensity'] ?? 0));
-    if (!$i) unset($db['alert']['observed']);
-    else $db['alert']['observed'] = ['intensity' => max(1, min(4, $i)), 'at' => now_iso(), 'until' => gmdate('Y-m-d\TH:i:s', time() + (int)max(15, min(720, (float)($b['minutes'] ?? 0) ?: 120)) * 60) . '.000Z'];
+    db_lock(); $db = &db(); $i = (int)round((float)($b['intensity'] ?? 0)); $dry = !empty($b['dry']);
+    if (!$i && !$dry) unset($db['alert']['observed']);
+    else $db['alert']['observed'] = ['intensity' => $dry ? 0 : max(1, min(4, $i))] + ($dry ? ['dry' => true] : []) + ['at' => now_iso(), 'until' => gmdate('Y-m-d\TH:i:s', time() + (int)max(15, min(720, (float)($b['minutes'] ?? 0) ?: 120)) * 60) . '.000Z'];
     db_save(); out($db['alert']['observed'] ?? ['intensity' => 0]);
   }
   if ($r === 'simulation' && $method === 'GET') out(sim_on() ?: ['active' => false]);

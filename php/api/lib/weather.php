@@ -415,6 +415,10 @@ function combine(array $remote, array $extra = []): array {
     'intensity' => $mInt, 'rainNow' => $mRain, 'detail' => $detail, 'error' => $okM ? null : ($models[0]['error'] ?? null),
     'models' => array_map(fn($m) => ['name' => $m['name'], 'ok' => $m['ok'], 'rainNow' => $m['rainNow'] ?? 0, 'intensity' => $m['intensity'] ?? 0, 'error' => $m['error'] ?? null, 'stale' => !empty($m['stale']) ? $m['staleMin'] : null], $models)];
   $sources = array_values(array_filter(array_merge([$modelSrc, $metar, $owm, $radar, $wttr, $lightning], $extra)));
+  // El equipo marcó "no llueve" en el centro: ni los pronósticos ni el aeropuerto (a unos 4 km) ni el radar encienden "lloviendo" mientras dure la marca.
+  if (first_of($extra, fn($x) => ($x['id'] ?? '') === 'equipo' && !empty($x['ok']) && !empty($x['dry'])))
+    $sources = array_map(fn($s) => !in_array($s['id'] ?? '', ['reportes', 'equipo'], true) && ($s['intensity'] ?? 0) > 0
+      ? array_merge($s, ['intensity' => 0, 'rainNow' => 0, 'detail' => ($s['detail'] ?? INT_TXT[$s['intensity']]) . ' · el equipo marcó que no llueve en el centro: no cuenta']) : $s, $sources);
   $live = array_values(array_filter($sources, fn($s) => !empty($s['ok'])));
   if (!$live) return ['ok' => false, 'source' => 'Open-Meteo', 'error' => $modelSrc['error'] ?: 'sin conexión', 'rainNow' => 0, 'rainPast3h' => 0, 'rainNext3h' => 0, 'rainNext24h' => 0, 'hourly' => [], 'sources' => $sources, 'checkedAt' => $at];
   $top = $live[0];
@@ -598,7 +602,11 @@ function sun_info($s, $cloud, $intensity) {
 // ---------- Fuentes locales (solo lo que marca el equipo; los reportes ciudadanos ya no cambian el clima) ----------
 function local_sources(?array $observed): array {
   $out = [];
-  if ($observed && strtotime($observed['until']) > time()) {
+  // "No llueve": el equipo ve la calle seca en el centro. Manda sobre los pronósticos y las estaciones de afuera (ver combine).
+  if ($observed && !empty($observed['dry']) && strtotime($observed['until']) > time())
+    $out[] = ['id' => 'equipo', 'kind' => 'observación', 'name' => 'Equipo EMOVTT', 'ok' => true, 'at' => $observed['at'], 'intensity' => 0, 'rainNow' => 0, 'dry' => true,
+      'detail' => 'No llueve en el centro (marcado en el panel) · vigente hasta ' . hhmm_local(strtotime($observed['until']))];
+  elseif ($observed && strtotime($observed['until']) > time()) {
     // "Tormenta" (4) del equipo = truenos y rayos con lluvia moderada: el semáforo sigue a la lluvia, la tormenta se avisa aparte
     $o = max(0, min(4, (int)($observed['intensity'] ?? 0))); $i = $o >= 4 ? 2 : $o;
     $out[] = ['id' => 'equipo', 'kind' => 'observación', 'name' => 'Equipo EMOVTT', 'ok' => true, 'at' => $observed['at'], 'intensity' => $i, 'rainNow' => INT_MM[$i], 'storm' => $o >= 4 ?: null,
