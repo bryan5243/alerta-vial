@@ -349,9 +349,14 @@ async function owmSource(lat, lng, key) {
     const id = j.weather?.[0]?.id || 800, mm = r1(j.rain?.['1h'] ?? (j.rain?.['3h'] ? j.rain['3h'] / 3 : 0));
     // Llovizna/lluvia leve sin milímetros no cuenta (mismo criterio que los modelos)
     // Tormentas (2xx): la lluvia según el código (200/230 leve, 201/231 moderada, 202/232 fuerte; 210–221 sin lluvia)
-    const codeInt = id >= 200 && id < 300 ? ({ 200: 1, 230: 1, 201: 2, 231: 2, 202: 3, 232: 3 }[id] || 0) : [501, 521, 511].includes(id) ? 2 : id >= 502 && id < 600 ? 3 : 0;
-    const intensity = Math.max(codeInt, mmInt(mm));
-    d = { ...base, ok: true, at: new Date((j.dt || Date.now() / 1000) * 1000).toISOString(), intensity, storm: (id >= 200 && id < 300) || undefined, rainNow: Math.max(mm, intensity ? INT_MM[intensity] / 2 : 0),
+    // Códigos de OWM: 500 leve, 501 moderada, 502–504 fuerte, 511 moderada, 520 chubasco leve, 521 chubasco, 522 chubasco fuerte, 531 irregular.
+    // Antes 520/522/531 se tomaban todos como "fuerte" (un chubasco leve salía como lluvia fuerte).
+    const codeInt = id >= 200 && id < 300 ? ({ 200: 1, 230: 1, 201: 2, 231: 2, 202: 3, 232: 3 }[id] || 0)
+      : ({ 501: 2, 502: 3, 503: 3, 504: 3, 511: 2, 521: 2, 522: 3, 531: 2 }[id] || 0); // 500/520 (leve) sin milímetros no cuentan
+    // Si OWM informa los milímetros, mandan los milímetros (su código suele exagerar); el código solo se usa si no hay medida, y como mucho moderada.
+    const hasMm = j.rain?.['1h'] != null || j.rain?.['3h'] != null;
+    const intensity = hasMm ? mmInt(mm) : Math.min(2, codeInt);
+    d = { ...base, ok: true, at: new Date((j.dt || Date.now() / 1000) * 1000).toISOString(), intensity, storm: (id >= 200 && id < 300) || undefined, rainNow: hasMm ? mm : intensity ? INT_MM[intensity] / 2 : 0,
       temperature: j.main?.temp, cloudCover: j.clouds?.all, detail: `${j.weather?.[0]?.description || ''}${mm ? ` · ${mm} mm/h` : ''}` };
   } catch (e) { d = { ...base, ok: false, intensity: 0, error: e.message }; }
   owmCache = { at: Date.now(), key: ck, data: d };
@@ -435,6 +440,11 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
   const corro = (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || metar.near));
   // OpenWeatherMap: su "clima actual" es un modelo (marcaba lluvia con cielo seco). Su lluvia solo cuenta si el radar o el aeropuerto la confirman.
   if (owm?.ok && owm.intensity && !corro) owm = { ...owm, intensity: 0, rainNow: 0, detail: `${owm.detail} · el radar y el aeropuerto no ven lluvia: no cuenta` };
+  // Y aun confirmada, OWM no puede decir que llueve más fuerte que lo que ven el radar o el aeropuerto (si solo la ven cerca: leve).
+  else if (owm?.ok && owm.intensity) {
+    const obsMax = Math.max(radar?.ok ? radar.intensity || 0 : 0, metar?.ok ? metar.intensity || 0 : 0, 1);
+    if (owm.intensity > obsMax) owm = { ...owm, intensity: obsMax, rainNow: Math.min(owm.rainNow || 0, INT_MM[obsMax]), detail: `${owm.detail} · el radar/aeropuerto ven ${INT_TXT[obsMax].toLowerCase()}: se cuenta así` };
+  }
   // Observación que dice "no llueve": radar sin ecos cerca o aeropuerto sin precipitación
   const obsDry = !corro && ((radar?.ok && !radar.intensity && !radar.near) || (metar?.ok && !metar.intensity && !metar.near));
   // Con Open-Meteo (9 modelos) hacen falta 3 que coincidan; si solo responden 1-2 modelos, no confirman lluvia sin una observación.
