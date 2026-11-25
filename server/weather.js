@@ -441,7 +441,11 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at }, extr
   // solo cuenta si otra fuente lo respalda (wttr.in, radar o aeropuerto): así no marca "lluvia leve" con sol.
   // Los modelos y wttr.in son PRONÓSTICOS: dos pronósticos de acuerdo no prueban que esté lloviendo (por eso marcaba
   // lluvia con el cielo solo nublado). El respaldo tiene que ser una observación real: radar o aeropuerto.
-  const corro = (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || metar.near));
+  // "Lluvia en los alrededores" del aeropuerto (VCSH: a 8–16 km de la pista, que está a ~4 km del centro) no respalda a los pronósticos
+  // si el radar, que mira la ciudad y sus alrededores, no ve nada: esa lluvia está lejos (cerros, campo).
+  const radarDry = radar?.ok && !radar.intensity && !radar.near;
+  const corro = (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || (metar.near && !radarDry)));
+  if (metar?.ok && !metar.intensity && metar.near && radarDry) metar = { ...metar, detail: `${metar.detail} · el radar no la ve cerca de la ciudad: no respalda a los pronósticos` };
   // OpenWeatherMap: su "clima actual" es un modelo (marcaba lluvia con cielo seco). Su lluvia solo cuenta si el radar o el aeropuerto la confirman.
   if (owm?.ok && owm.intensity && !corro) owm = { ...owm, intensity: 0, rainNow: 0, detail: `${owm.detail} · el radar y el aeropuerto no ven lluvia: no cuenta` };
   // Y aun confirmada, OWM no puede decir que llueve más fuerte que lo que ven el radar o el aeropuerto (si solo la ven cerca: leve).
