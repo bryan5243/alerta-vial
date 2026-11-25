@@ -47,7 +47,7 @@ function om_parse(string $model, array $j, bool $sfx): array {
   $k = 3600 / (($cur['interval'] ?? 0) ?: 900);
   $curMm = $useCur ? max($cur['precipitation'] ?? 0, ($cur['rain'] ?? 0) + ($cur['showers'] ?? 0)) * $k : 0;
   $rainNow = r1(max($curMm, $hours[$nowIdx]['precipitation'] ?? 0));
-  $code = $useCur ? ($cur['weather_code'] ?? null) : null; $storm = $code !== null && $code >= 95 && $rainNow >= 1;
+  $code = $useCur ? ($cur['weather_code'] ?? null) : null; $storm = $code !== null && $code >= 95; // tormenta aparte: la lluvia sale solo de los mm
   $D = $j['daily'] ?? [];
   $sun = $useCur ? ['isDay' => $cur['is_day'] ?? null, 'uvIndex' => $cur['uv_index'] ?? null, 'radiation' => $cur['shortwave_radiation'] ?? null,
     'uvMax' => ($g($D, 'uv_index_max') ?? [])[0] ?? null, 'sunrise' => ($g($D, 'sunrise') ?? [])[0] ?? null, 'sunset' => ($g($D, 'sunset') ?? [])[0] ?? null] : null;
@@ -59,7 +59,7 @@ function om_parse(string $model, array $j, bool $sfx): array {
   return ['model' => $model, 'name' => MODELS[$model], 'ok' => true, 'observedAt' => $cur['time'] ?? null,
     'temperature' => $useCur ? ($cur['temperature_2m'] ?? null) : null, 'apparent' => $useCur ? ($cur['apparent_temperature'] ?? null) : null,
     'humidity' => $useCur ? ($cur['relative_humidity_2m'] ?? null) : null, 'wind' => $useCur ? ($cur['wind_speed_10m'] ?? null) : null, 'gust' => $useCur ? ($cur['wind_gusts_10m'] ?? null) : null,
-    'cloudCover' => $useCur ? ($cur['cloud_cover'] ?? null) : null, 'sun' => $sun, 'weatherCode' => $code, 'rainNow' => $rainNow, 'intensity' => $storm ? 4 : mm_int($rainNow),
+    'cloudCover' => $useCur ? ($cur['cloud_cover'] ?? null) : null, 'sun' => $sun, 'weatherCode' => $code, 'rainNow' => $rainNow, 'intensity' => mm_int($rainNow), 'storm' => $storm ?: null,
     'rainPast3h' => $sum($sl(max(0, $nowIdx - 3), $nowIdx + 1)), 'rainPast6h' => $sum($sl(max(0, $nowIdx - 6), $nowIdx + 1)), 'rainPast12h' => $sum($sl(max(0, $nowIdx - 12), $nowIdx + 1)),
     'wetHours' => $wet, 'rainNext3h' => $sum($sl($nowIdx + 1, $nowIdx + 4)), 'rainNext24h' => $sum($sl($nowIdx + 1, $nowIdx + 25)),
     'probNext3h' => $hasProb ? $probOf($sl($nowIdx, $nowIdx + 4)) : null,
@@ -111,7 +111,7 @@ function metno_parse(array $res): array {
     $det = $t0['data']['instant']['details'] ?? []; $n1 = $t0['data']['next_1_hours'] ?? [];
     $sym = $n1['summary']['symbol_code'] ?? ($t0['data']['next_6_hours']['summary']['symbol_code'] ?? '');
     $mm = fn($i) => $ts[$i]['data']['next_1_hours']['details']['precipitation_amount'] ?? 0;
-    $rainNow = r1($mm(0)); $code = metno_code($sym); $storm = $code >= 95 && $rainNow >= 1;
+    $rainNow = r1($mm(0)); $code = metno_code($sym); $storm = $code >= 95;
     $t0s = strtotime($t0['time']); $hr = (int)gmdate('G', $t0s - 18000);
     $isDay = preg_match('/_night/', $sym) ? 0 : (preg_match('/_day/', $sym) ? 1 : ($hr >= 6 && $hr < 18 ? 1 : 0));
     $cloud = $det['cloud_area_fraction'] ?? null;
@@ -131,7 +131,7 @@ function metno_parse(array $res): array {
     $t = $det['air_temperature'] ?? null; $rh = $det['relative_humidity'] ?? null; $ws = $det['wind_speed'] ?? null;
     return ['model' => 'met_no', 'name' => 'MET Norway (yr.no)', 'ok' => true, 'observedAt' => gmdate('Y-m-d\TH:i', $t0s - 18000),
       'temperature' => $t, 'humidity' => $rh, 'wind' => $ws === null ? null : r1($ws * 3.6), 'apparent' => apparent_temp($t, $rh, $ws),
-      'cloudCover' => $cloud === null ? null : (int)round($cloud), 'weatherCode' => $code, 'rainNow' => $rainNow, 'intensity' => $storm ? 4 : mm_int($rainNow),
+      'cloudCover' => $cloud === null ? null : (int)round($cloud), 'weatherCode' => $code, 'rainNow' => $rainNow, 'intensity' => mm_int($rainNow), 'storm' => $storm ?: null,
       'sun' => ['isDay' => $isDay, 'uvIndex' => $isDay ? $uv : 0, 'radiation' => null, 'uvMax' => null, 'sunrise' => null, 'sunset' => null],
       'rainPast3h' => 0, 'rainNext3h' => r1($mm(1) + $mm(2) + $mm(3)), 'rainNext24h' => r1($next24),
       'probNext3h' => $prob ? max($prob) : null, 'maxProbability24h' => null, 'hourly' => $hourly, 'thunder6h' => $thunder];
@@ -147,10 +147,11 @@ function parse_metar($raw): array {
     if (!$m2 && !$m3) continue;
     if ($m1 === 'VC') { $near = true; continue; }
     $ts = $m2 === 'TS'; $rain = (bool)preg_match('/RA|DZ|GR|GS|UP/', $m3);
-    $i = $ts ? ($rain ? 4 : 3) : (preg_match('/RA|GR|GS|UP/', $m3) ? 2 : (preg_match('/DZ/', $m3) ? 1 : 0));
-    if (!$ts && $m1 === '-') $i = max(1, $i - 1);
-    if (!$ts && $m1 === '+') $i = 3;
-    if ($i > $intensity) { $intensity = $i; $txt = $ts ? ($rain ? 'Tormenta con lluvia' : 'Tormenta eléctrica') : (($m1 === '+' ? 'Lluvia fuerte' : ($m1 === '-' ? 'Lluvia leve' : (preg_match('/DZ/', $m3) && !preg_match('/RA/', $m3) ? 'Llovizna' : 'Lluvia'))) . ($m2 === 'SH' ? ' (chubasco)' : '')); }
+    // TS = tormenta eléctrica; la lluvia se mide aparte ("TS" solo = tormenta sin lluvia, "-TSRA" = con lluvia leve)
+    $i = preg_match('/RA|GR|GS|UP/', $m3) ? 2 : (preg_match('/DZ/', $m3) ? 1 : 0);
+    if ($i && $m1 === '-') $i = max(1, $i - 1);
+    if ($i && $m1 === '+') $i = 3;
+    if ($i > $intensity || ($ts && strpos($txt, 'Tormenta') !== 0)) { $intensity = max($intensity, $i); $txt = $ts ? ($rain ? 'Tormenta con ' . mb_strtolower(INT_TXT[$i]) : 'Tormenta eléctrica sin lluvia') : (($m1 === '+' ? 'Lluvia fuerte' : ($m1 === '-' ? 'Lluvia leve' : (preg_match('/DZ/', $m3) && !preg_match('/RA/', $m3) ? 'Llovizna' : 'Lluvia'))) . ($m2 === 'SH' ? ' (chubasco)' : '')); }
   }
   $air = metar_air($body);
   if (!$intensity && $near) return ['intensity' => 0, 'near' => $near, 'text' => 'Lluvia en los alrededores (no sobre el aeropuerto)'] + $air;
@@ -195,9 +196,9 @@ function owm_parse(array $res): array {
   try {
     $j = http_json($res); $id = $j['weather'][0]['id'] ?? 800;
     $mm = r1($j['rain']['1h'] ?? (isset($j['rain']['3h']) ? $j['rain']['3h'] / 3 : 0));
-    $codeInt = $id >= 200 && $id < 300 ? 4 : (in_array($id, [501, 521, 511]) ? 2 : ($id >= 502 && $id < 600 ? 3 : 0));
+    $codeInt = $id >= 200 && $id < 300 ? ([200 => 1, 230 => 1, 201 => 2, 231 => 2, 202 => 3, 232 => 3][$id] ?? 0) : (in_array($id, [501, 521, 511]) ? 2 : ($id >= 502 && $id < 600 ? 3 : 0));
     $intensity = max($codeInt, mm_int($mm));
-    return $base + ['ok' => true, 'at' => gmdate('c', $j['dt'] ?? time()), 'intensity' => $intensity, 'rainNow' => max($mm, $intensity ? INT_MM[$intensity] / 2 : 0),
+    return $base + ['ok' => true, 'at' => gmdate('c', $j['dt'] ?? time()), 'intensity' => $intensity, 'storm' => ($id >= 200 && $id < 300) ?: null, 'rainNow' => max($mm, $intensity ? INT_MM[$intensity] / 2 : 0),
       'temperature' => $j['main']['temp'] ?? null, 'cloudCover' => $j['clouds']['all'] ?? null, 'detail' => ($j['weather'][0]['description'] ?? '') . ($mm ? " · $mm mm/h" : '')];
   } catch (Throwable $e) { return $base + ['ok' => false, 'intensity' => 0, 'error' => $e->getMessage()]; }
 }
@@ -210,14 +211,14 @@ function parse_wttr(array $j, int $hourNow): array {
   $mm = (float)($cur['precipMM'] ?? 0); $code = (int)($cur['weatherCode'] ?? 0);
   $chance = max(array_merge([0], array_map(fn($h) => (int)($h['chanceofthunder'] ?? 0), $near)));
   $thunderNow = in_array($code, [200, 386, 389, 392, 395], true) && $mm >= 0.2;
-  return ['mm' => $mm, 'code' => $code, 'chance' => $chance, 'thunderNow' => $thunderNow, 'intensity' => $thunderNow ? 4 : mm_int($mm)];
+  return ['mm' => $mm, 'code' => $code, 'chance' => $chance, 'thunderNow' => $thunderNow, 'intensity' => 0];
 }
 function wttr_parse(array $res): array {
   $base = ['id' => 'wttr', 'kind' => 'pronóstico', 'name' => 'World Weather Online (wttr.in)'];
   try {
     $p = parse_wttr(http_json($res), (int)gmdate('G', time() - 18000));
     // wttr.in es pronóstico: sus mm solo respaldan; por sí solo no enciende "lloviendo" (salvo tormenta, que además debe confirmarse)
-    return $base + ['ok' => true, 'at' => gmdate('c'), 'mm' => $p['mm'], 'intensity' => $p['thunderNow'] ? 4 : 0, 'rainNow' => $p['thunderNow'] ? max($p['mm'], INT_MM[4] / 2) : 0,
+    return $base + ['ok' => true, 'at' => gmdate('c'), 'mm' => $p['mm'], 'intensity' => 0, 'rainNow' => 0,
       'thunderChance' => $p['chance'], 'thunderNow' => $p['thunderNow'], 'detail' => "{$p['mm']} mm ahora · probabilidad de tormenta eléctrica {$p['chance']} %" . ($p['thunderNow'] ? ' · tormenta ahora' : '')];
   } catch (Throwable $e) { return $base + ['ok' => false, 'intensity' => 0, 'error' => $e->getMessage()]; }
 }
@@ -371,8 +372,8 @@ function combine(array $remote, array $extra = []): array {
   $models = $remote['models']; $metar = $remote['metar'] ?? null; $owm = $remote['owm'] ?? null; $radar = $remote['radar'] ?? null; $wttr = $remote['wttr'] ?? null; $at = $remote['at'];
   $lightning = $remote['lightning'] ?? null; // en PHP no hay detector de rayos en vivo (necesita un proceso siempre encendido)
   // wttr.in es pronóstico: su "tormenta ahora" solo cuenta si el aeropuerto la confirma
-  if (!empty($wttr['ok']) && !empty($wttr['intensity']) && !(($lightning['strikes15'] ?? 0) > 0 || !empty($metar['ts'])))
-    $wttr = array_merge($wttr, ['intensity' => 0, 'rainNow' => 0, 'detail' => ($wttr['detail'] ?? '') . ' · sin rayos detectados: no cuenta como tormenta']);
+  if (!empty($wttr['ok']) && !empty($wttr['thunderNow']) && !(($lightning['strikes15'] ?? 0) > 0 || !empty($metar['ts'])))
+    $wttr = array_merge($wttr, ['thunderNow' => false, 'detail' => ($wttr['detail'] ?? '') . ' · sin rayos detectados: no cuenta como tormenta']);
   $okM = array_values(array_filter($models, fn($m) => !empty($m['ok'])));
   $base = first_of($okM, fn($m) => $m['model'] === 'best_match') ?? first_of($okM, fn($m) => $m['model'] === 'met_no') ?? ($okM[0] ?? null);
   // Los modelos y wttr.in son pronósticos: el respaldo tiene que ser una observación real (radar o aeropuerto)
@@ -408,7 +409,7 @@ function combine(array $remote, array $extra = []): array {
   if (!$live) return ['ok' => false, 'source' => 'Open-Meteo', 'error' => $modelSrc['error'] ?: 'sin conexión', 'rainNow' => 0, 'rainPast3h' => 0, 'rainNext3h' => 0, 'rainNext24h' => 0, 'hourly' => [], 'sources' => $sources, 'checkedAt' => $at];
   $top = $live[0];
   foreach ($live as $s) if (($s['intensity'] ?? 0) > ($top['intensity'] ?? 0) || (($s['intensity'] ?? 0) === ($top['intensity'] ?? 0) && ($s['rainNow'] ?? 0) > ($top['rainNow'] ?? 0))) $top = $s;
-  $intensity = $top['intensity'] ?? 0;
+  $intensity = min(3, $top['intensity'] ?? 0); // 0–3: la tormenta eléctrica no es una intensidad de lluvia
   $pick = function ($k) use ($okM, $need, $kth) { $v = array_map(fn($m) => $m[$k] ?? 0, $okM); return r1(count($v) >= $need ? $kth($v) : fl_max($v)); };
   $baseCode = $base['weatherCode'] ?? 0; $baseRainy = $baseCode >= 50;
   $pk = function ($k) use ($base, $okM) { if (($base[$k] ?? null) !== null) return $base[$k]; $m = first_of($okM, fn($m) => ($m[$k] ?? null) !== null); return $m[$k] ?? null; };
@@ -442,6 +443,9 @@ function combine(array $remote, array $extra = []): array {
     $w['condition'] = $w['sun']['sky'] === 'noche' ? 'Noche despejada' : 'Soleado';
   $w['outlook'] = outlook_of($w, $okM, $metar, $need);
   $w['thunder'] = thunder_of($w, $okM, $metar, $radar, $wttr, $lightning, $extra);
+  // Tormenta eléctrica en curso: se muestra y se avisa, pero el semáforo de inundación sigue la lluvia que cae
+  $w['storm'] = !empty($w['thunder']['now']);
+  if ($w['storm']) $w['condition'] = $w['intensity'] ? 'Tormenta con ' . mb_strtolower(INT_TXT[min(3, $w['intensity'])]) : 'Tormenta eléctrica sin lluvia';
   return $w;
 }
 
@@ -522,16 +526,18 @@ function thunder_of(array $w, array $okM, $metar, $radar, $wttr, $lightning, arr
   if (($lg['strikes15'] ?? 0) > 0) { $p = 90; $k = ($lg['strikes10'] ?? 0) ?: $lg['strikes15']; $reasons[] = "se detectaron $k rayo" . ($k > 1 ? 's' : '') . ' a menos de 15 km en los últimos minutos'; }
   elseif (($lg['strikes30'] ?? 0) > 0) { $p = max($p, 75); $reasons[] = "hay rayos a menos de 30 km (el más cercano a {$lg['nearestKm']} km)"; }
   elseif (($lg['strikes60'] ?? 0) > 0) { $p = max($p, 55); $reasons[] = "hay rayos a menos de 60 km (el más cercano a {$lg['nearestKm']} km)"; }
-  $team = (bool)first_of($extra, fn($x) => ($x['id'] ?? '') === 'equipo' && !empty($x['ok']) && ($x['intensity'] ?? 0) >= 4);
+  $team = (bool)first_of($extra, fn($x) => ($x['id'] ?? '') === 'equipo' && !empty($x['ok']) && !empty($x['storm']));
   if ($team) $reasons[] = 'el equipo EMOVTT confirma tormenta eléctrica';
-  $now = ($w['weatherCode'] ?? 0) >= 95 || ($mOk && !empty($metar['ts'])) || $team || ($wOk && !empty($wttr['thunderNow'])) || (($lg['strikes15'] ?? 0) > 0);
+  $mStorm = count(array_filter($okM, fn($m) => !empty($m['storm']))) >= ($w['modelsNeeded'] ?? 99);
+  if ($mStorm) $reasons[] = 'varios modelos ven tormenta eléctrica en este momento';
+  $now = $mStorm || ($w['weatherCode'] ?? 0) >= 95 || ($mOk && !empty($metar['ts'])) || $team || ($wOk && !empty($wttr['thunderNow'])) || (($lg['strikes15'] ?? 0) > 0);
   if ($mOk && !empty($metar['ts'])) { $p = max($p, 90); $reasons[] = 'el aeropuerto reporta tormenta en la zona'; }
   if (($w['weatherCode'] ?? 0) >= 95) { $p = max($p, 90); $reasons[] = 'hay tormenta eléctrica ahora mismo'; }
   $activity = null;
   if ($now) {
     $vals = [$rOk ? ($radar['rainNow'] ?? 0) : 0, $wOk ? ($wttr['mm'] ?? 0) : 0];
     foreach ($okM as $m) $vals[] = $m['rainNow'] ?? 0;
-    foreach ($extra as $x) if (!empty($x['ok']) && ($x['intensity'] ?? 0) >= 4) $vals[] = INT_MM[$x['intensity']];
+    foreach ($extra as $x) if (!empty($x['ok']) && !empty($x['storm'])) $vals[] = $x['rainNow'] ?? 0;
     $rm = max($vals); $dbz = $rOk ? ($radar['dbz'] ?? -1) : -1; $rate = $lg['strikes10'] ?? 0;
     $lv = $dbz >= 50 || $rm >= 8 || $rate >= 20 ? 3 : ($dbz >= 45 || $rm >= 2.5 || $rate >= 6 ? 2 : 1);
     $activity = ['level' => $lv, 'label' => ['', 'Tormenta leve', 'Tormenta moderada', 'Tormenta intensa'][$lv], 'mm' => r1($rm)];
@@ -583,21 +589,22 @@ function sun_info($s, $cloud, $intensity) {
 function local_sources(?array $observed): array {
   $out = [];
   if ($observed && strtotime($observed['until']) > time()) {
-    $i = max(0, min(4, (int)($observed['intensity'] ?? 0)));
-    $out[] = ['id' => 'equipo', 'kind' => 'observación', 'name' => 'Equipo EMOVTT', 'ok' => true, 'at' => $observed['at'], 'intensity' => $i, 'rainNow' => INT_MM[$i],
-      'detail' => INT_TXT[$i] . ' marcada en el panel · vigente hasta ' . hhmm_local(strtotime($observed['until']))];
+    // "Tormenta" (4) del equipo = truenos y rayos con lluvia moderada: el semáforo sigue a la lluvia, la tormenta se avisa aparte
+    $o = max(0, min(4, (int)($observed['intensity'] ?? 0))); $i = $o >= 4 ? 2 : $o;
+    $out[] = ['id' => 'equipo', 'kind' => 'observación', 'name' => 'Equipo EMOVTT', 'ok' => true, 'at' => $observed['at'], 'intensity' => $i, 'rainNow' => INT_MM[$i], 'storm' => $o >= 4 ?: null,
+      'detail' => INT_TXT[$o] . ' marcada en el panel · vigente hasta ' . hhmm_local(strtotime($observed['until']))];
   }
   return $out;
 }
 
 function describe(array $w): array {
   static $CODE = [51 => [1, 'Llovizna'], 53 => [1, 'Llovizna'], 55 => [2, 'Llovizna intensa'], 56 => [1, 'Llovizna'], 57 => [2, 'Llovizna intensa'], 61 => [1, 'Lluvia leve'], 63 => [2, 'Lluvia moderada'], 65 => [3, 'Lluvia fuerte'],
-    66 => [1, 'Lluvia leve'], 67 => [3, 'Lluvia fuerte'], 80 => [1, 'Chubascos leves'], 81 => [2, 'Chubascos moderados'], 82 => [3, 'Chubascos fuertes'], 95 => [4, 'Tormenta eléctrica'], 96 => [4, 'Tormenta con granizo'], 99 => [4, 'Tormenta con granizo']];
+    66 => [1, 'Lluvia leve'], 67 => [3, 'Lluvia fuerte'], 80 => [1, 'Chubascos leves'], 81 => [2, 'Chubascos moderados'], 82 => [3, 'Chubascos fuertes'], 95 => [0, 'Tormenta eléctrica'], 96 => [0, 'Tormenta con granizo'], 99 => [0, 'Tormenta con granizo']];
   [$codeInt, $codeTxt] = $CODE[$w['weatherCode'] ?? -1] ?? [0, ''];
   $m = mm_int($w['rainNow'] ?? 0); $intensity = max($codeInt, $m);
   $cc = $w['cloudCover'] ?? 0;
   $condition = $codeTxt ?: ($m === 3 ? 'Lluvia fuerte' : ($m === 2 ? 'Lluvia moderada' : ($m === 1 ? 'Lluvia leve' : ($cc >= 70 ? 'Nublado' : ($cc >= 30 ? 'Parcialmente nublado' : 'Despejado')))));
-  return ['raining' => $intensity > 0, 'intensity' => $intensity, 'condition' => $condition];
+  return ['raining' => $intensity > 0, 'intensity' => $intensity, 'condition' => $condition, 'storm' => ($w['weatherCode'] ?? 0) >= 95];
 }
 
 // ---------- Marea ----------

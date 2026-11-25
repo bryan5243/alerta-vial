@@ -99,7 +99,7 @@ function push_check_and_notify(array $st, ?string $levelMessage, bool $simulated
   }
   $NAME = ['amarilla' => 'Alerta amarilla', 'naranja' => 'Alerta naranja', 'roja' => 'Alerta roja']; $COOL = 2 * 3600000;
   $w = $st['weather'] ?? []; $ol = $w['outlook']['level'] ?? null;
-  $storm = ($w['intensity'] ?? 0) >= 4; foreach ($w['outlook']['reasons'] ?? [] as $r) if (preg_match('/prevé tormenta|reporta tormenta/u', (string)$r)) $storm = true;
+  $storm = !empty($w['storm']) || !empty($w['thunder']['now']) || ($w['intensity'] ?? 0) >= 4; foreach ($w['outlook']['reasons'] ?? [] as $r) if (preg_match('/prevé tormenta|reporta tormenta/u', (string)$r)) $storm = true;
   $rainy = $ol === 'lloviendo' || ($w['intensity'] ?? 0) > 0; $soon = $ol === 'probable';
   $can = fn($k) => $simulated || empty($L[$k . 'At']) || $now - $L[$k . 'At'] > $COOL;
   $msgs = [];
