@@ -178,29 +178,49 @@ if (SIM) {
 
 // Copia local del último estado: si se cae la señal, el mapa, las zonas y los avisos del GPS siguen funcionando.
 const CACHE_KEY = 'av_state_cache';
+// Pedido robusto: sin caché del navegador, 25 s de espera (el servidor gratuito de Render tarda en despertar) y un
+// segundo intento antes de decir "sin conexión": un corte de un instante ya no muestra el aviso.
+const getState = () => Promise.all([fetch('/api/public/state', { cache: 'no-store', signal: AbortSignal.timeout(25000) }),
+  fetch('/api/public/reports', { cache: 'no-store', signal: AbortSignal.timeout(25000) }).catch(() => null)]);
+let retryT = null, freshT = null; const freshTries = new Map();
 async function fetchState() {
   try {
-    // Estado y reportes se piden a la vez (antes uno después del otro)
-    const [res, rr] = await Promise.all([fetch('/api/public/state', { signal: AbortSignal.timeout(20000) }), fetch('/api/public/reports', { signal: AbortSignal.timeout(20000) }).catch(() => null)]);
-    if (!res.ok) throw new Error(res.status);
+    let res, rr;
+    try { [res, rr] = await getState(); if (!res.ok) throw new Error(res.status); }
+    catch (e) { if (!navigator.onLine) throw e; await new Promise(r => setTimeout(r, 2500)); [res, rr] = await getState(); if (!res.ok) throw new Error(res.status); }
     const st = await res.json();
     const reports = rr && rr.ok ? await rr.json().catch(() => []) : [];
     const pack = { state: st, reports, at: Date.now() };
     try { localStorage.setItem(CACHE_KEY, JSON.stringify(pack)); } catch { try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ...pack, state: { ...st, layers: [] } })); } catch {} }
-    setOffline(null); return pack;
+    clearTimeout(retryT); retryT = null; setOffline(null); freshCheck(st.weather); return pack;
   } catch (e) {
     let pack = null; try { pack = JSON.parse(localStorage.getItem(CACHE_KEY)); } catch {}
+    // Sin señal: se reintenta cada 15 s (antes esperaba 1 minuto) y se vuelve solo en cuanto hay conexión
+    clearTimeout(retryT); retryT = setTimeout(() => { retryT = null; load().catch(() => {}); }, 15000);
     if (!pack) throw e;
     setOffline(pack.at); return pack;
   }
 }
+// Si el clima que mandó el servidor tiene más de 6 min, el servidor ya lo está renovando por detrás:
+// se vuelve a pedir a los 12 s para mostrar el dato del momento (hasta 3 veces por cada dato viejo).
+function freshCheck(w) {
+  const at = Date.parse(w?.checkedAt || ''), old = at && Date.now() - at > 6 * 60000 && !w?.simulated;
+  const el = $('#offline');
+  if (!old) { if (el.dataset.kind === 'wx') { el.hidden = true; el.dataset.kind = ''; } return; }
+  const n = (freshTries.get(at) || 0) + 1; freshTries.set(at, n); if (freshTries.size > 20) freshTries.clear();
+  if (n > 3) { if (el.dataset.kind === 'wx') { el.hidden = true; el.dataset.kind = ''; } return; }
+  if (el.hidden || el.dataset.kind === 'wx') { el.dataset.kind = 'wx'; el.textContent = 'Actualizando el clima…'; el.hidden = false; }
+  clearTimeout(freshT); freshT = setTimeout(() => { freshT = null; load().catch(() => {}); }, 12000);
+}
 function setOffline(at) {
   const el = $('#offline'); document.body.classList.toggle('is-offline', !!at);
-  if (!at) { el.hidden = true; return; }
+  if (!at) { if (el.dataset.kind !== 'wx') el.hidden = true; return; }
   const t = new Date(at); const today = new Date().toDateString() === t.toDateString();
-  el.textContent = `Sin conexión · datos ${today ? 'de las' : 'del'} ${today ? t.toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' }) : t.toLocaleDateString('es-EC', { day: 'numeric', month: 'short' })}`;
+  el.dataset.kind = 'off';
+  el.textContent = `Sin conexión · datos ${today ? 'de las' : 'del'} ${today ? t.toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' }) : t.toLocaleDateString('es-EC', { day: 'numeric', month: 'short' })} · tocar para reintentar`;
   el.hidden = false;
 }
+$('#offline').addEventListener('click', () => { if ($('#offline').dataset.kind === 'off') { $('#offline').textContent = 'Conectando…'; load().catch(() => {}); } });
 window.addEventListener('online', () => load().catch(() => {}));
 window.addEventListener('offline', () => { if (state) setOffline(JSON.parse(localStorage.getItem(CACHE_KEY) || 'null')?.at || Date.now()); });
 

@@ -29,6 +29,7 @@ app.set('trust proxy', 1); // detrás del proxy de Render/cPanel: IP real para e
 app.use(express.json({ limit: '25mb' })); // capas GeoJSON pueden ser grandes
 // no-cache: el navegador revalida siempre (usa ETag), así nadie se queda con archivos viejos tras una actualización
 app.use(express.static(path.join(__dirname, '..', 'public'), { setHeaders: (res, f) => { if (/\.(html|js|css|webmanifest)$/.test(f)) res.setHeader('Cache-Control', 'no-cache'); } }));
+app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); }); // datos siempre del momento (nunca de la caché del navegador)
 
 // Revisión de datos: sube con cada cambio hecho desde el admin. Los teléfonos la consultan (muy liviano) y recargan al instante.
 let dataRev = Date.now();

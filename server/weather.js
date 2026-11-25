@@ -413,7 +413,8 @@ export async function getWeather({ lat, lng, metarStation = 'SERO', owmKey = '' 
   const age = Date.now() - cache.at, have = cache.data && cache.key === key;
   if (!have || age >= TTL) {
     refreshing ||= fetchRemote(lat, lng, metarStation, owmKey).then(data => { cache = { at: Date.now(), key, data }; }).finally(() => { refreshing = null; });
-    if (!have || age >= 3600e3) await refreshing.catch(() => {});
+    // Con un dato guardado (aunque sea viejo) se responde al instante y se renueva por detrás; la página vuelve a pedir a los 12 s
+    if (!have) await refreshing.catch(() => {});
   }
   const remote = cache.data && cache.key === key ? cache.data : await fetchRemote(lat, lng, metarStation, owmKey);
   const w = combine({ ...remote, lightning: lightningSnapshot() }, extra);
