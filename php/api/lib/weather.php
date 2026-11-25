@@ -466,7 +466,7 @@ function combine(array $remote, array $extra = []): array {
   if ($intensity !== $w['intensity']) $w = array_merge($w, ['intensity' => $intensity, 'raining' => $intensity > 0, 'condition' => $intensity ? INT_TXT[$intensity] : $w['condition']]);
   if (!$w['intensity'] && $w['sun'] && in_array($w['condition'], ['Despejado', 'Parcialmente nublado'], true) && ($w['condition'] === 'Despejado' || $w['sun']['sky'] === 'soleado'))
     $w['condition'] = $w['sun']['sky'] === 'noche' ? 'Noche despejada' : 'Soleado';
-  $w['outlook'] = outlook_of($w, $okM, $metar, $need);
+  $w['outlook'] = outlook_of($w, $okM, $metar, $need, $radarDry);
   $w['thunder'] = thunder_of($w, $okM, $metar, $radar, $wttr, $lightning, $extra);
   // Tormenta eléctrica en curso: se muestra y se avisa, pero el semáforo de inundación sigue la lluvia que cae
   $w['storm'] = !empty($w['thunder']['now']);
@@ -510,9 +510,11 @@ function day_parts(array $hourly): array {
   if (count($out) > 1 && $out[count($out) - 1]['hours'] < 2) array_pop($out);
   return array_map(function ($p) { unset($p['key']); return $p; }, $out);
 }
-function outlook_of(array $w, array $okM, $metar, int $need): array {
+function outlook_of(array $w, array $okM, $metar, int $need, bool $radarDry = false): array {
   $reasons = []; $score = 0;
-  $peak = max(array_merge([0], array_map(fn($h) => $h['probability'] ?? 0, array_slice($w['hourly'] ?? [], 0, 7))));
+  // Para la hora en curso manda el radar: si no ve nada sobre la ciudad ni cerca, se miran las horas siguientes
+  $hrs = array_slice($w['hourly'] ?? [], $radarDry ? 1 : 0, $radarDry ? 6 : 7);
+  $peak = max(array_merge([0], array_map(fn($h) => $h['probability'] ?? 0, $hrs)));
   if ($peak >= NOTICE_PROB) { $score += 3; $reasons[] = "probabilidad de lluvia de $peak % en las próximas 6 h"; }
   $wet = array_values(array_filter($okM, fn($m) => ($m['rainNext3h'] ?? 0) >= MIN_MM));
   if ($wet) { $score += count($wet) >= $need ? 2 : 1; $reasons[] = count($wet) . ' de ' . count($okM) . ' modelos prevén lluvia en las próximas 3 h (hasta ~' . str_replace('.', ',', (string)r1(max(array_map(fn($m) => $m['rainNext3h'], $wet)))) . ' mm)'; }
@@ -522,7 +524,7 @@ function outlook_of(array $w, array $okM, $metar, int $need): array {
   if (!empty($metar['ok']) && !empty($metar['ts'])) { $score += 2; $reasons[] = 'el aeropuerto reporta tormenta en la zona'; }
   elseif (!empty($metar['ok']) && !empty($metar['near'])) { $score += 2; $reasons[] = 'el aeropuerto ve lluvia en los alrededores'; }
   elseif (!empty($metar['ok']) && !empty($metar['cb'])) { $score += 1; $reasons[] = 'el aeropuerto ve nubes de tormenta (cumulonimbos) cerca'; }
-  $from = null; foreach (array_slice($w['hourly'] ?? [], 0, 7) as $h) if (($h['probability'] ?? 0) >= NOTICE_PROB) { $from = $h['time']; break; }
+  $from = null; foreach ($hrs as $h) if (($h['probability'] ?? 0) >= NOTICE_PROB) { $from = $h['time']; break; }
   // Si esa hora es la que está corriendo (p. ej. son las 09:16 y la hora es 09:00), no se dice "desde las 09:00": ya empezó
   $fromNow = $from !== null && $from === ($w['hourly'][0]['time'] ?? null);
   $level = $w['intensity'] > 0 ? 'lloviendo' : ($peak >= NOTICE_PROB ? 'probable' : 'calma');
