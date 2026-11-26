@@ -127,7 +127,7 @@ function secAlert() {
     ${simCard(w)}
     </div><aside class="ag-side" aria-label="Clima y riesgo">
     ${riskCard()}
-    ${sourcesCard(w, db.cronAt)}
+    ${sourcesCard(w, db.cronAt, db.cronKey)}
     </aside></div>
   `);
   q('.kpis [data-go]').forEach(b => b.onclick = () => root.querySelector(`.navbtn[data-s="${b.dataset.go}"]`)?.click());
@@ -215,6 +215,7 @@ function bindObs() {
     refresh();
   };
   q('[data-obs]').forEach(b => b.onclick = async () => { await api('/api/admin/observed', { method: 'PUT', body: +b.dataset.obs ? { intensity: +b.dataset.obs, minutes: +id('obs-min').value } : { dry: true, minutes: +id('obs-min').value } }); toast(+b.dataset.obs ? `Lluvia ${OBS[+b.dataset.obs][1].toLowerCase()} marcada por el equipo` : 'Marcado: no llueve en el centro', 'ok'); refresh(); });
+  const cc = id('cron-copy'); if (cc) cc.onclick = async () => { try { await navigator.clipboard.writeText(cc.dataset.url); toast('Dirección copiada', 'ok'); } catch { toast('No se pudo copiar: selecciónala y cópiala a mano', 'err'); } };
   const off = id('obs-off'); if (off) off.onclick = async () => { await api('/api/admin/observed', { method: 'PUT', body: { intensity: 0 } }); toast('Listo: el clima vuelve a las fuentes en línea', 'ok'); refresh(); };
 }
 // Resumen de un vistazo al entrar al panel: cada ficha lleva a su sección
@@ -248,7 +249,15 @@ function cronTxt(at) {
   const min = Math.round((Date.now() - at) / 60000);
   return min <= 12 ? ` · tarea programada: hace ${min} min` : ` · <b style="color:var(--roja)">tarea programada: última vez hace ${min} min (revisa el cron)</b>`;
 }
-function sourcesCard(w, cronAt) {
+// Si el cron no corre: la dirección secreta para que la llame cron-job.org (u otro servicio) cada 5 minutos
+function cronHelp(at, key) {
+  if (!key || (at && Date.now() - at < 12 * 60000)) return '';
+  const url = new URL(`api/public/cron?key=${key}`, location.href).href;
+  return `<div class="cron-help small" style="margin:8px 0 12px;padding:10px 12px;border:1.5px solid var(--line);border-radius:12px">
+    <b>Tarea programada sin cron de cPanel:</b> crea una cuenta gratis en <a href="https://cron-job.org" target="_blank" rel="noopener">cron-job.org</a>, agrega un trabajo con esta dirección y "cada 5 minutos". Es secreta: no la publiques.
+    <div style="display:flex;gap:8px;margin-top:8px;align-items:center"><code style="flex:1;overflow-wrap:anywhere">${esc(url)}</code><button type="button" class="btn sm ghost" id="cron-copy" data-url="${esc(url)}">Copiar</button></div></div>`;
+}
+function sourcesCard(w, cronAt, cronKey) {
   const src = w.sources || [];
   const row = s => {
     const st = s.disabled ? 'off' : !s.ok ? 'err' : s.intensity >= 3 ? 'hi' : s.intensity > 0 ? 'mid' : 'ok';
@@ -257,7 +266,7 @@ function sourcesCard(w, cronAt) {
       ${s.models ? `<details><summary class="small">Ver cada modelo</summary><div class="kv" style="margin-top:6px">${s.models.map(m => `<b>${esc(m.name)}</b><span>${m.ok ? `${m.rainNow} mm/h` : `sin dato (${esc(m.error || '')})`}</span>`).join('')}</div></details>` : ''}</div>
       ${w.decidedBy && w.decidedBy === s.name ? '<span class="chip accent">decide el nivel</span>' : ''}</div>`;
   };
-  return `<div class="card"><div class="section-head"><h3>Fuentes del clima</h3><span class="small muted">revisado a las ${wxTime(w.checkedAt || new Date().toISOString())}${cronTxt(cronAt)}</span></div>
+  return `<div class="card"><div class="section-head"><h3>Fuentes del clima</h3><span class="small muted">revisado a las ${wxTime(w.checkedAt || new Date().toISOString())}${cronTxt(cronAt)}</span></div>${cronHelp(cronAt, cronKey)}
     <p class="small muted" style="margin:6px 0 12px">${w.ok ? `Resultado: <b>${esc(w.condition || '—')}</b>${w.intensity ? ` (intensidad ${w.intensity}/4)` : ''} · ${w.rainNow} mm/h ahora · ${w.rainPast3h} mm en 3 h · próximas 3 h ${w.rainNext3h} mm${w.probNext3h != null ? ` (probabilidad ${w.probNext3h} %)` : ''} · ${w.temperature ?? '—'} °C.` : 'Ninguna fuente responde ahora. Si está lloviendo, márcalo arriba o pon la alerta en manual.'} Gana la fuente que vea la lluvia más fuerte. Los modelos son pronósticos y a veces no ven los aguaceros locales; las observaciones (aeropuerto, equipo, reportes) mandan cuando existen.</p>
     ${w.ok && w.hourly?.length >= 3 ? `<div class="wx-card adm-hours">${rainHours(w)}<p class="small muted" style="margin:8px 0 0">Probabilidad de cada hora: la mayor entre la que publican los modelos y la parte de los modelos que prevén lluvia, con tope de 90 %. "Ahora" sigue al radar. La próxima hora se baja si el radar no ve lluvia en 25 km, y las próximas 24 h bajan si hoy los modelos anunciaron lluvia y no llovió (más en las horas cercanas, menos en las lejanas).${w.nowcast?.factor < 1 ? ` <b>Ahora mismo:</b> ${esc(w.nowcast.note)}.` : ''} Es lo mismo que ve la ciudadanía.</p></div>` : ''}
     <div class="src-list">${src.map(row).join('') || '<p class="small muted">Sin datos.</p>'}</div></div>`;
