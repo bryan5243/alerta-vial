@@ -11,6 +11,8 @@ for f in root.rglob('*'):
     s = f.read_text(encoding='utf-8'); o = s
     s = re.sub(r'(["\'`])/' + ROOTS, lambda m: f'{m.group(1)}{base}/{m.group(2)}', s)
     if f.suffix == '.css': s = re.sub(r'\(/' + ROOTS, lambda m: f'({base}/{m.group(1)}', s)
+    # Páginas de la raíz con parámetros: "/?sim=1" (simulador), '/?mapa=…' (mapa actualizado)
+    s = re.sub(r'(["\'`])/([?#])', lambda m: f'{m.group(1)}{base}/{m.group(2)}', s)
     s = s.replace('href="/"', f'href="{base}/"').replace("href='/'", f"href='{base}/'")
     if f.name == 'sw.js': s = s.replace("'/'", f"'{base}/'").replace("'/index.html'", f"'{base}/index.html'")
     if f.suffix == '.webmanifest': s = s.replace('"start_url": "/?app=1"', f'"start_url": "{base}/?app=1"').replace('"scope": "/"', f'"scope": "{base}/"')
