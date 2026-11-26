@@ -5,5 +5,5 @@
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 define('AV_NO_ROUTER', true);
 require __DIR__ . '/index.php';
-try { $sent = push_tick(); echo gmdate('c') . ' ok, avisos: ' . count($sent) . "\n"; }
+try { cache_put('cron', ['at' => now_ms()]); $sent = push_tick(); echo gmdate('c') . ' ok, avisos: ' . count($sent) . "\n"; }
 catch (Throwable $e) { fwrite(STDERR, 'AlertaVial cron: ' . $e->getMessage() . "\n"); exit(1); }

@@ -206,7 +206,7 @@ try {
     out(['config' => ['city' => $db['config']['city'], 'center' => $db['config']['center'], 'zoom' => $db['config']['zoom'], 'mapProvider' => $db['config']['mapProvider'], 'baseStyle' => $db['config']['baseStyle'] ?? 'osm', 'googleMapsKey' => $db['config']['googleMapsKey'] ?? '', 'mapVersion' => $db['config']['mapVersion'] ?? 0,
         'rainThresholdMm' => $db['config']['weather']['rainThresholdMm'], 'gps' => gps_cfg($db), 'levelMessages' => level_msgs($db), 'features' => $f, 'noCar' => nocar_cfg($db)],
       'alert' => array_merge($db['alert'], ['effective' => $effective, 'suggested' => $st['suggested'], 'why' => $st['why'], 'stepdown' => $st['stepdown'], 'draining' => (bool)$drain['draining'], 'drainUntil' => $drain['until']]),
-      'weather' => weather_out($st['weather']), 'risk' => $st['risk'], 'tide' => $st['tide'], 'flood' => $st['flood'],
+      'weather' => weather_out($st['weather']), 'risk' => $st['risk'], 'tide' => $st['tide'], 'flood' => $st['flood'], 'cronAt' => cache_get('cron')['at'] ?? null,
       'layers' => $on('layers', array_filter($db['layers'] ?? [], $act)), 'rivers' => $on('rivers', array_filter($db['rivers'] ?? [], $act)), 'zones' => $on('rivers', array_filter($db['zones'] ?? [], $act)),
       'points' => $on('points', array_map(fn($p) => array_merge($p, ['active' => true]), array_filter($db['points'], $pointOn))),
       'streets' => $on('streets', array_filter($db['streets'], fn($s) => !empty($s['active']))), 'routes' => $on('routes', array_filter($db['routes'], $routeOn)),
@@ -307,7 +307,7 @@ function admin_routes(string $method, array $seg): void {
     $st = compute_status(); $db = db_load(); $drain = $st['drain']; $eff = $st['effective'];
     unset($db['push']);
     $dpts = LV[$eff] < 2 ? count(array_filter($db['points'], fn($p) => !empty($p['auto']) && (($p['source'] ?? '') === 'reporte' ? $drain['reportOn'] : $drain['draining']))) : 0;
-    out(array_merge($db, ['pushCount' => push_count(), 'config' => array_merge($db['config'], ['gps' => gps_cfg($db), 'levelMessages' => level_msgs($db), 'features' => features_cfg($db), 'noCar' => nocar_cfg($db)]),
+    out(array_merge($db, ['pushCount' => push_count(), 'cronAt' => cache_get('cron')['at'] ?? null, 'config' => array_merge($db['config'], ['gps' => gps_cfg($db), 'levelMessages' => level_msgs($db), 'features' => features_cfg($db), 'noCar' => nocar_cfg($db)]),
       'alert' => array_merge($db['alert'], ['effective' => $eff, 'suggested' => $st['suggested'], 'why' => $st['why'], 'stepdown' => $st['stepdown'], 'draining' => $drain['draining'] || (LV[$eff] < 2 && $drain['reportOn']), 'drainUntil' => $drain['until'], 'drainPoints' => $dpts]), 'weather' => weather_out($st['weather']), 'risk' => $st['risk'], 'tide' => $st['tide'],
       'reports' => array_map('rep_out', $db['reports'] ?? []), 'layers' => $db['layers'] ?? [], 'rivers' => $db['rivers'] ?? [], 'zones' => $db['zones'] ?? []]));
   }
