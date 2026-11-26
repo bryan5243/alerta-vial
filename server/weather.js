@@ -282,8 +282,13 @@ export function radarEcho(img, px, py, lat, z = 7) {
   }
   return { echoKm: best === Infinity ? null : Math.round(Math.sqrt(best) * kmPx), scanKm: Math.round(R * kmPx) };
 }
+// RainViewer no tiene radares en Ecuador ni en Perú (rainviewer.com/coverage.html): ahí su imagen sale vacía aunque llueva,
+// y el sistema creía que "el radar no ve lluvia". En esa zona el radar no se usa.
+export const radarBlind = (lat, lng) => lat > -18.5 && lat < 1.6 && lng > -81.5 && lng < -68.5;
+const RADAR_BLIND = 'RainViewer no tiene radares en Ecuador ni en Perú: su imagen sale vacía aunque llueva, así que esta fuente no se usa aquí';
 async function radarSource(lat, lng) {
   const base = { id: 'radar', kind: 'observación', name: 'Radar de lluvia (RainViewer)' };
+  if (radarBlind(lat, lng)) return { ...base, ok: false, disabled: true, intensity: 0, error: RADAR_BLIND };
   const ck = `${lat},${lng}`;
   if (radarCache.data && radarCache.key === ck && Date.now() - radarCache.at < 4 * 60 * 1000) return radarCache.data;
   let d;
@@ -489,7 +494,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at, verify
   // Excepción: si el modelo y wttr.in coinciden en lluvia moderada o más (≥ 2,5 mm/h), se acepta aunque no haya radar (no es una simple llovizna de pronóstico).
   const fcStrong = !obsDryPre(radar, metar) && wttr?.ok && wttr.mm >= 2.5 && okM.some(m => m.rainNow >= 2.5);
   let need = okM.length >= 6 ? 3 : okM.length >= 3 ? 2 : corro || fcStrong ? 1 : 99;
-  if (obsDry) need = Math.max(need, Math.ceil(okM.length / 2), 3);
+  if (obsDry) need = Math.max(need, Math.ceil(okM.length * 0.6), 3);
   const kth = arr => { const v = arr.slice().sort((x, y) => y - x); return v.length >= need ? v[need - 1] : 0; };
   const clear = (base?.cloudCover ?? 100) < 50;
   const raining = okM.filter(m => m.intensity > 0);

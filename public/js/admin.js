@@ -261,7 +261,7 @@ function sourcesCard(w, cronAt, cronKey) {
   const src = w.sources || [];
   const row = s => {
     const st = s.disabled ? 'off' : !s.ok ? 'err' : s.intensity >= 3 ? 'hi' : s.intensity > 0 ? 'mid' : 'ok';
-    const val = s.disabled ? 'No configurada' : !s.ok ? `Sin dato: ${esc(s.error || 'no disponible')}` : `${['Sin lluvia', 'Lluvia leve', 'Lluvia moderada', 'Lluvia fuerte', 'Tormenta'][s.intensity || 0]}${s.rainNow ? ` · ${s.rainNow} mm/h` : ''}`;
+    const val = s.disabled ? esc(s.error && s.error !== 'sin API key' ? s.error : 'No configurada') : !s.ok ? `Sin dato: ${esc(s.error || 'no disponible')}` : `${['Sin lluvia', 'Lluvia leve', 'Lluvia moderada', 'Lluvia fuerte', 'Tormenta'][s.intensity || 0]}${s.rainNow ? ` · ${s.rainNow} mm/h` : ''}`;
     return `<div class="src-row ${st}${w.decidedBy && w.decidedBy === s.name ? ' top' : ''}"><i></i><div><b>${esc(s.name)}</b> <small>${esc(s.kind || '')}${s.at && s.ok ? ` · dato de las ${wxTime(s.at)}` : ''}</small><div class="small">${val}</div>${s.detail && s.ok ? `<div class="small muted">${esc(s.detail)}</div>` : ''}${s.raw ? `<code>${esc(s.raw)}</code>` : ''}
       ${s.models ? `<details><summary class="small">Ver cada modelo</summary><div class="kv" style="margin-top:6px">${s.models.map(m => `<b>${esc(m.name)}</b><span>${m.ok ? `${m.rainNow} mm/h` : `sin dato (${esc(m.error || '')})`}</span>`).join('')}</div></details>` : ''}</div>
       ${w.decidedBy && w.decidedBy === s.name ? '<span class="chip accent">decide el nivel</span>' : ''}</div>`;
