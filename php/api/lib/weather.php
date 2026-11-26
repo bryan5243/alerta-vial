@@ -264,6 +264,10 @@ function radar_pixel($lat, $lng, int $z = 7): array {
   $tx = (int)floor($fx); $ty = (int)floor($fy);
   return ['z' => $z, 'tx' => $tx, 'ty' => $ty, 'px' => min(255, (int)floor(($fx - $tx) * 256)), 'py' => min(255, (int)floor(($fy - $ty) * 256))];
 }
+// RainViewer no tiene radares en Ecuador ni en Perú (rainviewer.com/coverage.html): ahí su imagen sale vacía aunque llueva,
+// y el sistema creía que "el radar no ve lluvia". En esa zona el radar no se usa.
+const RADAR_BLIND = 'RainViewer no tiene radares en Ecuador ni en Perú: su imagen sale vacía aunque llueva, así que esta fuente no se usa aquí';
+function radar_blind($lat, $lng): bool { return $lat > -18.5 && $lat < 1.6 && $lng > -81.5 && $lng < -68.5; }
 function radar_source($lat, $lng, ?array $mapsRes): array {
   $base = ['id' => 'radar', 'kind' => 'observación', 'name' => 'Radar de lluvia (RainViewer)'];
   try {
@@ -381,7 +385,7 @@ function weather_fetch(array $cfg): array {
     $wt = cache_get('wttr'); $wtFresh = $wt && ($wt['key'] ?? '') === "$lat,$lng" && $now - $wt['at'] < 600000;
     if (!$wtFresh) $reqs['wttr'] = ['url' => "https://wttr.in/$lat,$lng?format=j1", 'timeout' => 10, 'headers' => $ua];
     $rv = cache_get('radarsrc'); $rvFresh = $rv && ($rv['key'] ?? '') === "$lat,$lng" && $now - $rv['at'] < 240000;
-    if (!$rvFresh) $reqs['rvmaps'] = ['url' => 'https://api.rainviewer.com/public/weather-maps.json', 'timeout' => 8, 'headers' => $ua];
+    if (!$rvFresh && !radar_blind($lat, $lng)) $reqs['rvmaps'] = ['url' => 'https://api.rainviewer.com/public/weather-maps.json', 'timeout' => 8, 'headers' => $ua];
     $res = $reqs ? http_multi($reqs) : [];
     // Copia de la respuesta cruda para el puente de Render (/api/public/om-relay)
     if (isset($res['om']) && !$res['om']['err'] && $res['om']['code'] === 200) @file_put_contents(data_dir() . '/cache/omrelay.json', $res['om']['body']);
@@ -395,7 +399,8 @@ function weather_fetch(array $cfg): array {
     if (!$owmKey) $owm = ['id' => 'owm', 'kind' => 'pronóstico', 'name' => 'OpenWeatherMap', 'ok' => false, 'disabled' => true, 'intensity' => 0, 'error' => 'sin API key'];
     elseif (isset($res['owm'])) { $owm = owm_parse($res['owm']); cache_put('owm', ['key' => "$lat,$lng,$owmKey", 'at' => $now, 'data' => $owm]); } else $owm = $ow['data'];
     if (isset($res['wttr'])) { $wttr = wttr_parse($res['wttr']); cache_put('wttr', ['key' => "$lat,$lng", 'at' => $now, 'data' => $wttr]); } else $wttr = $wt['data'];
-    if (isset($res['rvmaps'])) { $radar = radar_source($lat, $lng, $res['rvmaps']); cache_put('radarsrc', ['key' => "$lat,$lng", 'at' => $now, 'data' => $radar]); } else $radar = $rv['data'];
+    if (radar_blind($lat, $lng)) $radar = ['id' => 'radar', 'kind' => 'observación', 'name' => 'Radar de lluvia (RainViewer)', 'ok' => false, 'disabled' => true, 'intensity' => 0, 'error' => RADAR_BLIND];
+    elseif (isset($res['rvmaps'])) { $radar = radar_source($lat, $lng, $res['rvmaps']); cache_put('radarsrc', ['key' => "$lat,$lng", 'at' => $now, 'data' => $radar]); } else $radar = $rv['data'];
     $remote = ['models' => array_merge($omModels, [$metno]), 'metar' => $metar, 'owm' => $owm, 'radar' => $radar, 'wttr' => $wttr, 'at' => gmdate('c')];
     cache_put('weather', ['at' => $now, 'key' => $key, 'remote' => $remote]);
   }
@@ -434,7 +439,7 @@ function combine(array $remote, array $extra = []): array {
   $fcStrong = !$dryPre && !empty($wttr['ok']) && ($wttr['mm'] ?? 0) >= 2.5 && first_of($okM, fn($m) => ($m['rainNow'] ?? 0) >= 2.5);
   $n = count($okM);
   $need = $n >= 6 ? 3 : ($n >= 3 ? 2 : ($corro || $fcStrong ? 1 : 99));
-  if ($obsDry) $need = max($need, (int)ceil($n / 2), 3);
+  if ($obsDry) $need = max($need, (int)ceil($n * 0.6), 3);
   $kth = function (array $arr) use ($need) { rsort($arr); return count($arr) >= $need ? $arr[$need - 1] : 0; };
   $clear = ($base['cloudCover'] ?? 100) < 50;
   $raining = array_values(array_filter($okM, fn($m) => $m['intensity'] > 0));
