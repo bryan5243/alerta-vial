@@ -127,7 +127,7 @@ function secAlert() {
     ${simCard(w)}
     </div><aside class="ag-side" aria-label="Clima y riesgo">
     ${riskCard()}
-    ${sourcesCard(w)}
+    ${sourcesCard(w, db.cronAt)}
     </aside></div>
   `);
   q('.kpis [data-go]').forEach(b => b.onclick = () => root.querySelector(`.navbtn[data-s="${b.dataset.go}"]`)?.click());
@@ -241,7 +241,14 @@ function riskCard() {
     <p class="small muted" style="margin-top:10px">Suma lluvia, pronóstico, ríos, reportes y marea. Amarilla desde 30, naranja desde 50 y roja desde 70.</p></div>`;
 }
 // Qué dice cada fuente, a qué hora, y cuál decidió el semáforo
-function sourcesCard(w) {
+// Tarea programada (solo la versión PHP/cPanel la informa): cuándo corrió por última vez
+function cronTxt(at) {
+  if (at === undefined) return '';
+  if (!at) return ' · <b style="color:var(--roja)">tarea programada (cron) sin ejecutarse aún</b>';
+  const min = Math.round((Date.now() - at) / 60000);
+  return min <= 12 ? ` · tarea programada: hace ${min} min` : ` · <b style="color:var(--roja)">tarea programada: última vez hace ${min} min (revisa el cron)</b>`;
+}
+function sourcesCard(w, cronAt) {
   const src = w.sources || [];
   const row = s => {
     const st = s.disabled ? 'off' : !s.ok ? 'err' : s.intensity >= 3 ? 'hi' : s.intensity > 0 ? 'mid' : 'ok';
@@ -250,7 +257,7 @@ function sourcesCard(w) {
       ${s.models ? `<details><summary class="small">Ver cada modelo</summary><div class="kv" style="margin-top:6px">${s.models.map(m => `<b>${esc(m.name)}</b><span>${m.ok ? `${m.rainNow} mm/h` : `sin dato (${esc(m.error || '')})`}</span>`).join('')}</div></details>` : ''}</div>
       ${w.decidedBy && w.decidedBy === s.name ? '<span class="chip accent">decide el nivel</span>' : ''}</div>`;
   };
-  return `<div class="card"><div class="section-head"><h3>Fuentes del clima</h3><span class="small muted">revisado a las ${wxTime(w.checkedAt || new Date().toISOString())}</span></div>
+  return `<div class="card"><div class="section-head"><h3>Fuentes del clima</h3><span class="small muted">revisado a las ${wxTime(w.checkedAt || new Date().toISOString())}${cronTxt(cronAt)}</span></div>
     <p class="small muted" style="margin:6px 0 12px">${w.ok ? `Resultado: <b>${esc(w.condition || '—')}</b>${w.intensity ? ` (intensidad ${w.intensity}/4)` : ''} · ${w.rainNow} mm/h ahora · ${w.rainPast3h} mm en 3 h · próximas 3 h ${w.rainNext3h} mm${w.probNext3h != null ? ` (probabilidad ${w.probNext3h} %)` : ''} · ${w.temperature ?? '—'} °C.` : 'Ninguna fuente responde ahora. Si está lloviendo, márcalo arriba o pon la alerta en manual.'} Gana la fuente que vea la lluvia más fuerte. Los modelos son pronósticos y a veces no ven los aguaceros locales; las observaciones (aeropuerto, equipo, reportes) mandan cuando existen.</p>
     ${w.ok && w.hourly?.length >= 3 ? `<div class="wx-card adm-hours">${rainHours(w)}<p class="small muted" style="margin:8px 0 0">Probabilidad de cada hora: la mayor entre la que publican los modelos y la parte de los modelos que prevén lluvia, con tope de 90 %. "Ahora" sigue al radar. La próxima hora se baja si el radar no ve lluvia en 25 km, y las próximas 24 h bajan si hoy los modelos anunciaron lluvia y no llovió (más en las horas cercanas, menos en las lejanas).${w.nowcast?.factor < 1 ? ` <b>Ahora mismo:</b> ${esc(w.nowcast.note)}.` : ''} Es lo mismo que ve la ciudadanía.</p></div>` : ''}
     <div class="src-list">${src.map(row).join('') || '<p class="small muted">Sin datos.</p>'}</div></div>`;
