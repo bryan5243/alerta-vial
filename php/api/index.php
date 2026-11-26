@@ -153,6 +153,7 @@ function sync_auto_points(string $effective, ?array $weather = null): array {
 }
 // Avisos push: en cPanel no hay un proceso siempre encendido. Se revisan como mucho cada 5 minutos, con la tarea
 // cron (cron.php) o, si no se configuró, aprovechando las visitas al mapa (después de enviar la respuesta).
+function cron_key(): string { return substr(hash_hmac('sha256', 'alertavial-cron', AV_ADMIN_PASSWORD), 0, 24); }
 function push_tick(?array $st = null): array {
   cache_put('pushtick', ['at' => now_ms()]);
   $st = $st ?? compute_status();
@@ -265,6 +266,15 @@ try {
   }
   if ($route === 'public/forecast-days' && $method === 'GET') { $cfg = db_load()['config']['weather']; out(with_history(get_days($cfg), $cfg)); }
   // Notificaciones push
+  // Tarea programada por internet (para hostings sin Cron Jobs): un servicio como cron-job.org llama cada 5 min a
+  // /api/public/cron?key=… La clave sale de la contraseña del panel y solo se ve en el panel. Como mucho una vez por minuto.
+  if ($route === 'public/cron' && $method === 'GET') {
+    if (AV_ADMIN_PASSWORD === 'CAMBIAR-ESTA-CLAVE' || !hash_equals(cron_key(), (string)($_GET['key'] ?? ''))) fail(404, 'Ruta no encontrada.');
+    $last = cache_get('cron')['at'] ?? 0;
+    if (now_ms() - $last < 60000) out(['ok' => true, 'skipped' => 'ya corrió hace menos de 1 min']);
+    cache_put('cron', ['at' => now_ms(), 'via' => 'web']); define('AV_SYNC', true);
+    $sent = push_tick(); out(['ok' => true, 'at' => gmdate('c'), 'avisos' => count($sent)]);
+  }
   if ($route === 'public/push-key' && $method === 'GET') out(['key' => push_public_key()]);
   if ($route === 'public/push-subscribe' && $method === 'POST') { if (push_add_sub(body()['subscription'] ?? null)) out(['ok' => true]); fail(400, 'Suscripción no válida.'); }
   if ($route === 'public/push-unsubscribe' && $method === 'POST') { push_remove_sub((string)(body()['endpoint'] ?? '')); out(['ok' => true]); }
@@ -307,7 +317,7 @@ function admin_routes(string $method, array $seg): void {
     $st = compute_status(); $db = db_load(); $drain = $st['drain']; $eff = $st['effective'];
     unset($db['push']);
     $dpts = LV[$eff] < 2 ? count(array_filter($db['points'], fn($p) => !empty($p['auto']) && (($p['source'] ?? '') === 'reporte' ? $drain['reportOn'] : $drain['draining']))) : 0;
-    out(array_merge($db, ['pushCount' => push_count(), 'cronAt' => cache_get('cron')['at'] ?? null, 'config' => array_merge($db['config'], ['gps' => gps_cfg($db), 'levelMessages' => level_msgs($db), 'features' => features_cfg($db), 'noCar' => nocar_cfg($db)]),
+    out(array_merge($db, ['pushCount' => push_count(), 'cronAt' => cache_get('cron')['at'] ?? null, 'cronKey' => cron_key(), 'config' => array_merge($db['config'], ['gps' => gps_cfg($db), 'levelMessages' => level_msgs($db), 'features' => features_cfg($db), 'noCar' => nocar_cfg($db)]),
       'alert' => array_merge($db['alert'], ['effective' => $eff, 'suggested' => $st['suggested'], 'why' => $st['why'], 'stepdown' => $st['stepdown'], 'draining' => $drain['draining'] || (LV[$eff] < 2 && $drain['reportOn']), 'drainUntil' => $drain['until'], 'drainPoints' => $dpts]), 'weather' => weather_out($st['weather']), 'risk' => $st['risk'], 'tide' => $st['tide'],
       'reports' => array_map('rep_out', $db['reports'] ?? []), 'layers' => $db['layers'] ?? [], 'rivers' => $db['rivers'] ?? [], 'zones' => $db['zones'] ?? []]));
   }

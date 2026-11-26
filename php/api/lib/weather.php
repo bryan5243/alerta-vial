@@ -349,7 +349,7 @@ function get_weather(array $cfg, array $extra = []): array {
   $key = "$lat,$lng,$station," . ($owmKey ? 1 : 0); $now = now_ms();
   $c = cache_get('weather'); $have = $c && ($c['key'] ?? '') === $key;
   if ($have && $now - $c['at'] < AV_TTL) $remote = $c['remote'];
-  elseif ($have && PHP_SAPI !== 'cli') { // aunque el dato sea viejo: la página vuelve a pedir a los 12 s y recibe el nuevo (la tarea programada sí espera el dato nuevo)
+  elseif ($have && PHP_SAPI !== 'cli' && !defined('AV_SYNC')) { // aunque el dato sea viejo: la página vuelve a pedir a los 12 s y recibe el nuevo (la tarea programada sí espera el dato nuevo)
     // Nadie espera a las fuentes: se responde con el último dato y se renueva después de enviar la respuesta
     $remote = $c['remote'];
     $lk = cache_get('wx_refresh');
