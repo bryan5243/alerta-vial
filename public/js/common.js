@@ -122,3 +122,28 @@ export function daysCards(d) {
       <span class="wd-r">${past ? `${dec(x.mm)} mm` : p == null ? `${dec(x.mm)} mm` : `${p}% · ${dec(x.mm)} mm`}</span>${past ? `<span class="wd-n">${x.saved ? 'registrado' : 'ya ocurrió'}</span>` : ''}</div>`;
   }).join('')}</div>`;
 }
+
+// Transitabilidad de un reporte ciudadano: cómo está el paso y quién puede pasar
+const sv = d => `<svg class="i" viewBox="0 0 24 24">${d}</svg>`;
+export const VEH = {
+  pie: ['A pie', sv('<circle cx="13" cy="4.5" r="2"/><path d="M10 21l2.5-6.5L15 17v4M7.5 12l3-4.5h3L16 11l3 1M12.5 14.5l1-7"/>')],
+  moto: ['Motos', sv('<circle cx="5.5" cy="16.5" r="3"/><circle cx="18.5" cy="16.5" r="3"/><path d="M5.5 16.5 9 10h5l4.5 6.5M14 10l-2-4H9.5M15 6h2.5"/>')],
+  auto: ['Autos', sv('<path d="M3 13l2-5.5A2 2 0 0 1 6.9 6h10.2A2 2 0 0 1 19 7.5l2 5.5v4a1 1 0 0 1-1 1h-1M3 13v4a1 1 0 0 0 1 1h1M3 13h18M9 18h6"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>')],
+  camioneta: ['Camionetas 4x4', sv('<path d="M2 16v-5.5h9V7h5l3.5 4H22v5h-1.5M2 16h1.5M8.5 16h7"/><circle cx="6" cy="16.5" r="2.2"/><circle cx="18" cy="16.5" r="2.2"/>')],
+  pesado: ['Buses y camiones', sv('<rect x="4" y="3" width="16" height="14.5" rx="2.5"/><path d="M4 10.5h16M7.5 21v-3.5M16.5 21v-3.5M8 14h.01M16 14h.01"/>')],
+};
+const WATER = '<path d="M2 21c1.7 0 1.7-1.3 3.3-1.3S7 21 8.7 21s1.6-1.3 3.3-1.3 1.7 1.3 3.3 1.3 1.7-1.3 3.4-1.3S20.3 21 22 21"/>';
+export const PASS = {
+  cerrada: { t: 'Calle cerrada', d: 'No pasa ningún vehículo', c: '#C62E2E', can: [], ic: sv('<rect x="3" y="7" width="18" height="6" rx="1.5"/><path d="M8.5 7 5.5 13M14 7l-3 6M19.5 7l-3 6M6 13v7M18 13v7M4 20h4M16 20h4"/>') },
+  altos: { t: 'Solo vehículos altos', d: 'Camionetas, buses y camiones', c: '#E36A17', can: ['camioneta', 'pesado'], ic: sv('<path d="M2 14v-5h9V6h5l3.5 4H22v4h-1.5M2 14h1.5M8.5 14h7"/><circle cx="6" cy="14.5" r="2"/><circle cx="18" cy="14.5" r="2"/>' + WATER) },
+  lento: { t: 'Tránsito lento', d: 'Los autos pasan con cuidado', c: '#B98900', can: ['auto', 'camioneta', 'pesado'], ic: sv('<path d="M3 12l2-5a2 2 0 0 1 1.9-1.4h10.2A2 2 0 0 1 19 7l2 5v3a1 1 0 0 1-1 1h-1M3 12v3a1 1 0 0 0 1 1h1M3 12h18M9 16h6"/><circle cx="7" cy="16" r="1.8"/><circle cx="17" cy="16" r="1.8"/>' + WATER) },
+  normal: { t: 'Se puede pasar', d: 'Poca agua, tránsito casi normal', c: '#2A8C5A', can: ['pie', 'moto', 'auto', 'camioneta', 'pesado'], ic: sv('<path d="M20 6 9 17l-5-5"/>') },
+};
+// Resumen para popups y el panel: estado del paso + íconos de quién puede pasar
+export function accessHtml(a, { small = false } = {}) {
+  const p = a && PASS[a.pass]; if (!p) return '';
+  const can = (a.can || []).filter(v => VEH[v]);
+  return `<span class="acc${small ? ' sm' : ''}"><span class="acc-pass" style="--c:${p.c}">${p.ic}${esc(p.t)}</span>`
+    + (a.pass === 'cerrada' ? '' : can.length ? `<span class="acc-veh" title="Pueden pasar: ${esc(can.map(v => VEH[v][0]).join(', '))}">${can.map(v => `<span aria-label="${esc(VEH[v][0])}">${VEH[v][1]}</span>`).join('')}</span>` : '<span class="acc-veh none">Nadie indicado</span>')
+    + '</span>';
+}

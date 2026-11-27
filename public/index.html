@@ -527,8 +527,8 @@
   <form class="sheet rep" id="report-form" novalidate role="dialog" aria-modal="true" aria-labelledby="r-title">
     <div class="grab"></div>
     <div class="r-head">
-      <div class="r-steps" id="r-steps" aria-hidden="true"><i class="on"></i><i></i><i></i></div>
-      <span class="r-count" id="r-count">Paso 1 de 3</span>
+      <div class="r-steps" id="r-steps" aria-hidden="true"><i class="on"></i><i></i><i></i><i></i></div>
+      <span class="r-count" id="r-count">Paso 1 de 4</span>
       <h2 id="r-title">¿Dónde está el problema?</h2>
       <p class="muted small" id="r-sub">Tu reporte lo revisa el equipo municipal antes de publicarse en el mapa.</p>
     </div>
@@ -540,6 +540,7 @@
       </section>
       <section class="r-pane" data-pane="1">
         <div class="r-loc-ok" id="r-coords"></div>
+        <div class="r-known" id="r-known" role="status" hidden></div>
         <span class="lbl">Qué quieres reportar</span>
         <div class="r-cards" role="radiogroup" aria-label="Tipo de reporte">
           <button type="button" class="r-card on" data-rtype="inundacion" aria-pressed="true"><span class="r-cic" id="r-ic-flood" aria-hidden="true"></span><b>Calle inundada</b><small>Agua en la vía</small></button>
@@ -564,7 +565,16 @@
           </div>
           <input id="r-photo-cam" type="file" accept="image/*" capture="environment" hidden><input id="r-photo-gal" type="file" accept="image/*" hidden>
           <span class="err" id="r-photo-err"></span></div>
-        <div class="field"><label for="r-desc">Qué está pasando</label><textarea id="r-desc" maxlength="400" rows="3" placeholder="Ej. El agua cubre la vereda frente al parque y el bus no pasa."></textarea><span class="err" id="r-err"></span></div>
+      </section>
+      <section class="r-pane" data-pane="3">
+        <span class="lbl" id="r-pass-l">¿Cómo está el paso?</span>
+        <div class="r-pass" id="r-pass" role="radiogroup" aria-labelledby="r-pass-l"></div>
+        <span class="err" id="r-pass-err"></span>
+        <div class="r-veh-box" id="r-veh-box" hidden>
+          <span class="lbl" id="r-veh-l">¿Quién puede pasar? <small>Toca para cambiar</small></span>
+          <div class="r-veh" id="r-veh" role="group" aria-labelledby="r-veh-l"></div>
+        </div>
+        <div class="field" style="margin-top:12px"><label for="r-desc">Algo más que debamos saber <small class="muted">(opcional)</small></label><textarea id="r-desc" maxlength="400" rows="2" placeholder="Ej. El agua cubre la vereda frente al parque."></textarea><span class="err" id="r-err"></span></div>
       </section>
     </div>
     <div class="r-foot"><button type="button" class="btn ghost" id="r-back">Cancelar</button><button type="button" class="btn" id="r-next" hidden>Siguiente</button><button type="submit" class="btn" id="r-send" hidden>Enviar reporte</button></div>

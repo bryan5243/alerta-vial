@@ -797,7 +797,27 @@ button,a,.item,label.switch{-webkit-tap-highlight-color:transparent}
 .r-lvl.on{border-color:var(--c);background:color-mix(in srgb,var(--c) 8%,var(--surface));box-shadow:0 0 0 2px color-mix(in srgb,var(--c) 22%,transparent)}
 .r-foot{flex:none;display:flex;gap:10px;justify-content:flex-end;padding-top:10px;border-top:1px solid var(--line)} .r-foot .btn{min-height:46px;flex:1} .r-foot .btn.ghost{flex:0 0 auto;min-width:96px}
 .rep .field{margin-bottom:12px}
-@media (prefers-reduced-motion:reduce){.r-pane{animation:none}}
+.r-known{display:flex;gap:10px;align-items:flex-start;margin:0 0 12px;padding:11px 12px;border-radius:14px;background:#FFF4E0;border:1px solid #F5C77A;color:#6B4300;font-size:.86rem;line-height:1.4;animation:rpane .28s var(--ease,ease)}
+.r-known small{display:block;margin-top:4px;color:#7d5a1c;font-size:.8rem} .r-known .rk-ic{flex:none;width:30px;height:30px;border-radius:10px;display:grid;place-items:center;background:#F5A623;color:#fff} .r-known .rk-ic svg{width:17px;height:17px}
+.r-pass{display:grid;gap:8px}
+.r-pa{position:relative;display:flex;align-items:center;gap:12px;width:100%;min-height:58px;padding:10px 40px 10px 10px;border:1.5px solid var(--line);border-radius:14px;background:var(--surface);font:inherit;color:var(--ink);text-align:left;cursor:pointer;transition:transform .15s,border-color .15s,background .15s,box-shadow .15s}
+.r-pa:active{transform:scale(.98)}
+.r-pa-ic{flex:none;width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 13%,transparent);color:var(--c)} .r-pa-ic svg{width:24px;height:24px}
+.r-pa b{display:block;font-size:.95rem} .r-pa small{display:block;color:var(--muted);font-size:.8rem;margin-top:1px}
+.r-pa-ok{position:absolute;right:12px;top:50%;width:22px;height:22px;margin-top:-11px;border-radius:50%;display:grid;place-items:center;background:var(--c);color:#fff;opacity:0;transform:scale(.4);transition:opacity .18s,transform .22s cubic-bezier(.2,.8,.2,1.4)} .r-pa-ok svg{width:13px;height:13px;stroke-width:3}
+.r-pa.on{border-color:var(--c);background:color-mix(in srgb,var(--c) 8%,var(--surface));box-shadow:0 0 0 2px color-mix(in srgb,var(--c) 20%,transparent)} .r-pa.on .r-pa-ok{opacity:1;transform:none}
+.r-veh-box{animation:rpane .28s var(--ease,ease)} .r-veh-box .lbl small{font-weight:500;color:var(--muted);margin-left:4px}
+.r-veh{display:grid;grid-template-columns:repeat(auto-fit,minmax(88px,1fr));gap:8px}
+.r-vh{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:84px;padding:10px 6px;border:1.5px solid var(--line);border-radius:14px;background:var(--surface);font:inherit;color:var(--muted);cursor:pointer;transition:transform .15s,border-color .15s,background .15s,color .15s}
+.r-vh:active{transform:scale(.96)} .r-vh-ic svg{width:30px;height:30px;stroke-width:1.7} .r-vh-t{font-size:.78rem;font-weight:600;line-height:1.15;text-align:center}
+.r-vh i{position:absolute;top:6px;right:6px;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:var(--brand,#1B2B8B);color:#fff;opacity:0;transform:scale(.4);transition:opacity .18s,transform .22s cubic-bezier(.2,.8,.2,1.4)} .r-vh i svg{width:11px;height:11px;stroke-width:3}
+.r-vh:not(.on) .r-vh-ic{opacity:.55}
+.r-vh.on{border-color:var(--brand,#1B2B8B);color:var(--brand,#1B2B8B);background:color-mix(in srgb,var(--brand,#1B2B8B) 7%,var(--surface))} .r-vh.on i{opacity:1;transform:none}
+.acc{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0}
+.acc-pass{display:inline-flex;align-items:center;gap:5px;padding:3px 9px 3px 6px;border-radius:999px;background:color-mix(in srgb,var(--c) 13%,#fff);color:var(--c);font-weight:700;font-size:.8rem} .acc-pass svg.i{width:16px;height:16px}
+.acc-veh{display:inline-flex;gap:3px;color:#33475b} .acc-veh span{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;background:#EEF2F6} .acc-veh svg.i{width:16px;height:16px} .acc-veh.none{font-size:.78rem;color:var(--muted)}
+.acc.sm .acc-pass{font-size:.74rem} .acc.sm .acc-veh span{width:22px;height:22px}
+@media (prefers-reduced-motion:reduce){.r-pane,.r-known,.r-veh-box{animation:none}.r-pa-ok,.r-vh i{transition:none}}
 .r-foot [hidden]{display:none!important}
 body:has(#sheet-bg.open) .install,body:has(#sheet-bg.open) .push-tip,body:has(#plan-bg.open) .install{display:none!important}
 .r-lvls{grid-template-columns:repeat(3,1fr);gap:8px}
