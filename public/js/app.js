@@ -610,7 +610,7 @@ async function applyRadar() {
     const RADAR_URL = '/api/public/radar', r = await (await fetch(RADAR_URL)).json().catch(() => ({}));
     radarFrames = r.frames || []; satInfo = r.sat || null;
     // la imagen del satélite la sirve este mismo servidor (en cPanel puede estar en una subcarpeta)
-    if (satInfo?.url?.startsWith('/api/')) satInfo.url = RADAR_URL.slice(0, -'/api/public/radar'.length) + satInfo.url;
+    if (satInfo?.url?.startsWith('/api/')) satInfo.url = RADAR_URL.replace(/\/api\/public\/radar$/, '') + satInfo.url;
     if (!radarFrames.length && !satInfo) { toast(r.blind ? 'La imagen del satélite no está disponible ahora.' : 'El radar de lluvia no está disponible ahora.', 'err'); radarOff(); return; }
     setTimeout(() => { radarFrames = []; satInfo = null; }, 5 * 60e3); // se vuelve a pedir: el satélite publica cada 10 min
   }
