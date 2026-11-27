@@ -484,9 +484,9 @@ function combine(array $remote, array $extra = []): array {
     'models' => array_map(fn($m) => ['name' => $m['name'], 'ok' => $m['ok'], 'rainNow' => $m['rainNow'] ?? 0, 'intensity' => $m['intensity'] ?? 0, 'error' => $m['error'] ?? null, 'stale' => !empty($m['stale']) ? $m['staleMin'] : null], $models)];
   // El radar no ve lluvia sobre la ciudad ni cerca y ninguna otra observación la ve: los modelos (pronóstico) solos no dicen "está lloviendo ahora"
   // Lo mismo si las dos observaciones junto a la ciudad están secas a la vez: Ducupalta (parte baja) y el aeropuerto
-  $groundDry = $lowDry && $metarDry;
+  $groundDry = $lowDry && !($mOk && (!empty($metar['intensity']) || !empty($metar['near']))); // Ducupalta seca y el aeropuerto sin lluvia (o sin reporte: de noche no opera)
   if (($radarDry || $groundDry) && !$corro && $modelSrc['intensity'] > 0)
-    $modelSrc = array_merge($modelSrc, ['intensity' => 0, 'rainNow' => 0, 'detail' => $modelSrc['detail'] . ' · ' . ($radarDry ? 'el ' . ($satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca') : 'Ducupalta y el aeropuerto no ven lluvia') . ': no cuenta como lluvia ahora']);
+    $modelSrc = array_merge($modelSrc, ['intensity' => 0, 'rainNow' => 0, 'detail' => $modelSrc['detail'] . ' · ' . ($radarDry ? 'el ' . ($satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca') : 'Ducupalta (pluviómetro) no ve lluvia') . ': no cuenta como lluvia ahora']);
   $sources = array_values(array_filter(array_merge([$modelSrc, $metar], $stations, [$owm, $radar, $sat, $wttr, $lightning], $extra)));
   // El equipo marcó "no llueve" en el centro: ni los pronósticos ni el aeropuerto (a unos 4 km) ni el radar encienden "lloviendo" mientras dure la marca.
   if (first_of($extra, fn($x) => ($x['id'] ?? '') === 'equipo' && !empty($x['ok']) && !empty($x['dry'])))
