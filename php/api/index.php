@@ -54,11 +54,12 @@ function photos_dir(): string { return data_dir() . '/photos'; }
 function base_path(): string { $b = rtrim(str_replace('\\', '/', dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '/api/index.php'))), '/'); return $b === '.' ? '' : $b; }
 function rep_out(array $r): array { if (!empty($r['photo']) && $r['photo'][0] === '/') $r['photo'] = base_path() . $r['photo']; return $r; }
 // Transitabilidad que indica quien reporta: estado del paso y qué vehículos pueden pasar
-const REP_PASS = ['cerrada', 'altos', 'lento', 'normal']; const REP_CAN = ['pie', 'moto', 'auto', 'camioneta', 'pesado']; const REP_NEAR_M = 80;
+const REP_PASS = ['cerrada', 'altos', 'lento', 'normal']; const REP_CAN = ['moto', 'auto', 'camioneta', 'pesado']; const REP_NEAR_M = 80;
+const REP_CAN_OK = ['cerrada' => [], 'altos' => ['camioneta', 'pesado']]; // con "solo vehículos altos" no caben motos ni autos
 function access_of($a): ?array {
   if (!is_array($a) || !in_array($a['pass'] ?? null, REP_PASS, true)) return null;
   $can = is_array($a['can'] ?? null) ? $a['can'] : [];
-  return ['pass' => $a['pass'], 'can' => $a['pass'] === 'cerrada' ? [] : array_values(array_filter(REP_CAN, fn($v) => in_array($v, $can, true)))];
+  return ['pass' => $a['pass'], 'can' => array_values(array_filter(REP_CAN_OK[$a['pass']] ?? REP_CAN, fn($v) => in_array($v, $can, true)))];
 }
 function m_dist($a, $b): float { return hypot(($a['lat'] - $b['lat']) * 111320, ($a['lng'] - $b['lng']) * 111320 * cos($a['lat'] * M_PI / 180)); }
 // ¿Ya está registrado este lugar? Punto crítico a ≤ 80 m o reportes recientes (12 h) a ≤ 80 m: evita puntos repetidos
