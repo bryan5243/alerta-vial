@@ -7,7 +7,7 @@ const LICOR = ['metric' => 'com.onset.sensordata.rain_si', 'base' => 'https://ww
 // Estaciones (tablero público + canal de lluvia). "note" se agrega al detalle.
 const LICOR_STATIONS = [
   ['key' => 'licor1', 'name' => 'Estación HOBO 1 (LI-COR) · pluviómetro', 'dashboard' => '5e1f6cd5-0815-49b9-9d1a-a8777d544579', 'rain' => 'f869d179-1360-4b20-9eeb-e302646514e4', 'note' => 'la estación está en la parte alta (~450 m)'],
-  ['key' => 'licor2', 'name' => 'Estación HOBO 2 (LI-COR) · pluviómetro', 'dashboard' => 'ac7e885a-8b1d-4add-b38b-917a7973446a', 'rain' => '326ce07c-c41d-45a9-ba50-0329483ace24', 'note' => ''],
+  ['key' => 'licor2', 'name' => 'Estación HOBO 2 (LI-COR) · pluviómetro', 'dashboard' => 'ac7e885a-8b1d-4add-b38b-917a7973446a', 'rain' => '326ce07c-c41d-45a9-ba50-0329483ace24', 'note' => 'la estación está a ~100 m, según su presión'],
 ];
 const LICOR_UA = 'Mozilla/5.0 (compatible; AlertaVial/1.0; +https://www.emovttsr.gob.ec/alertavial/)';
 
@@ -32,7 +32,7 @@ function licor_query(array $st, int $now, string $cookie): array {
 function licor_summary(array $pts, int $now): array {
   usort($pts, fn($a, $b) => $a[0] <=> $b[0]);
   $d = []; for ($i = 1; $i < count($pts); $i++) $d[] = $pts[$i][0] - $pts[$i - 1][0];
-  sort($d); $step = $d ? max(300000, min(3600000, $d[intdiv(count($d), 2)])) : 3600000; // cada lectura cubre [hora, hora + paso)
+  sort($d); $step = $d ? max(300000, min(86400000, $d[intdiv(count($d), 2)])) : 3600000; // 5 min, 1 h o 1 día // cada lectura cubre [hora, hora + paso)
   $sum = function (float $h) use ($pts, $now, $step) { $s = 0; foreach ($pts as [$t, $v]) if ($t + $step > $now - $h * 3600000) $s += max(0, $v); return round($s, 1); };
   [$lt, $lv] = end($pts); $end = $lt + $step; $age = max(0, (int)round(($now - $end) / 60000));
   $s = ['lastMm' => round(max(0, $lv), 1), 'lastFrom' => $lt, 'lastTo' => $end, 'stepMin' => (int)round($step / 60000), 'ageMin' => $age,
@@ -40,9 +40,10 @@ function licor_summary(array $pts, int $now): array {
   return $s + ['wet' => licor_wet($s)];
 }
 // "Llueve en la estación": con lecturas cada 5 min, ≥ 0,4 mm en la última media hora (≈ 0,8 mm/h) y el dato de hace ≤ 20 min;
-// si publica por hora, ≥ 0,5 mm en su última hora y el dato de hace ≤ 90 min
-function licor_wet(array $s): bool { return $s['stepMin'] < 60 ? $s['ageMin'] <= 20 && $s['rain30m'] >= 0.4 : $s['ageMin'] <= LICOR['freshMin'] && $s['lastMm'] >= LICOR['wetMm']; }
+// si publica por hora, ≥ 0,5 mm en su última hora y el dato de hace ≤ 90 min; un canal diario no dice si llueve ahora
+function licor_wet(array $s): bool { return $s['stepMin'] < 60 ? $s['ageMin'] <= 20 && $s['rain30m'] >= 0.4 : $s['stepMin'] <= 60 && $s['ageMin'] <= LICOR['freshMin'] && $s['lastMm'] >= LICOR['wetMm']; }
 function licor_detail(array $s, string $note = ''): string {
+  if ($s['stepMin'] > 60) return "Lluvia del día: {$s['lastMm']} mm (el canal publica un total diario, no sirve para saber si llueve ahora)" . ($note ? " · $note" : '');
   $hm = fn($ms) => gmdate('H:i', intdiv($ms, 1000) - 18000);
   $h1 = $s['stepMin'] < 60 ? $s['rain1h'] : $s['lastMm'];
   $last = $h1 > 0 ? "Llovió $h1 mm en la última hora" . ($s['stepMin'] < 60 && $s['rain30m'] > 0 ? " ({$s['rain30m']} mm en la última media hora)" : '') : 'Sin lluvia en la última hora';
