@@ -488,7 +488,17 @@ function combine(array $remote, array $extra = []): array {
   $groundDry = $lowDry && !($mOk && !empty($metar['intensity'])); // Ducupalta seca y el aeropuerto sin lluvia (o sin reporte: de noche no opera)
   if (($radarDry || $groundDry) && !$corro && $modelSrc['intensity'] > 0)
     $modelSrc = array_merge($modelSrc, ['intensity' => 0, 'rainNow' => 0, 'detail' => $modelSrc['detail'] . ' · ' . ($radarDry ? 'el ' . ($satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca') : 'Ducupalta (pluviómetro) no ve lluvia') . ': no cuenta como lluvia ahora']);
-  $sources = array_values(array_filter(array_merge([$modelSrc, $metar], $stations, [$owm, $radar, $sat, $wttr, $lightning], $extra)));
+  // Solo valores reales de Santa Rosa deciden si llueve ahora (27-nov-2026): los modelos quedan como pronóstico de las próximas horas;
+  // OpenWeatherMap y wttr.in ya no se muestran.
+  if ($modelSrc['intensity'] > 0) $modelSrc = array_merge($modelSrc, ['intensity' => 0, 'rainNow' => 0, 'detail' => $modelSrc['detail'] . ' · es pronóstico: no decide si llueve ahora']);
+  $modelSrc['forecastOnly'] = true;
+  // El pluviómetro de la parte baja (Ducupalta) sí dice cuánto llueve: su lluvia de la última hora da la intensidad
+  $stations = array_map(function ($x) use ($satDry) {
+    if (empty($x['ok']) || ($x['zone'] ?? 'alta') !== 'baja' || empty($x['wet']) || $satDry) return $x;
+    $mm = max(($x['stepMin'] ?? 60) < 60 ? ($x['rain1h'] ?? 0) : ($x['lastMm'] ?? 0), ($x['rain30m'] ?? 0) * 2);
+    return array_merge($x, ['intensity' => $mm >= 7.6 ? 3 : ($mm >= 2.5 ? 2 : 1), 'rainNow' => r1($mm)]);
+  }, $stations);
+  $sources = array_values(array_filter(array_merge([$modelSrc, $metar], $stations, [$radar, $sat, $lightning], $extra)));
   // El equipo marcó "no llueve" en el centro: ni los pronósticos ni el aeropuerto (a unos 4 km) ni el radar encienden "lloviendo" mientras dure la marca.
   if (first_of($extra, fn($x) => ($x['id'] ?? '') === 'equipo' && !empty($x['ok']) && !empty($x['dry'])))
     $sources = array_map(fn($s) => !in_array($s['id'] ?? '', ['reportes', 'equipo'], true) && ($s['intensity'] ?? 0) > 0
@@ -500,13 +510,15 @@ function combine(array $remote, array $extra = []): array {
   $intensity = min(3, $top['intensity'] ?? 0); // 0–3: la tormenta eléctrica no es una intensidad de lluvia
   $pick = function ($k) use ($okM, $need, $kth) { $v = array_map(fn($m) => $m[$k] ?? 0, $okM); return r1(count($v) >= $need ? $kth($v) : fl_max($v)); };
   $baseCode = $base['weatherCode'] ?? 0; $baseRainy = $baseCode >= 50;
+  $gauge = first_of($stations, fn($x) => !empty($x['ok']) && ($x['zone'] ?? 'alta') === 'baja' && isset($x['rain3h']));
   $pk = function ($k) use ($base, $okM) { if (($base[$k] ?? null) !== null) return $base[$k]; $m = first_of($okM, fn($m) => ($m[$k] ?? null) !== null); return $m[$k] ?? null; };
   $w = ['ok' => true, 'sources' => $sources, 'checkedAt' => $at, 'modelsNeeded' => $need, 'decidedBy' => $intensity > 0 ? $top['name'] : null,
     'source' => implode(' + ', array_map(fn($s) => $s['id'] === 'modelos' ? "$provs ($n modelos)" : $s['name'], $live)),
     'observedAt' => ($intensity > 0 ? ($top['at'] ?? null) : ($base['observedAt'] ?? null)) ?: $at,
     'temperature' => (!empty($metar['ok']) ? ($metar['temperature'] ?? null) : null) ?? $pk('temperature') ?? ($owm['temperature'] ?? null), 'cloudCover' => max($base['cloudCover'] ?? 0, $owm['cloudCover'] ?? 0, $intensity ? 95 : 0),
     'rainNow' => $intensity ? r1(max(array_map(fn($s) => !empty($s['intensity']) ? ($s['rainNow'] ?? 0) : 0, $live))) : 0,
-    'rainPast3h' => max($pick('rainPast3h'), $intensity >= 2 ? INT_MM[$intensity] : 0), 'rainPast6h' => $pick('rainPast6h'), 'rainPast12h' => $pick('rainPast12h'), 'wetHours' => $pick('wetHours'),
+    // Acumulados: los mide el pluviómetro de la parte baja (Ducupalta); sin él, lo observado por el sistema (registro)
+    'rainPast3h' => max($gauge ? ($gauge['rain3h'] ?? 0) : 0, $intensity >= 2 ? INT_MM[$intensity] : 0), 'rainPast6h' => $gauge ? ($gauge['rain6h'] ?? 0) : 0, 'rainPast12h' => $gauge ? ($gauge['rain12h'] ?? 0) : 0, 'wetHours' => 0,
     'rainNext3h' => $pick('rainNext3h'), 'rainNext24h' => $pick('rainNext24h'), 'probNext3h' => null, 'maxProbability24h' => null,
     'weatherCode' => $intensity ? INT_CODE[$intensity] : ($baseRainy ? 3 : $baseCode), 'hourly' => merge_hourly($okM)];
   if ($intensity > 0 && $w['hourly']) $w['hourly'][0] = raining_now($w['hourly'][0], $w['rainNow']);
@@ -800,7 +812,8 @@ function level_why(array $w, array $cfg): array {
   $t = (float)($cfg['rainThresholdMm'] ?? 2.4) ?: 2.4; $t3 = (float)($cfg['rainThresholdMm3h'] ?? 7) ?: 7; $i = min(3, (int)($w['intensity'] ?? 0));
   $p3 = $w['rainPast3h'] ?? 0; $p6 = $w['rainPast6h'] ?? 0; $p12 = $w['rainPast12h'] ?? 0; $wet = $w['wetHours'] ?? 0; $now = $w['rainNow'] ?? 0;
   $it = ['', 'lluvia leve', 'lluvia moderada', 'lluvia fuerte'][$i];
-  if (!$i) return (($w['probNext3h'] ?? 0) >= 80 && ($w['rainNext3h'] ?? 0) >= $t / 2) ? ['level' => 'amarilla', 'why' => "lluvia casi segura en las próximas 3 h ({$w['probNext3h']} %)"] : ['level' => 'normal', 'why' => ''];
+  // Sin lluvia medida no hay color: el pronóstico ya no sube el semáforo (solo valores reales, 27-nov-2026); queda como aviso
+  if (!$i) return ['level' => 'normal', 'why' => ''];
   if ($now >= $t * 3) return ['level' => 'roja', 'why' => "$it de " . mm_txt($now) . '/h'];
   if ($i >= 2 && ($p3 >= $t3 * 2 || $p6 >= $t3 * 3 || $p12 >= $t3 * 5)) { [$v, $h] = $p3 >= $t3 * 2 ? [$p3, 3] : ($p6 >= $t3 * 3 ? [$p6, 6] : [$p12, 12]); return ['level' => 'roja', 'why' => "$it con " . mm_txt($v) . " acumulados en $h h"]; }
   if ($now >= $t || $i >= 3) return ['level' => 'naranja', 'why' => "$it de " . mm_txt($now) . '/h'];
