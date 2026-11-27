@@ -42,6 +42,13 @@
   .legend span{display:inline-flex;align-items:center;gap:5px}
   .legend i{width:16px;height:4px;border-radius:2px;display:inline-block}
   .map-actions{position:absolute;top:14px;right:14px;z-index:500;display:flex;flex-direction:column;gap:8px}
+  .sat-key{position:absolute;left:14px;bottom:104px;z-index:500;max-width:270px;background:rgb(255 255 255/.94);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:12px;padding:8px 10px;font-size:.74rem;line-height:1.35;box-shadow:var(--shadow-1);color:var(--ink)}
+  .sat-key b{display:block;font-size:.78rem;margin-bottom:4px}
+  .sat-key .row{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0} .sat-key .row span{display:inline-flex;align-items:center;gap:4px}
+  .sat-key i{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid rgb(0 0 0/.12)}
+  .sat-key small{color:var(--muted);display:block}
+  @media (max-width:900px){ .sat-key{left:10px;top:206px;bottom:auto;max-width:min(270px,calc(100% - 80px));font-size:.7rem;padding:6px 8px} }
+  body.drive-on .sat-key{display:none}
   .map-actions .btn{background:var(--surface);color:var(--ink);border-color:var(--line);box-shadow:var(--shadow-1)} .map-actions .btn:hover{background:var(--surface-2)}
   .map-actions .btn.on{background:var(--accent-soft);color:var(--accent-ink);border-color:var(--accent)}
   .fab{position:absolute;right:70px;bottom:26px;z-index:500;box-shadow:var(--shadow-2);border-radius:14px;padding:12px 18px}
@@ -463,9 +470,10 @@
       <div class="nav-card" id="nav-card" hidden aria-live="polite"></div>
       <button class="ovf-banner" id="ovf" type="button" hidden aria-live="assertive"></button>
       <div class="picking" id="picking"><span>Toca el mapa en el lugar del problema</span><button class="btn sm ghost" id="pick-cancel" style="color:#fff;border-color:rgb(255 255 255/.4)">Cancelar</button></div>
+      <div class="sat-key" id="sat-key" hidden role="status"></div>
       <div class="map-actions">
         <button class="btn gps-btn" id="btn-gps" aria-label="Navegar con GPS" title="Navegar con GPS: te avisa antes de llegar a una calle inundada"></button>
-        <button class="btn icon" id="btn-radar" aria-label="Mostrar radar de lluvia" title="Radar de lluvia (RainViewer). Ojo: por ahora no tiene radares en Ecuador"></button>
+        <button class="btn icon" id="btn-radar" aria-label="Mostrar nubes de tormenta del satélite" title="Nubes de tormenta (satélite GOES-19, cada 10 min)"></button>
         <button class="btn icon" id="btn-layers" aria-label="Capas del mapa" title="Capas del mapa" aria-expanded="false"></button>
         <button class="btn icon" id="btn-fit" aria-label="Ver toda la ciudad" title="Ver toda la ciudad"></button>
         <button class="btn icon" id="btn-alt" aria-label="Mostrar vías alternas" title="Mostrar las vías alternas" aria-pressed="false" hidden></button>
