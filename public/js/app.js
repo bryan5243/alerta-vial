@@ -580,12 +580,23 @@ locBtn.addEventListener('click', () => {
   if (locWatch != null) return;
   locState('wait');
   locTimer = setTimeout(() => { if (!locLast && locWatch != null) toast('Buscando tu ubicación… sal a un lugar abierto si tarda.', 'ok'); }, 8000);
+  // Rápido primero: la ubicación aproximada (wifi/red o la última conocida) llega en ~1 s y centra el mapa;
+  // el GPS fino puede tardar 10–30 s en frío y va afinando el punto azul cuando llega.
+  const quick = p => {
+    if (locWatch == null || (locLast && !locLast.rough)) return;
+    const first = !locLast;
+    locLast = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, heading: null, rough: true };
+    if (!locMk) locMk = map.addUser(locLast); else locMk.update(locLast);
+    if (first) { clearTimeout(locTimer); locCenter(); }
+  };
+  navigator.geolocation.getCurrentPosition(quick, () => {}, { enableHighAccuracy: false, maximumAge: 10 * 60e3, timeout: 6000 });
   locWatch = navigator.geolocation.watchPosition(p => {
     const first = !locLast;
     locLast = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, heading: p.coords.heading };
     if (!locMk) locMk = map.addUser(locLast); else locMk.update(locLast);
     if (first) { clearTimeout(locTimer); locCenter(); } else if (locCentered) map.setCenter(locLast);
   }, e => {
+    if (e.code === 3 && locLast) return; // el GPS fino tarda: se queda la ubicación aproximada y se sigue esperando
     const had = !!locLast; locStop();
     if (!had) toast(e.code === 1 ? 'Permite el acceso a tu ubicación para verte en el mapa (en los ajustes del navegador).' : 'No se pudo obtener tu ubicación. Revisa que el GPS esté encendido.', 'err');
   }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
