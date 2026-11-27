@@ -268,6 +268,7 @@ function radar_pixel($lat, $lng, int $z = 7): array {
 // y el sistema creía que "el radar no ve lluvia". En esa zona el radar no se usa.
 const RADAR_BLIND = 'RainViewer no tiene radares en Ecuador ni en Perú: su imagen sale vacía aunque llueva, así que esta fuente no se usa aquí';
 require_once __DIR__ . '/goes.php';
+require_once __DIR__ . '/licor.php';
 function radar_blind($lat, $lng): bool { return $lat > -18.5 && $lat < 1.6 && $lng > -81.5 && $lng < -68.5; }
 function radar_source($lat, $lng, ?array $mapsRes): array {
   $base = ['id' => 'radar', 'kind' => 'observación', 'name' => 'Radar de lluvia (RainViewer)'];
@@ -407,7 +408,9 @@ function weather_fetch(array $cfg): array {
     $sat = null; $lightning = null;
     try { if (radar_blind($lat, $lng)) $sat = goes_sat((float)$lat, (float)$lng); } catch (Throwable $e) { error_log('AlertaVial satélite: ' . $e->getMessage()); }
     try { $lightning = goes_glm((float)$lat, (float)$lng); } catch (Throwable $e) { error_log('AlertaVial rayos: ' . $e->getMessage()); }
-    $remote = ['models' => array_merge($omModels, [$metno]), 'metar' => $metar, 'owm' => $owm, 'radar' => $radar, 'wttr' => $wttr, 'sat' => $sat, 'lightning' => $lightning, 'at' => gmdate('c')];
+    // Estación HOBO (LI-COR) con pluviómetro, en la parte alta
+    $station = null; try { $station = licor_source(); } catch (Throwable $e) { error_log('AlertaVial estación: ' . $e->getMessage()); }
+    $remote = ['models' => array_merge($omModels, [$metno]), 'metar' => $metar, 'owm' => $owm, 'radar' => $radar, 'wttr' => $wttr, 'sat' => $sat, 'lightning' => $lightning, 'station' => $station, 'at' => gmdate('c')];
     cache_put('weather', ['at' => $now, 'key' => $key, 'remote' => $remote]);
   }
   return $remote;
@@ -416,7 +419,7 @@ function weather_fetch(array $cfg): array {
 // ---------- Combinar fuentes ----------
 function combine(array $remote, array $extra = []): array {
   $models = $remote['models']; $metar = $remote['metar'] ?? null; $owm = $remote['owm'] ?? null; $radar = $remote['radar'] ?? null; $wttr = $remote['wttr'] ?? null; $at = $remote['at'];
-  $sat = sat_fresh($remote['sat'] ?? null);
+  $sat = sat_fresh($remote['sat'] ?? null); $station = $remote['station'] ?? null;
   // Rayos del satélite GOES (GLM): el resumen se arma al leer las fuentes; si quedó viejo (más de 12 min) no cuenta
   $lightning = $remote['lightning'] ?? null;
   if (!empty($lightning['ok']) && time() - (strtotime($lightning['at'] ?? '') ?: 0) > 720) $lightning = array_merge($lightning, ['ok' => false, 'error' => 'el dato de rayos quedó viejo']);
@@ -435,8 +438,10 @@ function combine(array $remote, array $extra = []): array {
   // "Lluvia en los alrededores" del aeropuerto (VCSH) no respalda a los pronósticos si el radar no ve nada sobre la ciudad ni cerca
   // Sin radar (Ecuador), el satélite hace su papel a medias: cielo sin nubes de lluvia = seco; nubes de tormenta sobre la ciudad = respaldo.
   $satDry = sat_dry($sat); $satWet = sat_wet($sat);
+  // Pluviómetro de la estación (parte alta): si su última hora tuvo lluvia medible, respalda a los pronósticos (como la lluvia cerca del aeropuerto)
+  $stWet = !empty($station['ok']) && !empty($station['wet']) && !$satDry; // con el cielo de la ciudad despejado (satélite), esa lluvia quedó en los cerros
   $radarDry = ($rOk && empty($radar['intensity']) && empty($radar['near'])) || $satDry;
-  $corro = ($rOk && (($radar['intensity'] ?? 0) > 0 || !empty($radar['near']))) || ($mOk && (($metar['intensity'] ?? 0) > 0 || (!empty($metar['near']) && !$radarDry))) || $satWet;
+  $corro = ($rOk && (($radar['intensity'] ?? 0) > 0 || !empty($radar['near']))) || ($mOk && (($metar['intensity'] ?? 0) > 0 || (!empty($metar['near']) && !$radarDry))) || $satWet || $stWet;
   if ($mOk && empty($metar['intensity']) && !empty($metar['near']) && $radarDry) $metar = array_merge($metar, ['detail' => ($metar['detail'] ?? '') . ' · el ' . ($satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no la ve cerca de la ciudad') . ': no respalda a los pronósticos']);
   // OpenWeatherMap: su "clima actual" es un modelo. Su lluvia solo cuenta si el radar o el aeropuerto la confirman.
   if (!empty($owm['ok']) && !empty($owm['intensity']) && !$corro) $owm = array_merge($owm, ['intensity' => 0, 'rainNow' => 0, 'detail' => ($owm['detail'] ?? '') . ' · el radar y el aeropuerto no ven lluvia: no cuenta']);
@@ -471,7 +476,7 @@ function combine(array $remote, array $extra = []): array {
   // El radar no ve lluvia sobre la ciudad ni cerca y ninguna otra observación la ve: los modelos (pronóstico) solos no dicen "está lloviendo ahora"
   if ($radarDry && !$corro && $modelSrc['intensity'] > 0)
     $modelSrc = array_merge($modelSrc, ['intensity' => 0, 'rainNow' => 0, 'detail' => $modelSrc['detail'] . ' · el ' . ($satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca') . ': no cuenta como lluvia ahora']);
-  $sources = array_values(array_filter(array_merge([$modelSrc, $metar, $owm, $radar, $sat, $wttr, $lightning], $extra)));
+  $sources = array_values(array_filter(array_merge([$modelSrc, $metar, $station, $owm, $radar, $sat, $wttr, $lightning], $extra)));
   // El equipo marcó "no llueve" en el centro: ni los pronósticos ni el aeropuerto (a unos 4 km) ni el radar encienden "lloviendo" mientras dure la marca.
   if (first_of($extra, fn($x) => ($x['id'] ?? '') === 'equipo' && !empty($x['ok']) && !empty($x['dry'])))
     $sources = array_map(fn($s) => !in_array($s['id'] ?? '', ['reportes', 'equipo'], true) && ($s['intensity'] ?? 0) > 0
