@@ -80,7 +80,7 @@ function simulatedWeather(real) {
   w.outlook = s.rainNow > 0 ? { level: 'lloviendo', title: 'Está lloviendo', text: 'Revisa las calles inundadas y las vías alternas antes de salir.', reasons: [] } : real?.outlook;
   return Object.assign(w, describe(w));
 }
-import { startLightning } from './lightning.js';
+import { startLightning, lightningSnapshot } from './lightning.js';
 import { nearStreets } from './near.js';
 import { noteObservation, withHistory } from './daylog.js';
 { const c0 = load().config; if (c0.lightningEnabled !== false) startLightning({ lat: c0.weather?.lat ?? c0.center?.lat, lng: c0.weather?.lng ?? c0.center?.lng }); }
@@ -253,7 +253,9 @@ const satPoint = req => { const c = load().config, w = c.weather || {}, lat = pa
   return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) < 60 && lng > -150 && lng < 0 ? { lat, lng } : { lat: w.lat ?? c.center?.lat, lng: w.lng ?? c.center?.lng }; };
 app.get('/api/public/sat', async (req, res) => {
   const { lat, lng } = satPoint(req); res.set('Access-Control-Allow-Origin', '*');
-  res.json({ ...(await satSource(lat, lng)), image: { url: `/api/public/sat.png?lat=${lat}&lng=${lng}`, bounds: satBounds(Math.round(lat * 100) / 100, Math.round(lng * 100) / 100) } });
+  // Va también el resumen del detector de rayos (solo conteos y distancias, nunca la lista de rayos): la versión cPanel no puede tener
+  // una conexión siempre abierta ni leer los archivos del satélite. Es de la ciudad configurada en este servidor.
+  res.json({ ...(await satSource(lat, lng)), image: { url: `/api/public/sat.png?lat=${lat}&lng=${lng}`, bounds: satBounds(Math.round(lat * 100) / 100, Math.round(lng * 100) / 100) }, lightning: lightningSnapshot() });
 });
 app.get('/api/public/sat.png', async (req, res) => {
   const { lat, lng } = satPoint(req), s = await satState(lat, lng).catch(() => null);

@@ -278,17 +278,16 @@ try {
   if ($route === 'public/push-key' && $method === 'GET') out(['key' => push_public_key()]);
   if ($route === 'public/push-subscribe' && $method === 'POST') { if (push_add_sub(body()['subscription'] ?? null)) out(['ok' => true]); fail(400, 'Suscripción no válida.'); }
   if ($route === 'public/push-unsubscribe' && $method === 'POST') { push_remove_sub((string)(body()['endpoint'] ?? '')); out(['ok' => true]); }
+  if ($route === 'public/sat.png' && $method === 'GET') {
+    $f = data_dir() . '/cache/sat.png';
+    if (!is_file($f)) fail(404, 'Sin imagen del satélite.');
+    header('Content-Type: image/png'); header('Cache-Control: public, max-age=240'); readfile($f); exit;
+  }
   if ($route === 'public/radar' && $method === 'GET') {
-    // En Ecuador no hay radar (RainViewer): se muestra la imagen del satélite GOES-19 (nubes de tormenta) que prepara la versión de Render
+    // En Ecuador no hay radar (RainViewer): se muestra la imagen del satélite GOES-19 (nubes de tormenta), leída aquí mismo
     $cdb = db_load()['config']; $wc = ($cdb['weather'] ?? []) + ($cdb['center'] ?? []);
     if (isset($wc['lat'], $wc['lng']) && radar_blind((float)$wc['lat'], (float)$wc['lng'])) {
-      $sv = cache_get('satsrc'); $sat = sat_fresh($sv['data'] ?? null);
-      if (!$sat || empty($sat['ok']) || now_ms() - ($sv['at'] ?? 0) > 600000) {
-        $lat = (float)$wc['lat']; $lng = (float)$wc['lng'];
-        $sat = sat_source(http_one(['url' => AV_SAT_RELAY . "/api/public/sat?lat=$lat&lng=$lng", 'timeout' => 20]));
-        if ($sat['ok']) cache_put('satsrc', ['key' => ($sv['key'] ?? "$lat,$lng"), 'at' => now_ms(), 'data' => $sat]);
-        $sat = sat_fresh($sat);
-      }
+      $sat = sat_fresh(goes_sat((float)$wc['lat'], (float)$wc['lng']));
       out(['ok' => !empty($sat['ok']), 'frames' => [], 'blind' => true, 'sat' => !empty($sat['ok']) && !empty($sat['image']) ? ['at' => $sat['at']] + $sat['image'] : null, 'error' => $sat['error'] ?? null]);
     }
     $c = cache_get('radar'); if ($c && now_ms() - $c['at'] < 300000) out($c['data']);

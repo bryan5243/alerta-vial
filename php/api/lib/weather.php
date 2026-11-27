@@ -267,39 +267,7 @@ function radar_pixel($lat, $lng, int $z = 7): array {
 // RainViewer no tiene radares en Ecuador ni en Perú (rainviewer.com/coverage.html): ahí su imagen sale vacía aunque llueva,
 // y el sistema creía que "el radar no ve lluvia". En esa zona el radar no se usa.
 const RADAR_BLIND = 'RainViewer no tiene radares en Ecuador ni en Perú: su imagen sale vacía aunque llueva, así que esta fuente no se usa aquí';
-// Satélite GOES-19 (donde no hay radar): PHP no puede leer los archivos del satélite (NetCDF/HDF5), así que los lee la versión de Render
-// y aquí se pide el resumen: altura de la cima de las nubes sobre la ciudad y la imagen para el mapa.
-if (!defined('AV_SAT_RELAY')) define('AV_SAT_RELAY', 'https://alertavial-demo-09sq.onrender.com');
-const SAT_MAX_AGE_MIN = 40;
-function sat_detail(array $s, int $ageMin): string {
-  $txt = !empty($s['clear']) ? 'Sin nubes de lluvia sobre la ciudad (despejado o solo nubes bajas)'
-    : (!empty($s['storm']) ? "Nubes de tormenta sobre la ciudad (cima a ~{$s['topKm']} km)"
-    : "Nubes sobre la ciudad con cima a ~{$s['topKm']} km" . ($s['topKm'] >= 7 ? ' (nubes altas: pueden ser solo cirros, que no llueven)' : ''));
-  $near = empty($s['storm']) && ($s['stormKm'] ?? null) !== null ? " · nubes de tormenta a ~{$s['stormKm']} km" : '';
-  return "$txt$near · el satélite ve las nubes desde arriba, no mide la lluvia · imagen de hace $ageMin min";
-}
-function sat_source(?array $res): array {
-  $base = ['id' => 'satelite', 'kind' => 'observación', 'name' => 'Satélite GOES-19 (nubes de tormenta)', 'intensity' => 0, 'rainNow' => 0];
-  try {
-    $j = http_json($res);
-    if (empty($j['ok'])) return $base + ['ok' => false, 'error' => $j['error'] ?? 'sin datos del satélite'];
-    $at = strtotime($j['at'] ?? ''); if (!$at) throw new Exception('respuesta del satélite sin hora');
-    $s = ['topKm' => (float)($j['topKm'] ?? 0), 'nearTopKm' => (float)($j['nearTopKm'] ?? 0), 'clear' => !empty($j['clear']), 'storm' => !empty($j['storm']),
-      'stormKm' => isset($j['stormKm']) ? (int)$j['stormKm'] : null, 'cloudShare' => (int)($j['cloudShare'] ?? 0)];
-    $img = !empty($j['image']['url']) ? ['url' => AV_SAT_RELAY . $j['image']['url'] . '&t=' . $at, 'bounds' => $j['image']['bounds']] : null;
-    return $base + ['ok' => true, 'at' => gmdate('c', $at)] + $s + ['image' => $img];
-  } catch (Throwable $e) { return $base + ['ok' => false, 'error' => 'no se pudo leer el satélite (' . $e->getMessage() . ')']; }
-}
-// Antigüedad y texto se calculan al usarlo (el dato queda guardado unos minutos)
-function sat_fresh(?array $s): ?array {
-  if (!$s) return null;
-  if (empty($s['ok'])) return $s;
-  $age = (int)round((time() - strtotime($s['at'])) / 60);
-  if ($age > SAT_MAX_AGE_MIN) return array_merge($s, ['ok' => false, 'error' => "la última imagen del satélite es de hace $age min"]);
-  return array_merge($s, ['detail' => sat_detail($s, $age)]);
-}
-function sat_dry($sat): bool { return !empty($sat['ok']) && !empty($sat['clear']) && !(($sat['stormKm'] ?? null) !== null && $sat['stormKm'] <= 25); }
-function sat_wet($sat): bool { return !empty($sat['ok']) && !empty($sat['storm']); }
+require_once __DIR__ . '/goes.php';
 function radar_blind($lat, $lng): bool { return $lat > -18.5 && $lat < 1.6 && $lng > -81.5 && $lng < -68.5; }
 function radar_source($lat, $lng, ?array $mapsRes): array {
   $base = ['id' => 'radar', 'kind' => 'observación', 'name' => 'Radar de lluvia (RainViewer)'];
@@ -419,8 +387,6 @@ function weather_fetch(array $cfg): array {
     if (!$wtFresh) $reqs['wttr'] = ['url' => "https://wttr.in/$lat,$lng?format=j1", 'timeout' => 10, 'headers' => $ua];
     $rv = cache_get('radarsrc'); $rvFresh = $rv && ($rv['key'] ?? '') === "$lat,$lng" && $now - $rv['at'] < 240000;
     if (!$rvFresh && !radar_blind($lat, $lng)) $reqs['rvmaps'] = ['url' => 'https://api.rainviewer.com/public/weather-maps.json', 'timeout' => 8, 'headers' => $ua];
-    $sv = cache_get('satsrc'); $svFresh = $sv && ($sv['key'] ?? '') === "$lat,$lng" && $now - $sv['at'] < 240000;
-    if (!$svFresh && radar_blind($lat, $lng)) $reqs['sat'] = ['url' => AV_SAT_RELAY . "/api/public/sat?lat=$lat&lng=$lng", 'timeout' => 9, 'headers' => $ua];
     $res = $reqs ? http_multi($reqs) : [];
     // Copia de la respuesta cruda para el puente de Render (/api/public/om-relay)
     if (isset($res['om']) && !$res['om']['err'] && $res['om']['code'] === 200) @file_put_contents(data_dir() . '/cache/omrelay.json', $res['om']['body']);
@@ -434,15 +400,14 @@ function weather_fetch(array $cfg): array {
     if (!$owmKey) $owm = ['id' => 'owm', 'kind' => 'pronóstico', 'name' => 'OpenWeatherMap', 'ok' => false, 'disabled' => true, 'intensity' => 0, 'error' => 'sin API key'];
     elseif (isset($res['owm'])) { $owm = owm_parse($res['owm']); cache_put('owm', ['key' => "$lat,$lng,$owmKey", 'at' => $now, 'data' => $owm]); } else $owm = $ow['data'];
     if (isset($res['wttr'])) { $wttr = wttr_parse($res['wttr']); cache_put('wttr', ['key' => "$lat,$lng", 'at' => $now, 'data' => $wttr]); } else $wttr = $wt['data'];
-    if (radar_blind($lat, $lng)) $radar = ['id' => 'radar', 'kind' => 'observación', 'name' => 'Radar de lluvia (RainViewer)', 'ok' => false, 'disabled' => true, 'intensity' => 0, 'error' => RADAR_BLIND];
+    // RainViewer no tiene radares en Ecuador ni en Perú: ahí no se usa ni se muestra; lo reemplaza el satélite
+    if (radar_blind($lat, $lng)) $radar = null;
     elseif (isset($res['rvmaps'])) { $radar = radar_source($lat, $lng, $res['rvmaps']); cache_put('radarsrc', ['key' => "$lat,$lng", 'at' => $now, 'data' => $radar]); } else $radar = $rv['data'];
-    if (!radar_blind($lat, $lng)) $sat = null;
-    elseif (isset($res['sat'])) { $sat = sat_source($res['sat']);
-      // Render puede estar dormido (tarda ~1 min en despertar): si falla, se conserva el último dato bueno (sat_fresh lo descarta a los 40 min)
-      if (!$sat['ok'] && !empty($sv['data']['ok'])) $sat = $sv['data'];
-      cache_put('satsrc', ['key' => "$lat,$lng", 'at' => $now, 'data' => $sat]); }
-    else $sat = $sv['data'] ?? null;
-    $remote = ['models' => array_merge($omModels, [$metno]), 'metar' => $metar, 'owm' => $owm, 'radar' => $radar, 'wttr' => $wttr, 'sat' => $sat, 'at' => gmdate('c')];
+    // Satélite GOES-19 (nubes donde no hay radar) y detector de rayos: se leen directamente de NOAA
+    $sat = null; $lightning = null;
+    try { if (radar_blind($lat, $lng)) $sat = goes_sat((float)$lat, (float)$lng); } catch (Throwable $e) { error_log('AlertaVial satélite: ' . $e->getMessage()); }
+    try { $lightning = goes_glm((float)$lat, (float)$lng); } catch (Throwable $e) { error_log('AlertaVial rayos: ' . $e->getMessage()); }
+    $remote = ['models' => array_merge($omModels, [$metno]), 'metar' => $metar, 'owm' => $owm, 'radar' => $radar, 'wttr' => $wttr, 'sat' => $sat, 'lightning' => $lightning, 'at' => gmdate('c')];
     cache_put('weather', ['at' => $now, 'key' => $key, 'remote' => $remote]);
   }
   return $remote;
@@ -452,7 +417,9 @@ function weather_fetch(array $cfg): array {
 function combine(array $remote, array $extra = []): array {
   $models = $remote['models']; $metar = $remote['metar'] ?? null; $owm = $remote['owm'] ?? null; $radar = $remote['radar'] ?? null; $wttr = $remote['wttr'] ?? null; $at = $remote['at'];
   $sat = sat_fresh($remote['sat'] ?? null);
-  $lightning = $remote['lightning'] ?? null; // en PHP no hay detector de rayos en vivo (necesita un proceso siempre encendido)
+  // Rayos del satélite GOES (GLM): el resumen se arma al leer las fuentes; si quedó viejo (más de 12 min) no cuenta
+  $lightning = $remote['lightning'] ?? null;
+  if (!empty($lightning['ok']) && time() - (strtotime($lightning['at'] ?? '') ?: 0) > 720) $lightning = array_merge($lightning, ['ok' => false, 'error' => 'el dato de rayos quedó viejo']);
   // wttr.in es pronóstico: su "tormenta ahora" solo cuenta si el aeropuerto la confirma
   if (!empty($wttr['ok']) && !empty($wttr['thunderNow']) && !(($lightning['strikes15'] ?? 0) > 0 || !empty($metar['ts'])))
     $wttr = array_merge($wttr, ['thunderNow' => false, 'detail' => ($wttr['detail'] ?? '') . ' · sin rayos detectados: no cuenta como tormenta']);
