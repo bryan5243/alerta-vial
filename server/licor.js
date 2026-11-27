@@ -6,7 +6,7 @@ export const LICOR = { metric: 'com.onset.sensordata.rain_si', base: 'https://ww
 // Estaciones (tablero público + canal de lluvia). "note" se agrega al detalle.
 export const LICOR_STATIONS = [
   { key: 'licor1', name: 'Estación HOBO 1 (LI-COR) · pluviómetro', dashboard: '5e1f6cd5-0815-49b9-9d1a-a8777d544579', rain: 'f869d179-1360-4b20-9eeb-e302646514e4', note: 'la estación está en la parte alta (~450 m)' },
-  { key: 'licor2', name: 'Estación HOBO 2 (LI-COR) · pluviómetro', dashboard: 'ac7e885a-8b1d-4add-b38b-917a7973446a', rain: '326ce07c-c41d-45a9-ba50-0329483ace24', note: '' },
+  { key: 'licor2', name: 'Estación HOBO 2 (LI-COR) · pluviómetro', dashboard: 'ac7e885a-8b1d-4add-b38b-917a7973446a', rain: '326ce07c-c41d-45a9-ba50-0329483ace24', note: 'la estación está a ~100 m, según su presión' },
 ];
 const UA = 'Mozilla/5.0 (compatible; AlertaVial/1.0)';
 const r1 = x => Math.round(x * 10) / 10;
@@ -17,17 +17,18 @@ const query = (st, now, cookie) => fetch(`${LICOR.base}/api/v2/timeseriesdata`, 
 export function licorSummary(pts, now) {
   pts = pts.slice().sort((a, b) => a[0] - b[0]);
   const d = pts.slice(1).map((p, i) => p[0] - pts[i][0]).sort((a, b) => a - b);
-  const step = d.length ? Math.max(300000, Math.min(3600000, d[Math.floor(d.length / 2)])) : 3600000;
+  const step = d.length ? Math.max(300000, Math.min(86400000, d[Math.floor(d.length / 2)])) : 3600000; // 5 min, 1 h o 1 día
   const sum = h => r1(pts.reduce((s, [t, v]) => s + (t + step > now - h * 3600000 ? Math.max(0, v) : 0), 0));
   const [lt, lv] = pts.at(-1), end = lt + step, age = Math.max(0, Math.round((now - end) / 60000));
   const s = { lastMm: r1(Math.max(0, lv)), lastFrom: lt, lastTo: end, stepMin: Math.round(step / 60000), ageMin: age, rain30m: sum(0.5), rain1h: sum(1), rain3h: sum(3), rain6h: sum(6), rain12h: sum(12), rain24h: sum(24) };
   return { ...s, wet: licorWet(s) };
 }
 // "Llueve en la estación": con lecturas cada 5 min, ≥ 0,4 mm en la última media hora (≈ 0,8 mm/h) y el dato de hace ≤ 20 min;
-// si publica por hora, ≥ 0,5 mm en su última hora y el dato de hace ≤ 90 min
-export const licorWet = s => s.stepMin < 60 ? s.ageMin <= 20 && s.rain30m >= 0.4 : s.ageMin <= LICOR.freshMin && s.lastMm >= LICOR.wetMm;
+// si publica por hora, ≥ 0,5 mm en su última hora y el dato de hace ≤ 90 min; un canal diario no dice si llueve ahora
+export const licorWet = s => s.stepMin < 60 ? s.ageMin <= 20 && s.rain30m >= 0.4 : s.stepMin <= 60 && s.ageMin <= LICOR.freshMin && s.lastMm >= LICOR.wetMm;
 const hm = ms => new Date(ms - 5 * 3600000).toISOString().slice(11, 16);
 export function licorDetail(s, note = '') {
+  if (s.stepMin > 60) return `Lluvia del día: ${s.lastMm} mm (el canal publica un total diario, no sirve para saber si llueve ahora)${note ? ` · ${note}` : ''}`;
   const h1 = s.stepMin < 60 ? s.rain1h : s.lastMm;
   const last = h1 > 0 ? `Llovió ${h1} mm en la última hora${s.stepMin < 60 && s.rain30m > 0 ? ` (${s.rain30m} mm en la última media hora)` : ''}` : 'Sin lluvia en la última hora';
   return `${last} · últimas 3 h: ${s.rain3h} mm · 24 h: ${s.rain24h} mm · lectura de las ${hm(s.lastTo)} (hace ${s.ageMin} min)${note ? ` · ${note}` : ''}`;
