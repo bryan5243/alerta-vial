@@ -267,6 +267,39 @@ function radar_pixel($lat, $lng, int $z = 7): array {
 // RainViewer no tiene radares en Ecuador ni en Perú (rainviewer.com/coverage.html): ahí su imagen sale vacía aunque llueva,
 // y el sistema creía que "el radar no ve lluvia". En esa zona el radar no se usa.
 const RADAR_BLIND = 'RainViewer no tiene radares en Ecuador ni en Perú: su imagen sale vacía aunque llueva, así que esta fuente no se usa aquí';
+// Satélite GOES-19 (donde no hay radar): PHP no puede leer los archivos del satélite (NetCDF/HDF5), así que los lee la versión de Render
+// y aquí se pide el resumen: altura de la cima de las nubes sobre la ciudad y la imagen para el mapa.
+if (!defined('AV_SAT_RELAY')) define('AV_SAT_RELAY', 'https://alertavial-demo-09sq.onrender.com');
+const SAT_MAX_AGE_MIN = 40;
+function sat_detail(array $s, int $ageMin): string {
+  $txt = !empty($s['clear']) ? 'Sin nubes de lluvia sobre la ciudad (despejado o solo nubes bajas)'
+    : (!empty($s['storm']) ? "Nubes de tormenta sobre la ciudad (cima a ~{$s['topKm']} km)"
+    : "Nubes sobre la ciudad con cima a ~{$s['topKm']} km" . ($s['topKm'] >= 7 ? ' (nubes altas: pueden ser solo cirros, que no llueven)' : ''));
+  $near = empty($s['storm']) && ($s['stormKm'] ?? null) !== null ? " · nubes de tormenta a ~{$s['stormKm']} km" : '';
+  return "$txt$near · el satélite ve las nubes desde arriba, no mide la lluvia · imagen de hace $ageMin min";
+}
+function sat_source(?array $res): array {
+  $base = ['id' => 'satelite', 'kind' => 'observación', 'name' => 'Satélite GOES-19 (nubes de tormenta)', 'intensity' => 0, 'rainNow' => 0];
+  try {
+    $j = http_json($res);
+    if (empty($j['ok'])) return $base + ['ok' => false, 'error' => $j['error'] ?? 'sin datos del satélite'];
+    $at = strtotime($j['at'] ?? ''); if (!$at) throw new Exception('respuesta del satélite sin hora');
+    $s = ['topKm' => (float)($j['topKm'] ?? 0), 'nearTopKm' => (float)($j['nearTopKm'] ?? 0), 'clear' => !empty($j['clear']), 'storm' => !empty($j['storm']),
+      'stormKm' => isset($j['stormKm']) ? (int)$j['stormKm'] : null, 'cloudShare' => (int)($j['cloudShare'] ?? 0)];
+    $img = !empty($j['image']['url']) ? ['url' => AV_SAT_RELAY . $j['image']['url'] . '&t=' . $at, 'bounds' => $j['image']['bounds']] : null;
+    return $base + ['ok' => true, 'at' => gmdate('c', $at)] + $s + ['image' => $img];
+  } catch (Throwable $e) { return $base + ['ok' => false, 'error' => 'no se pudo leer el satélite (' . $e->getMessage() . ')']; }
+}
+// Antigüedad y texto se calculan al usarlo (el dato queda guardado unos minutos)
+function sat_fresh(?array $s): ?array {
+  if (!$s) return null;
+  if (empty($s['ok'])) return $s;
+  $age = (int)round((time() - strtotime($s['at'])) / 60);
+  if ($age > SAT_MAX_AGE_MIN) return array_merge($s, ['ok' => false, 'error' => "la última imagen del satélite es de hace $age min"]);
+  return array_merge($s, ['detail' => sat_detail($s, $age)]);
+}
+function sat_dry($sat): bool { return !empty($sat['ok']) && !empty($sat['clear']) && !(($sat['stormKm'] ?? null) !== null && $sat['stormKm'] <= 25); }
+function sat_wet($sat): bool { return !empty($sat['ok']) && !empty($sat['storm']); }
 function radar_blind($lat, $lng): bool { return $lat > -18.5 && $lat < 1.6 && $lng > -81.5 && $lng < -68.5; }
 function radar_source($lat, $lng, ?array $mapsRes): array {
   $base = ['id' => 'radar', 'kind' => 'observación', 'name' => 'Radar de lluvia (RainViewer)'];
@@ -386,6 +419,8 @@ function weather_fetch(array $cfg): array {
     if (!$wtFresh) $reqs['wttr'] = ['url' => "https://wttr.in/$lat,$lng?format=j1", 'timeout' => 10, 'headers' => $ua];
     $rv = cache_get('radarsrc'); $rvFresh = $rv && ($rv['key'] ?? '') === "$lat,$lng" && $now - $rv['at'] < 240000;
     if (!$rvFresh && !radar_blind($lat, $lng)) $reqs['rvmaps'] = ['url' => 'https://api.rainviewer.com/public/weather-maps.json', 'timeout' => 8, 'headers' => $ua];
+    $sv = cache_get('satsrc'); $svFresh = $sv && ($sv['key'] ?? '') === "$lat,$lng" && $now - $sv['at'] < 240000;
+    if (!$svFresh && radar_blind($lat, $lng)) $reqs['sat'] = ['url' => AV_SAT_RELAY . "/api/public/sat?lat=$lat&lng=$lng", 'timeout' => 9, 'headers' => $ua];
     $res = $reqs ? http_multi($reqs) : [];
     // Copia de la respuesta cruda para el puente de Render (/api/public/om-relay)
     if (isset($res['om']) && !$res['om']['err'] && $res['om']['code'] === 200) @file_put_contents(data_dir() . '/cache/omrelay.json', $res['om']['body']);
@@ -401,7 +436,13 @@ function weather_fetch(array $cfg): array {
     if (isset($res['wttr'])) { $wttr = wttr_parse($res['wttr']); cache_put('wttr', ['key' => "$lat,$lng", 'at' => $now, 'data' => $wttr]); } else $wttr = $wt['data'];
     if (radar_blind($lat, $lng)) $radar = ['id' => 'radar', 'kind' => 'observación', 'name' => 'Radar de lluvia (RainViewer)', 'ok' => false, 'disabled' => true, 'intensity' => 0, 'error' => RADAR_BLIND];
     elseif (isset($res['rvmaps'])) { $radar = radar_source($lat, $lng, $res['rvmaps']); cache_put('radarsrc', ['key' => "$lat,$lng", 'at' => $now, 'data' => $radar]); } else $radar = $rv['data'];
-    $remote = ['models' => array_merge($omModels, [$metno]), 'metar' => $metar, 'owm' => $owm, 'radar' => $radar, 'wttr' => $wttr, 'at' => gmdate('c')];
+    if (!radar_blind($lat, $lng)) $sat = null;
+    elseif (isset($res['sat'])) { $sat = sat_source($res['sat']);
+      // Render puede estar dormido (tarda ~1 min en despertar): si falla, se conserva el último dato bueno (sat_fresh lo descarta a los 40 min)
+      if (!$sat['ok'] && !empty($sv['data']['ok'])) $sat = $sv['data'];
+      cache_put('satsrc', ['key' => "$lat,$lng", 'at' => $now, 'data' => $sat]); }
+    else $sat = $sv['data'] ?? null;
+    $remote = ['models' => array_merge($omModels, [$metno]), 'metar' => $metar, 'owm' => $owm, 'radar' => $radar, 'wttr' => $wttr, 'sat' => $sat, 'at' => gmdate('c')];
     cache_put('weather', ['at' => $now, 'key' => $key, 'remote' => $remote]);
   }
   return $remote;
@@ -410,6 +451,7 @@ function weather_fetch(array $cfg): array {
 // ---------- Combinar fuentes ----------
 function combine(array $remote, array $extra = []): array {
   $models = $remote['models']; $metar = $remote['metar'] ?? null; $owm = $remote['owm'] ?? null; $radar = $remote['radar'] ?? null; $wttr = $remote['wttr'] ?? null; $at = $remote['at'];
+  $sat = sat_fresh($remote['sat'] ?? null);
   $lightning = $remote['lightning'] ?? null; // en PHP no hay detector de rayos en vivo (necesita un proceso siempre encendido)
   // wttr.in es pronóstico: su "tormenta ahora" solo cuenta si el aeropuerto la confirma
   if (!empty($wttr['ok']) && !empty($wttr['thunderNow']) && !(($lightning['strikes15'] ?? 0) > 0 || !empty($metar['ts'])))
@@ -424,9 +466,11 @@ function combine(array $remote, array $extra = []): array {
   // Los modelos y wttr.in son pronósticos: el respaldo tiene que ser una observación real (radar o aeropuerto)
   $rOk = !empty($radar['ok']); $mOk = !empty($metar['ok']);
   // "Lluvia en los alrededores" del aeropuerto (VCSH) no respalda a los pronósticos si el radar no ve nada sobre la ciudad ni cerca
-  $radarDry = $rOk && empty($radar['intensity']) && empty($radar['near']);
-  $corro = ($rOk && (($radar['intensity'] ?? 0) > 0 || !empty($radar['near']))) || ($mOk && (($metar['intensity'] ?? 0) > 0 || (!empty($metar['near']) && !$radarDry)));
-  if ($mOk && empty($metar['intensity']) && !empty($metar['near']) && $radarDry) $metar = array_merge($metar, ['detail' => ($metar['detail'] ?? '') . ' · el radar no la ve cerca de la ciudad: no respalda a los pronósticos']);
+  // Sin radar (Ecuador), el satélite hace su papel a medias: cielo sin nubes de lluvia = seco; nubes de tormenta sobre la ciudad = respaldo.
+  $satDry = sat_dry($sat); $satWet = sat_wet($sat);
+  $radarDry = ($rOk && empty($radar['intensity']) && empty($radar['near'])) || $satDry;
+  $corro = ($rOk && (($radar['intensity'] ?? 0) > 0 || !empty($radar['near']))) || ($mOk && (($metar['intensity'] ?? 0) > 0 || (!empty($metar['near']) && !$radarDry))) || $satWet;
+  if ($mOk && empty($metar['intensity']) && !empty($metar['near']) && $radarDry) $metar = array_merge($metar, ['detail' => ($metar['detail'] ?? '') . ' · el ' . ($satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no la ve cerca de la ciudad') . ': no respalda a los pronósticos']);
   // OpenWeatherMap: su "clima actual" es un modelo. Su lluvia solo cuenta si el radar o el aeropuerto la confirman.
   if (!empty($owm['ok']) && !empty($owm['intensity']) && !$corro) $owm = array_merge($owm, ['intensity' => 0, 'rainNow' => 0, 'detail' => ($owm['detail'] ?? '') . ' · el radar y el aeropuerto no ven lluvia: no cuenta']);
   // Y aun confirmada, OWM no puede decir que llueve más fuerte que lo que ven el radar o el aeropuerto (si solo la ven cerca: leve).
@@ -434,7 +478,7 @@ function combine(array $remote, array $extra = []): array {
     $obsMax = max($rOk ? ($radar['intensity'] ?? 0) : 0, $mOk ? ($metar['intensity'] ?? 0) : 0, 1);
     if ($owm['intensity'] > $obsMax) $owm = array_merge($owm, ['intensity' => $obsMax, 'rainNow' => min($owm['rainNow'] ?? 0, INT_MM[$obsMax]), 'detail' => ($owm['detail'] ?? '') . ' · el radar/aeropuerto ven ' . mb_strtolower(INT_TXT[$obsMax]) . ': se cuenta así']);
   }
-  $dryPre = ($rOk && empty($radar['intensity']) && empty($radar['near'])) || ($mOk && empty($metar['intensity']) && empty($metar['near']));
+  $dryPre = ($rOk && empty($radar['intensity']) && empty($radar['near'])) || ($mOk && empty($metar['intensity']) && empty($metar['near'])) || $satDry;
   $obsDry = !$corro && $dryPre;
   $fcStrong = !$dryPre && !empty($wttr['ok']) && ($wttr['mm'] ?? 0) >= 2.5 && first_of($okM, fn($m) => ($m['rainNow'] ?? 0) >= 2.5);
   $n = count($okM);
@@ -459,8 +503,8 @@ function combine(array $remote, array $extra = []): array {
     'models' => array_map(fn($m) => ['name' => $m['name'], 'ok' => $m['ok'], 'rainNow' => $m['rainNow'] ?? 0, 'intensity' => $m['intensity'] ?? 0, 'error' => $m['error'] ?? null, 'stale' => !empty($m['stale']) ? $m['staleMin'] : null], $models)];
   // El radar no ve lluvia sobre la ciudad ni cerca y ninguna otra observación la ve: los modelos (pronóstico) solos no dicen "está lloviendo ahora"
   if ($radarDry && !$corro && $modelSrc['intensity'] > 0)
-    $modelSrc = array_merge($modelSrc, ['intensity' => 0, 'rainNow' => 0, 'detail' => $modelSrc['detail'] . ' · el radar no ve lluvia sobre la ciudad ni cerca: no cuenta como lluvia ahora']);
-  $sources = array_values(array_filter(array_merge([$modelSrc, $metar, $owm, $radar, $wttr, $lightning], $extra)));
+    $modelSrc = array_merge($modelSrc, ['intensity' => 0, 'rainNow' => 0, 'detail' => $modelSrc['detail'] . ' · el ' . ($satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca') . ': no cuenta como lluvia ahora']);
+  $sources = array_values(array_filter(array_merge([$modelSrc, $metar, $owm, $radar, $sat, $wttr, $lightning], $extra)));
   // El equipo marcó "no llueve" en el centro: ni los pronósticos ni el aeropuerto (a unos 4 km) ni el radar encienden "lloviendo" mientras dure la marca.
   if (first_of($extra, fn($x) => ($x['id'] ?? '') === 'equipo' && !empty($x['ok']) && !empty($x['dry'])))
     $sources = array_map(fn($s) => !in_array($s['id'] ?? '', ['reportes', 'equipo'], true) && ($s['intensity'] ?? 0) > 0
@@ -484,7 +528,7 @@ function combine(array $remote, array $extra = []): array {
   if ($intensity > 0 && $w['hourly']) $w['hourly'][0] = raining_now($w['hourly'][0], $w['rainNow']);
   // No llueve y el radar no ve nada sobre la ciudad ni cerca: la columna "Ahora" muestra lo observado, no el pronóstico
   elseif ($radarDry && $w['hourly']) { $h0 = $w['hourly'][0]; unset($h0['estimated']); $w['hourly'][0] = array_merge($h0, ['fc' => $h0['probability'], 'probability' => min($h0['probability'], NOW_DRY_PROB), 'precipitation' => 0, 'observed' => true]); }
-  $w['nowcast'] = nowcast($w, $radar, $remote['verify'] ?? null);
+  $w['nowcast'] = nowcast($w, $radar, $remote['verify'] ?? null, $sat);
   if ($w['hourly']) {
     $w['probNext3h'] = max(array_map(fn($h) => $h['probability'], array_slice($w['hourly'], 0, 4)));
     $w['maxProbability24h'] = max(array_map(fn($h) => $h['probability'], array_slice($w['hourly'], 1, 24)) ?: [0]);
@@ -506,7 +550,7 @@ function combine(array $remote, array $extra = []): array {
     $w['condition'] = $w['sun']['sky'] === 'noche' ? 'Noche despejada' : 'Soleado';
   $w['outlook'] = outlook_of($w, $okM, $metar, $need, $radarDry);
   if ($w['outlook']['level'] !== 'calma' && !empty($w['nowcast']['note'])) $w['outlook']['reasons'][] = $w['nowcast']['note'];
-  $w['thunder'] = thunder_of($w, $okM, $metar, $radar, $wttr, $lightning, $extra);
+  $w['thunder'] = thunder_of($w, $okM, $metar, $radar, $wttr, $lightning, $extra, $sat);
   // Tormenta eléctrica en curso: se muestra y se avisa, pero el semáforo de inundación sigue la lluvia que cae
   $w['storm'] = !empty($w['thunder']['now']);
   if ($w['storm']) $w['condition'] = $w['intensity'] ? 'Tormenta con ' . mb_strtolower(INT_TXT[min(3, $w['intensity'])]) : 'Tormenta eléctrica sin lluvia';
@@ -514,7 +558,7 @@ function combine(array $remote, array $extra = []): array {
 }
 
 // Ajusta las próximas horas (no la actual) con el radar y con los aciertos recientes de los modelos. Devuelve qué hizo.
-function nowcast(array &$w, $radar, $verify): array {
+function nowcast(array &$w, $radar, $verify, $sat = null): array {
   $v = $verify ?? []; $out = ['factor' => 1, 'busts' => (int)($v['busts'] ?? 0), 'hits' => (int)($v['hits'] ?? 0), 'caps' => []];
   if (empty($w['hourly']) || ($w['intensity'] ?? 0) > 0) return $out;
   // Próximas 24 h: entera en 1–6 h, 3/4 en 7–12 h, la mitad en 13–24 h
@@ -538,6 +582,8 @@ function nowcast(array &$w, $radar, $verify): array {
     elseif ($e !== null && $e > NOWCAST['near1']) $cap(1, NOWCAST['h1Far'], 'radar');
     if ($e === null && $s >= NOWCAST['near2']) $cap(2, NOWCAST['h2Clear'], 'radar');
   }
+  // Satélite: sin nubes de lluvia sobre la ciudad y sin tormentas a menos de 40 km → la próxima hora como mucho 50 %
+  elseif (!empty($sat['ok']) && !empty($sat['clear']) && ($sat['stormKm'] ?? null) === null) $cap(1, NOWCAST['h1Far'], 'satélite');
   return $out;
 }
 function merge_hourly(array $okM): array {
@@ -603,7 +649,7 @@ function outlook_of(array $w, array $okM, $metar, int $need, bool $radarDry = fa
 }
 
 // Probabilidad de tormenta eléctrica en las próximas 6 h (modelos, CAPE, aeropuerto, radar, wttr.in y el equipo)
-function thunder_of(array $w, array $okM, $metar, $radar, $wttr, $lightning, array $extra): array {
+function thunder_of(array $w, array $okM, $metar, $radar, $wttr, $lightning, array $extra, $sat = null): array {
   $reasons = []; $n = count($okM) ?: 1;
   $votes = count(array_filter($okM, fn($m) => !empty($m['thunderCode6h']) || !empty($m['thunder6h'])));
   $cape = max(array_merge([-1], array_map(fn($m) => $m['capeMax6h'] ?? -1, $okM)));
@@ -617,6 +663,9 @@ function thunder_of(array $w, array $okM, $metar, $radar, $wttr, $lightning, arr
   if ($mOk && !empty($metar['cb'])) { $p = max($p, 60); $reasons[] = 'el aeropuerto ve nubes de tormenta (cumulonimbos) cerca'; }
   if ($rOk && ($radar['dbz'] ?? -1) >= 45) { $p = max($p, $radar['dbz'] >= 50 ? 85 : 70); $reasons[] = "el radar ve un núcleo de tormenta sobre la ciudad ({$radar['dbz']} dBZ)"; }
   elseif ($rOk && ($radar['dbzNear'] ?? -1) >= 45) { $p = max($p, 55); $reasons[] = "el radar ve un núcleo de tormenta cerca ({$radar['dbzNear']} dBZ)"; }
+  // Satélite: cimas de 12 km o más sobre la ciudad son cumulonimbos (nubes de tormenta); de 15 km o más, tormenta fuerte
+  if (!empty($sat['ok']) && !empty($sat['storm'])) { $p = max($p, $sat['topKm'] >= 15 ? 75 : 60); $reasons[] = "el satélite ve nubes de tormenta sobre la ciudad (cima a ~{$sat['topKm']} km)"; }
+  elseif (!empty($sat['ok']) && ($sat['stormKm'] ?? null) !== null && $sat['stormKm'] <= 40) { $p = max($p, 45); $reasons[] = "el satélite ve nubes de tormenta a ~{$sat['stormKm']} km"; }
   if ($wOk && ($wttr['thunderChance'] ?? 0) >= 20) { $p = max($p, min(85, round($wttr['thunderChance'] * 0.9))); $reasons[] = "World Weather Online da {$wttr['thunderChance']} % de probabilidad de tormenta eléctrica"; }
   $lg = !empty($lightning['ok']) ? $lightning : null;
   if (($lg['strikes15'] ?? 0) > 0) { $p = 90; $k = ($lg['strikes10'] ?? 0) ?: $lg['strikes15']; $reasons[] = "se detectaron $k rayo" . ($k > 1 ? 's' : '') . ' a menos de 15 km en los últimos minutos'; }
