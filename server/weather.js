@@ -525,9 +525,9 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
   // El radar (imagen reciente) no ve lluvia sobre la ciudad ni cerca y ninguna otra observación la ve: los modelos son pronóstico
   // y por sí solos no pueden decir "está lloviendo ahora" (marcaban lluvia leve, y el semáforo en naranja, con el cielo solo nublado).
   // Lo mismo si los dos pluviómetros/observaciones junto a la ciudad están secos a la vez: Ducupalta (parte baja) y el aeropuerto.
-  const groundDry = lowDry && metarDry;
+  const groundDry = lowDry && !(metar?.ok && (metar.intensity || metar.near)); // Ducupalta seca y el aeropuerto sin lluvia (o sin reporte: de noche no opera)
   if ((radarDry || groundDry) && !corro && modelSrc.intensity > 0)
-    Object.assign(modelSrc, { intensity: 0, rainNow: 0, detail: `${modelSrc.detail} · ${radarDry ? `el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca'}` : 'Ducupalta y el aeropuerto no ven lluvia'}: no cuenta como lluvia ahora` });
+    Object.assign(modelSrc, { intensity: 0, rainNow: 0, detail: `${modelSrc.detail} · ${radarDry ? `el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca'}` : 'Ducupalta (pluviómetro) no ve lluvia'}: no cuenta como lluvia ahora` });
   let sources = [modelSrc, metar, ...stations, owm, radar, sat, wttr, lightning, ...extra].filter(Boolean);
   // El equipo marcó "no llueve" en el centro: lo ven en la calle, así que ni los pronósticos (modelos, OWM, wttr) ni el aeropuerto
   // (a unos 4 km) ni el radar (píxeles de ~1 km) encienden "lloviendo" mientras dure la marca. Los reportes ciudadanos siguen contando.
