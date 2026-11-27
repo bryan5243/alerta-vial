@@ -215,10 +215,12 @@ app.get('/photos/:name', (req, res) => {
 });
 const reportLimiter = new Map();
 // Transitabilidad que indica quien reporta: estado del paso y qué vehículos pueden pasar
-const PASS = ['cerrada', 'altos', 'lento', 'normal'], CAN = ['pie', 'moto', 'auto', 'camioneta', 'pesado'];
+const PASS = ['cerrada', 'altos', 'lento', 'normal'], CAN = ['moto', 'auto', 'camioneta', 'pesado'];
+const CAN_OK = { cerrada: [], altos: ['camioneta', 'pesado'] }; // con "solo vehículos altos" no caben motos ni autos
 function accessOf(a) {
   if (!a || !PASS.includes(a.pass)) return null;
-  return { pass: a.pass, can: a.pass === 'cerrada' ? [] : CAN.filter(v => Array.isArray(a.can) && a.can.includes(v)) };
+  const ok = CAN_OK[a.pass] || CAN;
+  return { pass: a.pass, can: ok.filter(v => Array.isArray(a.can) && a.can.includes(v)) };
 }
 // ¿Ya está registrado este lugar? Punto crítico a ≤ 80 m o reportes recientes (12 h) a ≤ 80 m: evita puntos repetidos
 const REP_NEAR_M = 80;
