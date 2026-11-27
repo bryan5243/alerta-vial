@@ -513,8 +513,13 @@ function combine(array $remote, array $extra = []): array {
   $w['sun'] = sun_info($sunSrc, $w['cloudCover'], $intensity);
   $w = array_merge($w, describe($w));
   if ($intensity !== $w['intensity']) $w = array_merge($w, ['intensity' => $intensity, 'raining' => $intensity > 0, 'condition' => $intensity ? INT_TXT[$intensity] : $w['condition']]);
+  // Modelos con cielo cubierto pero el sol pasando entre las nubes: "Resplandor"
+  if (!$w['intensity'] && ($w['sun']['sky'] ?? '') === 'parcial' && $w['condition'] === 'Nublado') $w['condition'] = 'Resplandor';
+  if (!$w['intensity'] && ($w['sun']['sky'] ?? '') === 'soleado' && $w['condition'] === 'Nublado') $w['condition'] = 'Soleado';
   if (!$w['intensity'] && $w['sun'] && in_array($w['condition'], ['Despejado', 'Parcialmente nublado'], true) && ($w['condition'] === 'Despejado' || $w['sun']['sky'] === 'soleado'))
     $w['condition'] = $w['sun']['sky'] === 'noche' ? 'Noche despejada' : 'Soleado';
+  // Sol muy fuerte (UV muy alto o radiación de cielo casi limpio): "Sol intenso"
+  if ($w['condition'] === 'Soleado' && (($w['sun']['uvIndex'] ?? 0) >= 8 || ($w['sun']['radiation'] ?? 0) >= 800)) $w['condition'] = 'Sol intenso';
   $w['outlook'] = outlook_of($w, $okM, $metar, $need, $radarDry);
   if ($w['outlook']['level'] !== 'calma' && !empty($w['nowcast']['note'])) $w['outlook']['reasons'][] = $w['nowcast']['note'];
   $w['thunder'] = thunder_of($w, $okM, $metar, $radar, $wttr, $lightning, $extra, $sat);
@@ -691,7 +696,9 @@ function sun_info($s, $cloud, $intensity) {
   if (!$s) return null;
   $night = ($s['isDay'] ?? null) === 0; $c = $cloud ?? 0;
   $strong = !$night && $c < 80 && (($s['radiation'] ?? 0) >= 550 || ($s['uvIndex'] ?? 0) >= 4.5);
-  $sky = $intensity > 0 ? 'lluvia' : ($night ? 'noche' : ($strong ? 'soleado' : ($c >= 80 ? 'nublado' : ($c >= 40 ? 'parcial' : 'soleado'))));
+  // Cielo cubierto según los modelos pero el sol pasando (radiación ≥ 450 W/m² o UV ≥ 6): sol entre nubes, no "nublado"
+  $through = !$night && (($s['radiation'] ?? 0) >= 450 || ($s['uvIndex'] ?? 0) >= 6);
+  $sky = $intensity > 0 ? 'lluvia' : ($night ? 'noche' : ($strong ? 'soleado' : ($c >= 80 ? ($through ? 'parcial' : 'nublado') : ($c >= 40 ? 'parcial' : 'soleado'))));
   $uv = ($s['uvIndex'] ?? null) === null ? null : round($s['uvIndex'] * 10) / 10;
   return array_merge($s, ['uvIndex' => $uv, 'uvMax' => ($s['uvMax'] ?? null) === null ? null : round($s['uvMax'] * 10) / 10, 'radiation' => ($s['radiation'] ?? null) === null ? null : (int)round($s['radiation']),
     'sky' => $sky, 'uv' => uv_level($night ? 0 : $uv), 'uvMaxLevel' => uv_level($s['uvMax'] ?? null)]);
