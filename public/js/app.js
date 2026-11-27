@@ -461,7 +461,7 @@ function applyFeatures(F) {
   const off = k => F[k] === false;
   $('#risk').hidden = off('risk'); $('#weather').hidden = off('weather'); $('#srcline').hidden = off('weather');
   $('#btn-gps').hidden = off('gps'); if (off('gps') && gps.on) gps.stop();
-  $('#btn-radar').hidden = off('radar'); if (off('radar') && radarOn) { radarOn = false; $('#btn-radar').classList.remove('on'); clearInterval(radarTimer); map?.setRadar(null); }
+  $('#btn-radar').hidden = off('radar'); if (off('radar') && radarOn && map) radarOff();
   $('#btn-report').hidden = off('reports');
   const tabF = { streets: 'streets', routes: 'routes', rivers: 'rivers', recs: 'recommendations' };
   const tabs = [...document.querySelectorAll('.tab:not(.tab-map)')];
@@ -594,14 +594,34 @@ locBtn.addEventListener('click', () => {
 new MutationObserver(() => { if (document.body.classList.contains('gps-on') && locWatch != null) locStop(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 document.addEventListener('visibilitychange', () => { if (document.hidden && locWatch != null) { navigator.geolocation.clearWatch(locWatch); locWatch = null; locMk?.remove(); locMk = null; locLast = null; locCentered = false; locState('off'); } });
 
-// Radar RainViewer
+// Radar RainViewer; en Ecuador (sin radares) el servidor manda la imagen del satélite GOES-19: altura de la cima de las nubes
+let satInfo = null;
+const SAT_KEY = [['#e0182d', '14+ km'], ['#ff8a00', '12–14'], ['#ffd54a', '9–12'], ['#7fb3ff', '6–9']];
+function satKey(s) {
+  const el = $('#sat-key'); if (!el) return;
+  if (!s) { el.hidden = true; return; }
+  const min = Math.max(0, Math.round((Date.now() - Date.parse(s.at)) / 60e3));
+  el.innerHTML = `<b>Nubes de tormenta · satélite</b><div class="row">${SAT_KEY.map(([c, t]) => `<span><i style="background:${c}"></i>${t}</span>`).join('')}</div><small>Altura de la cima de las nubes. Rojo y naranja son nubes de tormenta; amarillo pueden ser nubes altas que no llueven. Imagen de hace ${min} min.</small>`;
+  el.hidden = false;
+}
+function radarOff() { radarOn = false; $('#btn-radar').classList.remove('on'); clearInterval(radarTimer); map.setRadar(null); map.setSat?.(null); satKey(null); }
 async function applyRadar() {
-  if (!radarFrames.length) { const r = await (await fetch('/api/public/radar')).json(); radarFrames = r.frames || []; if (!radarFrames.length) { toast('El radar de lluvia no está disponible ahora.', 'err'); radarOn = false; $('#btn-radar').classList.remove('on'); return; } }
-  let i = 0; clearInterval(radarTimer);
+  if (!radarFrames.length && !satInfo) {
+    const r = await (await fetch('/api/public/radar')).json().catch(() => ({}));
+    radarFrames = r.frames || []; satInfo = r.sat || null;
+    if (!radarFrames.length && !satInfo) { toast(r.blind ? 'La imagen del satélite no está disponible ahora.' : 'El radar de lluvia no está disponible ahora.', 'err'); radarOff(); return; }
+    setTimeout(() => { radarFrames = []; satInfo = null; }, 5 * 60e3); // se vuelve a pedir: el satélite publica cada 10 min
+  }
+  clearInterval(radarTimer);
+  if (satInfo) { // la imagen cubre ~100 km alrededor (un píxel del satélite mide ~10 km): se aleja el mapa para verla entera
+    map.setSat?.(satInfo.url, satInfo.bounds); satKey(satInfo);
+    if (!satInfo.shown) { satInfo.shown = true; map.fitBounds([[satInfo.bounds[0][0] + .45, satInfo.bounds[0][1] + .45], [satInfo.bounds[1][0] - .45, satInfo.bounds[1][1] - .45]]); }
+    return; }
+  let i = 0;
   const step = () => { map.setRadar(radarFrames[i].url); i = (i + 1) % radarFrames.length; };
   step(); radarTimer = setInterval(step, 900);
 }
-$('#btn-radar').addEventListener('click', () => { radarOn = !radarOn; $('#btn-radar').classList.toggle('on', radarOn); if (radarOn) applyRadar(); else { clearInterval(radarTimer); map.setRadar(null); } });
+$('#btn-radar').addEventListener('click', () => { if (radarOn) return radarOff(); radarOn = true; $('#btn-radar').classList.add('on'); applyRadar(); });
 
 // Reporte ciudadano, por pasos: 1) dónde  2) qué y qué tan grave  3) foto y detalles
 $('#r-ic-gps').innerHTML = ICON.nav; $('#r-ic-map').innerHTML = ICON.pin; $('#r-ic-flood').innerHTML = ICON.drop; $('#r-ic-river').innerHTML = ICON.wave;

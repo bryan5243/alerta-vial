@@ -4,7 +4,8 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { load, save, nextId, reset } from './db.js';
-import { getDays, getWeather, getTide, levelWhy, riskIndex, describe, localSources, dayParts, rainingNow } from './weather.js';
+import { getDays, getWeather, getTide, levelWhy, riskIndex, describe, localSources, dayParts, rainingNow, radarBlind } from './weather.js';
+import { satSource, satState, satBounds } from './sat.js';
 import { getFloodForecast } from './flood.js';
 import { seedIfEmpty } from './seed.js';
 import fs from 'node:fs';
@@ -246,9 +247,26 @@ app.get('/api/public/reports', (req, res) => {
   res.json((db.reports || []).filter(r => r.status === 'verificado' && Date.now() - new Date(r.createdAt) < REPORT_TTL_MS && !(r.pointId && ids.has(r.pointId)) && (r.type === 'desborde' ? f.rivers : f.reports)));
 });
 
+// Satélite GOES-19 (donde no hay radar, como en Ecuador): resumen de nubes sobre la ciudad y la imagen para el mapa.
+// La versión cPanel (PHP no puede leer los archivos NetCDF del satélite) los pide aquí.
+const satPoint = req => { const c = load().config, w = c.weather || {}, lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+  return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) < 60 && lng > -150 && lng < 0 ? { lat, lng } : { lat: w.lat ?? c.center?.lat, lng: w.lng ?? c.center?.lng }; };
+app.get('/api/public/sat', async (req, res) => {
+  const { lat, lng } = satPoint(req); res.set('Access-Control-Allow-Origin', '*');
+  res.json({ ...(await satSource(lat, lng)), image: { url: `/api/public/sat.png?lat=${lat}&lng=${lng}`, bounds: satBounds(Math.round(lat * 100) / 100, Math.round(lng * 100) / 100) } });
+});
+app.get('/api/public/sat.png', async (req, res) => {
+  const { lat, lng } = satPoint(req), s = await satState(lat, lng).catch(() => null);
+  if (!s?.png) return res.status(503).json({ error: s?.error || 'sin imagen del satélite' });
+  res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=240', 'Access-Control-Allow-Origin': '*' }).send(s.png);
+});
+
 // Radar RainViewer: devolvemos las plantillas de tiles más recientes (sin key).
 let radarCache = { at: 0, data: null };
 app.get('/api/public/radar', async (req, res) => {
+  { const { lat, lng } = satPoint({ query: {} });
+    if (radarBlind(lat, lng)) { const s = await satSource(lat, lng);
+      return res.json({ ok: s.ok, frames: [], blind: true, sat: s.ok ? { at: s.at, url: `/api/public/sat.png?lat=${lat}&lng=${lng}&t=${Date.parse(s.at)}`, bounds: satBounds(Math.round(lat * 100) / 100, Math.round(lng * 100) / 100) } : null, error: s.error }); } }
   if (radarCache.data && Date.now() - radarCache.at < 5 * 60 * 1000) return res.json(radarCache.data);
   try {
     const r = await fetch('https://api.rainviewer.com/public/weather-maps.json', { signal: AbortSignal.timeout(8000) });

@@ -46,7 +46,7 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
     keepBuffer: 1, updateWhenIdle: false, updateInterval: 300, updateWhenZooming: false, zIndex: 1, className: 'drive-tiles' });
   driveTiles.on('tileerror', () => { if (!el.contains(fb)) el.appendChild(fb); });
   const layers = L.layerGroup().addTo(map);
-  let radar = null, clickCb = null;
+  let radar = null, sat = null, clickCb = null;
   map.on('click', e => clickCb && clickCb({ lat: e.latlng.lat, lng: e.latlng.lng }));
 
   /* ---- Registro de capas: lo que se dibuja en el mapa normal se anota aquí para copiarlo a la vista 3D ---- */
@@ -274,6 +274,8 @@ function leafletMap({ el, center, zoom, style = 'osm' }) {
     panTo({ lat, lng }, z) { map.flyTo([lat, lng], z || Math.max(map.getZoom(), 15), { duration: .6 }); },
     setRadar(url) { if (radar) { map.removeLayer(radar); radar = null; } // RainViewer gratis solo entrega hasta zoom 7 (desde 2026): Leaflet amplía esos cuadros al acercarse.
       if (url) radar = L.tileLayer(url, { opacity: .6, zIndex: 400, maxNativeZoom: 7, maxZoom: 19, className: 'radar-tiles' }).addTo(map); },
+    setSat(url, bounds) { if (sat) { map.removeLayer(sat); sat = null; } // imagen del satélite (nubes de tormenta) sobre un recuadro fijo
+      if (url) sat = L.imageOverlay(url, bounds, { opacity: .75, zIndex: 400, className: 'sat-img', interactive: false }).addTo(map); },
     invalidate() { setTimeout(() => map.invalidateSize(), 50); },
   };
 }
@@ -292,7 +294,7 @@ async function googleMap({ el, center, zoom, googleKey }) {
   await loadGoogle(googleKey);
   const g = window.google.maps;
   const map = new g.Map(el, { center, zoom, mapTypeControl: false, streetViewControl: false, fullscreenControl: false, clickableIcons: false });
-  let items = [], radar = null, clickCb = null, info = new g.InfoWindow();
+  let items = [], radar = null, sat = null, clickCb = null, info = new g.InfoWindow();
   map.addListener('click', e => clickCb && clickCb({ lat: e.latLng.lat(), lng: e.latLng.lng() }));
   const svgPin = (cls) => ({ path: 'M12 0C6.5 0 2 4.5 2 10c0 7 10 18 10 18s10-11 10-18C22 4.5 17.5 0 12 0z', fillColor: cls.includes('alta') || cls.includes('inundacion') ? '#C62E2E' : cls.includes('media') || cls.includes('riesgo') ? '#E36A17' : cls.includes('report') ? '#6B4DD6' : '#0B6E99', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2, scale: 1.3, anchor: new g.Point(12, 28) });
   return {
@@ -366,6 +368,10 @@ async function googleMap({ el, center, zoom, googleKey }) {
     setRadar(url) {
       if (radar) { const i = map.overlayMapTypes.getArray().indexOf(radar); if (i >= 0) map.overlayMapTypes.removeAt(i); radar = null; }
       if (url) { radar = new g.ImageMapType({ getTileUrl: (c, z) => z <= 7 ? url.replace('{z}', z).replace('{x}', c.x).replace('{y}', c.y) : null, tileSize: new g.Size(256, 256), opacity: .6 }); map.overlayMapTypes.push(radar); }
+    },
+    setSat(url, bounds) {
+      if (sat) { sat.setMap(null); sat = null; }
+      if (url) { sat = new g.GroundOverlay(url, { south: bounds[0][0], west: bounds[0][1], north: bounds[1][0], east: bounds[1][1] }, { opacity: .75, clickable: false }); sat.setMap(map); }
     },
     invalidate() { g.event.trigger(map, 'resize'); },
   };

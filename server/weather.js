@@ -227,6 +227,7 @@ async function metarSource(station) {
 // Se baja el cuadro de radar más reciente y se mira el píxel sobre la ciudad (a zoom 7 un píxel ≈ 1,2 km).
 import zlib from 'node:zlib';
 import { lightningSnapshot } from './lightning.js';
+import { satSource } from './sat.js';
 let radarCache = { at: 0, key: '', data: null };
 export function decodePng(buf) {
   if (buf.length < 33 || buf.readUInt32BE(0) !== 0x89504e47) throw new Error('imagen de radar no válida');
@@ -434,15 +435,16 @@ function applyRainLog(w, now = Date.now()) {
 // Combina modelos y observaciones. `extra` son fuentes locales (equipo, reportes) que arma el servidor.
 // Pide todas las fuentes a la vez (puede tardar hasta ~12 s si alguna no responde)
 async function fetchRemote(lat, lng, metarStation, owmKey) {
-  const [omModels, metno, metar, owm, radar, wttr] = await Promise.all([
+  const [omModels, metno, metar, owm, radar, wttr, sat] = await Promise.all([
     openMeteoAll(lat, lng).catch(e => Object.keys(MODELS).map(m => ({ model: m, name: MODELS[m], ok: false, error: e.message, intensity: 0 }))),
     metnoSource(lat, lng),
     metarStation ? metarSource(metarStation) : Promise.resolve(null),
     owmSource(lat, lng, owmKey),
     radarSource(lat, lng),
     wttrSource(lat, lng),
+    radarBlind(lat, lng) ? satSource(lat, lng) : Promise.resolve(null),
   ]);
-  return { models: [...omModels, metno], metar, owm, radar, wttr, at: new Date().toISOString() };
+  return { models: [...omModels, metno], metar, owm, radar, wttr, sat, at: new Date().toISOString() };
 }
 let refreshing = null;
 // Combina modelos y observaciones. `extra` son fuentes locales (equipo, reportes) que arma el servidor.
@@ -460,8 +462,11 @@ export async function getWeather({ lat, lng, metarStation = 'SERO', owmKey = '' 
   return w.ok ? applyRainLog(w) : w;
 }
 
-const obsDryPre = (radar, metar) => (radar?.ok && !radar.intensity && !radar.near) || (metar?.ok && !metar.intensity && !metar.near);
-export function combine({ models, metar, owm, radar, wttr, lightning, at, verify }, extra = []) {
+// Satélite (donde no hay radar): sin nubes sobre la ciudad ni tormenta a menos de 25 km = seco; cimas de tormenta sobre la ciudad = respaldo
+const satDryOf = sat => !!(sat?.ok && sat.clear && !(sat.stormKm != null && sat.stormKm <= 25));
+const satWetOf = sat => !!(sat?.ok && sat.storm);
+const obsDryPre = (radar, metar, sat) => (radar?.ok && !radar.intensity && !radar.near) || (metar?.ok && !metar.intensity && !metar.near) || satDryOf(sat);
+export function combine({ models, metar, owm, radar, wttr, lightning, sat, at, verify }, extra = []) {
   // wttr.in es pronóstico: su "tormenta ahora" solo cuenta si el detector de rayos o el aeropuerto la confirman.
   if (wttr?.ok && wttr.thunderNow && !(lightning?.strikes15 > 0 || metar?.ts)) wttr = { ...wttr, thunderNow: false, detail: `${wttr.detail} · sin rayos detectados: no cuenta como tormenta` };
   // El aeropuerto reporta cada hora; el radar, cada 10 min. Si un radar al menos 30 min más reciente ya no ve lluvia ni sobre la ciudad
@@ -477,9 +482,11 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at, verify
   // lluvia con el cielo solo nublado). El respaldo tiene que ser una observación real: radar o aeropuerto.
   // "Lluvia en los alrededores" del aeropuerto (VCSH: a 8–16 km de la pista, que está a ~4 km del centro) no respalda a los pronósticos
   // si el radar, que mira la ciudad y sus alrededores, no ve nada: esa lluvia está lejos (cerros, campo).
-  const radarDry = radar?.ok && !radar.intensity && !radar.near;
-  const corro = (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || (metar.near && !radarDry)));
-  if (metar?.ok && !metar.intensity && metar.near && radarDry) metar = { ...metar, detail: `${metar.detail} · el radar no la ve cerca de la ciudad: no respalda a los pronósticos` };
+  // Sin radar (Ecuador), el satélite hace su papel a medias: cielo sin nubes de lluvia = seco; nubes de tormenta sobre la ciudad = respaldo.
+  const satDry = satDryOf(sat), satWet = satWetOf(sat);
+  const radarDry = (radar?.ok && !radar.intensity && !radar.near) || satDry;
+  const corro = (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || (metar.near && !radarDry))) || satWet;
+  if (metar?.ok && !metar.intensity && metar.near && radarDry) metar = { ...metar, detail: `${metar.detail} · el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no la ve cerca de la ciudad'}: no respalda a los pronósticos` };
   // OpenWeatherMap: su "clima actual" es un modelo (marcaba lluvia con cielo seco). Su lluvia solo cuenta si el radar o el aeropuerto la confirman.
   if (owm?.ok && owm.intensity && !corro) owm = { ...owm, intensity: 0, rainNow: 0, detail: `${owm.detail} · el radar y el aeropuerto no ven lluvia: no cuenta` };
   // Y aun confirmada, OWM no puede decir que llueve más fuerte que lo que ven el radar o el aeropuerto (si solo la ven cerca: leve).
@@ -488,11 +495,11 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at, verify
     if (owm.intensity > obsMax) owm = { ...owm, intensity: obsMax, rainNow: Math.min(owm.rainNow || 0, INT_MM[obsMax]), detail: `${owm.detail} · el radar/aeropuerto ven ${INT_TXT[obsMax].toLowerCase()}: se cuenta así` };
   }
   // Observación que dice "no llueve": radar sin ecos cerca o aeropuerto sin precipitación
-  const obsDry = !corro && ((radar?.ok && !radar.intensity && !radar.near) || (metar?.ok && !metar.intensity && !metar.near));
+  const obsDry = !corro && ((radar?.ok && !radar.intensity && !radar.near) || (metar?.ok && !metar.intensity && !metar.near) || satDry);
   // Con Open-Meteo (9 modelos) hacen falta 3 que coincidan; si solo responden 1-2 modelos, no confirman lluvia sin una observación.
   // Si una observación dice que no llueve, hace falta que la mitad de los modelos vea lluvia.
   // Excepción: si el modelo y wttr.in coinciden en lluvia moderada o más (≥ 2,5 mm/h), se acepta aunque no haya radar (no es una simple llovizna de pronóstico).
-  const fcStrong = !obsDryPre(radar, metar) && wttr?.ok && wttr.mm >= 2.5 && okM.some(m => m.rainNow >= 2.5);
+  const fcStrong = !obsDryPre(radar, metar, sat) && wttr?.ok && wttr.mm >= 2.5 && okM.some(m => m.rainNow >= 2.5);
   let need = okM.length >= 6 ? 3 : okM.length >= 3 ? 2 : corro || fcStrong ? 1 : 99;
   if (obsDry) need = Math.max(need, Math.ceil(okM.length * 0.6), 3);
   const kth = arr => { const v = arr.slice().sort((x, y) => y - x); return v.length >= need ? v[need - 1] : 0; };
@@ -509,8 +516,8 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at, verify
   // El radar (imagen reciente) no ve lluvia sobre la ciudad ni cerca y ninguna otra observación la ve: los modelos son pronóstico
   // y por sí solos no pueden decir "está lloviendo ahora" (marcaban lluvia leve, y el semáforo en naranja, con el cielo solo nublado).
   if (radarDry && !corro && modelSrc.intensity > 0)
-    Object.assign(modelSrc, { intensity: 0, rainNow: 0, detail: `${modelSrc.detail} · el radar no ve lluvia sobre la ciudad ni cerca: no cuenta como lluvia ahora` });
-  let sources = [modelSrc, metar, owm, radar, wttr, lightning, ...extra].filter(Boolean);
+    Object.assign(modelSrc, { intensity: 0, rainNow: 0, detail: `${modelSrc.detail} · el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca'}: no cuenta como lluvia ahora` });
+  let sources = [modelSrc, metar, owm, radar, sat, wttr, lightning, ...extra].filter(Boolean);
   // El equipo marcó "no llueve" en el centro: lo ven en la calle, así que ni los pronósticos (modelos, OWM, wttr) ni el aeropuerto
   // (a unos 4 km) ni el radar (píxeles de ~1 km) encienden "lloviendo" mientras dure la marca. Los reportes ciudadanos siguen contando.
   if (extra.some(x => x.id === 'equipo' && x.ok && x.dry))
@@ -543,7 +550,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at, verify
   // No llueve y el radar no ve nada sobre la ciudad ni cerca: la columna "Ahora" muestra lo observado, no el pronóstico
   // (marcaba 100 % y 2,3 mm con el cielo seco). Queda una probabilidad baja por si se forma algo dentro de la hora.
   else if (radarDry && w.hourly.length) w.hourly[0] = { ...w.hourly[0], fc: w.hourly[0].probability, probability: Math.min(w.hourly[0].probability, NOW_DRY_PROB), precipitation: 0, estimated: undefined, observed: true };
-  w.nowcast = nowcast(w, radar, verify);
+  w.nowcast = nowcast(w, radar, verify, sat);
   // Probabilidad de lluvia: la de la hora en curso y las 3 siguientes, y la mayor de las próximas 24 h
   if (w.hourly.length) {
     w.probNext3h = Math.max(...w.hourly.slice(0, 4).map(h => h.probability));
@@ -568,7 +575,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at, verify
   if (!w.intensity && w.sun && ['Despejado', 'Parcialmente nublado'].includes(w.condition) && (w.condition === 'Despejado' || w.sun.sky === 'soleado')) w.condition = w.sun.sky === 'noche' ? 'Noche despejada' : 'Soleado';
   w.outlook = outlookOf(w, { okM, metar, need, base, radarDry });
   if (w.outlook.level !== 'calma' && w.nowcast.note) w.outlook.reasons.push(w.nowcast.note);
-  w.thunder = thunderOf(w, { okM, metar, radar, wttr, lightning, extra });
+  w.thunder = thunderOf(w, { okM, metar, radar, wttr, lightning, sat, extra });
   // Tormenta eléctrica en curso: se muestra (ícono, rayos, aviso), pero el semáforo de inundación sigue la lluvia que cae.
   w.storm = !!w.thunder.now;
   if (w.storm) w.condition = w.intensity ? `Tormenta con ${INT_TXT[Math.min(3, w.intensity)].toLowerCase()}` : 'Tormenta eléctrica sin lluvia';
@@ -576,7 +583,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, at, verify
 }
 
 // Ajusta las próximas horas (no la actual) con el radar y con los aciertos recientes de los modelos. Devuelve qué hizo.
-function nowcast(w, radar, verify) {
+function nowcast(w, radar, verify, sat) {
   const H = w.hourly || [], v = verify || {}, out = { factor: 1, busts: v.busts || 0, hits: v.hits || 0, caps: [] };
   if (!H.length || w.intensity > 0) return out;
   const short = out.busts >= 2 && !out.hits ? (out.busts >= 3 ? 0.6 : 0.75) : 1;
@@ -597,6 +604,8 @@ function nowcast(w, radar, verify) {
     else if (e != null && e > NOWCAST.near1) cap(1, NOWCAST.h1Far, 'radar');
     if (e == null && s >= NOWCAST.near2) cap(2, NOWCAST.h2Clear, 'radar');
   }
+  // Satélite: sin nubes de lluvia sobre la ciudad y sin tormentas a menos de 40 km → la próxima hora como mucho 50 %
+  else if (sat?.ok && sat.clear && sat.stormKm == null) cap(1, NOWCAST.h1Far, 'satélite');
   return out;
 }
 
@@ -688,7 +697,7 @@ function outlookOf(w, { okM, metar, need, base, radarDry }) {
 
 // Probabilidad estimada de tormenta eléctrica en las próximas 6 h. No existe un dato oficial de rayos para este punto: se combinan
 // los modelos que prevén tormenta (códigos 95-99 / MET Norway), la energía del aire (CAPE), la lluvia probable y lo que ve el aeropuerto.
-function thunderOf(w, { okM, metar, radar, wttr, lightning, extra = [] }) {
+function thunderOf(w, { okM, metar, radar, wttr, lightning, sat, extra = [] }) {
   const reasons = [], n = okM.length || 1;
   const votes = okM.filter(m => m.thunderCode6h || m.thunder6h).length, share = votes / n;
   const cape = Math.max(-1, ...okM.map(m => m.capeMax6h ?? -1));
@@ -702,6 +711,9 @@ function thunderOf(w, { okM, metar, radar, wttr, lightning, extra = [] }) {
   // Radar: ecos de 45 dBZ o más son núcleos de tormenta (aguacero convectivo muy intenso)
   if (radar?.ok && radar.dbz >= 45) { p = Math.max(p, radar.dbz >= 50 ? 85 : 70); reasons.push(`el radar ve un núcleo de tormenta sobre la ciudad (${radar.dbz} dBZ)`); }
   else if (radar?.ok && radar.dbzNear >= 45) { p = Math.max(p, 55); reasons.push(`el radar ve un núcleo de tormenta cerca (${radar.dbzNear} dBZ)`); }
+  // Satélite: cimas de 12 km o más sobre la ciudad son cumulonimbos (nubes de tormenta); de 15 km o más, tormenta fuerte
+  if (sat?.ok && sat.storm) { p = Math.max(p, sat.topKm >= 15 ? 75 : 60); reasons.push(`el satélite ve nubes de tormenta sobre la ciudad (cima a ~${sat.topKm} km)`); }
+  else if (sat?.ok && sat.stormKm != null && sat.stormKm <= 40) { p = Math.max(p, 45); reasons.push(`el satélite ve nubes de tormenta a ~${sat.stormKm} km`); }
   if (wttr?.ok && wttr.thunderChance >= 20) { const wp = Math.min(85, Math.round(wttr.thunderChance * 0.9)); p = Math.max(p, wp); reasons.push(`World Weather Online da ${wttr.thunderChance} % de probabilidad de tormenta eléctrica`); }
   // Rayos detectados: la señal más confiable. Cerca (15 km) = tormenta en curso; a 30–60 km = tormenta cercana
   const lg = lightning?.ok ? lightning : null;
