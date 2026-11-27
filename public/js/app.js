@@ -745,7 +745,8 @@ $('#r-pass').innerHTML = Object.entries(PASS).map(([k, p]) => `<button type="but
 $('#r-veh').innerHTML = Object.entries(VEH).map(([k, [t, ic]]) => `<button type="button" class="r-vh" data-veh="${k}" aria-pressed="false"><span class="r-vh-ic" aria-hidden="true">${ic}</span><span class="r-vh-t">${t}</span><i aria-hidden="true">${ICON.check}</i></button>`).join('');
 function paintAccess() {
   document.querySelectorAll('[data-pass]').forEach(b => { const on = b.dataset.pass === rPass; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
-  document.querySelectorAll('[data-veh]').forEach(b => { const on = rCan.has(b.dataset.veh); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
+  const allow = rPass && PASS[rPass].allow; // con "solo vehículos altos" no se pueden elegir motos ni autos
+  document.querySelectorAll('[data-veh]').forEach(b => { const on = rCan.has(b.dataset.veh); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); b.hidden = !!allow && !allow.includes(b.dataset.veh); });
   $('#r-veh-box').hidden = !rPass || rPass === 'cerrada';
 }
 document.querySelectorAll('[data-pass]').forEach(b => b.addEventListener('click', () => {
