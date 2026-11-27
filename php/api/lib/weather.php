@@ -483,8 +483,10 @@ function combine(array $remote, array $extra = []): array {
     'intensity' => $mInt, 'rainNow' => $mRain, 'detail' => $detail, 'error' => $okM ? null : ($models[0]['error'] ?? null),
     'models' => array_map(fn($m) => ['name' => $m['name'], 'ok' => $m['ok'], 'rainNow' => $m['rainNow'] ?? 0, 'intensity' => $m['intensity'] ?? 0, 'error' => $m['error'] ?? null, 'stale' => !empty($m['stale']) ? $m['staleMin'] : null], $models)];
   // El radar no ve lluvia sobre la ciudad ni cerca y ninguna otra observación la ve: los modelos (pronóstico) solos no dicen "está lloviendo ahora"
-  if ($radarDry && !$corro && $modelSrc['intensity'] > 0)
-    $modelSrc = array_merge($modelSrc, ['intensity' => 0, 'rainNow' => 0, 'detail' => $modelSrc['detail'] . ' · el ' . ($satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca') . ': no cuenta como lluvia ahora']);
+  // Lo mismo si las dos observaciones junto a la ciudad están secas a la vez: Ducupalta (parte baja) y el aeropuerto
+  $groundDry = $lowDry && $metarDry;
+  if (($radarDry || $groundDry) && !$corro && $modelSrc['intensity'] > 0)
+    $modelSrc = array_merge($modelSrc, ['intensity' => 0, 'rainNow' => 0, 'detail' => $modelSrc['detail'] . ' · ' . ($radarDry ? 'el ' . ($satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca') : 'Ducupalta y el aeropuerto no ven lluvia') . ': no cuenta como lluvia ahora']);
   $sources = array_values(array_filter(array_merge([$modelSrc, $metar], $stations, [$owm, $radar, $sat, $wttr, $lightning], $extra)));
   // El equipo marcó "no llueve" en el centro: ni los pronósticos ni el aeropuerto (a unos 4 km) ni el radar encienden "lloviendo" mientras dure la marca.
   if (first_of($extra, fn($x) => ($x['id'] ?? '') === 'equipo' && !empty($x['ok']) && !empty($x['dry'])))
@@ -508,7 +510,7 @@ function combine(array $remote, array $extra = []): array {
     'weatherCode' => $intensity ? INT_CODE[$intensity] : ($baseRainy ? 3 : $baseCode), 'hourly' => merge_hourly($okM)];
   if ($intensity > 0 && $w['hourly']) $w['hourly'][0] = raining_now($w['hourly'][0], $w['rainNow']);
   // No llueve y el radar no ve nada sobre la ciudad ni cerca: la columna "Ahora" muestra lo observado, no el pronóstico
-  elseif ($radarDry && $w['hourly']) { $h0 = $w['hourly'][0]; unset($h0['estimated']); $w['hourly'][0] = array_merge($h0, ['fc' => $h0['probability'], 'probability' => min($h0['probability'], NOW_DRY_PROB), 'precipitation' => 0, 'observed' => true]); }
+  elseif (($radarDry || $groundDry) && $w['hourly']) { $h0 = $w['hourly'][0]; unset($h0['estimated']); $w['hourly'][0] = array_merge($h0, ['fc' => $h0['probability'], 'probability' => min($h0['probability'], NOW_DRY_PROB), 'precipitation' => 0, 'observed' => true]); }
   $w['nowcast'] = nowcast($w, $radar, $remote['verify'] ?? null, $sat);
   if ($w['hourly']) {
     $w['probNext3h'] = max(array_map(fn($h) => $h['probability'], array_slice($w['hourly'], 0, 4)));
