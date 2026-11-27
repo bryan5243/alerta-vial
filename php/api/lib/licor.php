@@ -7,7 +7,7 @@ const LICOR = ['metric' => 'com.onset.sensordata.rain_si', 'base' => 'https://ww
 // Estaciones (tablero público + canal de lluvia). "note" se agrega al detalle.
 const LICOR_STATIONS = [
   ['key' => 'licor1', 'name' => 'Estación HOBO 1 (LI-COR) · pluviómetro', 'dashboard' => '5e1f6cd5-0815-49b9-9d1a-a8777d544579', 'rain' => 'f869d179-1360-4b20-9eeb-e302646514e4', 'note' => 'la estación está en la parte alta (~450 m)'],
-  ['key' => 'licor2', 'name' => 'Estación HOBO 2 (LI-COR) · pluviómetro', 'dashboard' => 'ac7e885a-8b1d-4add-b38b-917a7973446a', 'rain' => '326ce07c-c41d-45a9-ba50-0329483ace24', 'note' => 'la estación está a ~100 m, según su presión'],
+  ['key' => 'licor2', 'name' => 'Estación Ducupalta (LI-COR) · pluviómetro', 'dashboard' => 'ac7e885a-8b1d-4add-b38b-917a7973446a', 'rain' => '326ce07c-c41d-45a9-ba50-0329483ace24', 'note' => 'estación de Ducupalta (~100 m)'],
 ];
 const LICOR_UA = 'Mozilla/5.0 (compatible; AlertaVial/1.0; +https://www.emovttsr.gob.ec/alertavial/)';
 
