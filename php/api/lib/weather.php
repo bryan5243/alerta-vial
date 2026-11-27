@@ -438,8 +438,17 @@ function combine(array $remote, array $extra = []): array {
   // "Lluvia en los alrededores" del aeropuerto (VCSH) no respalda a los pronósticos si el radar no ve nada sobre la ciudad ni cerca
   // Sin radar (Ecuador), el satélite hace su papel a medias: cielo sin nubes de lluvia = seco; nubes de tormenta sobre la ciudad = respaldo.
   $satDry = sat_dry($sat); $satWet = sat_wet($sat);
-  // Pluviómetro de la estación (parte alta): si su última hora tuvo lluvia medible, respalda a los pronósticos (como la lluvia cerca del aeropuerto)
-  $stWet = (bool)first_of($stations, fn($x) => !empty($x['ok']) && !empty($x['wet'])) && !$satDry; // con el cielo de la ciudad despejado (satélite), esa lluvia quedó en los cerros
+  // Pluviómetros LI-COR. La estación de la parte baja (Ducupalta, cerca del nivel de la ciudad) manda: si llueve ahí respalda
+  // a los pronósticos y si está seca cuenta como observación "no llueve". La de la parte alta solo respalda si ni la parte baja
+  // ni el aeropuerto dicen que está seco: si no, esa lluvia está en los cerros (avisa de lo que bajará por los ríos, no de la ciudad).
+  $isLow = fn($x) => !empty($x['ok']) && ($x['zone'] ?? 'alta') === 'baja';
+  $lowWet = (bool)first_of($stations, fn($x) => $isLow($x) && !empty($x['wet'])); $lowDry = !$lowWet && (bool)first_of($stations, fn($x) => $isLow($x) && !empty($x['dry']));
+  $metarDry = $mOk && empty($metar['intensity']) && empty($metar['near']);
+  $highWet = (bool)first_of($stations, fn($x) => !empty($x['ok']) && ($x['zone'] ?? 'alta') !== 'baja' && !empty($x['wet']));
+  $highBlocked = $highWet && !$lowWet && ($lowDry || $metarDry);
+  $stWet = !$satDry && ($lowWet || ($highWet && !$highBlocked)); // con el cielo de la ciudad despejado (satélite), esa lluvia quedó en los cerros
+  if ($highBlocked || ($highWet && $satDry)) $stations = array_map(fn($x) => !empty($x['ok']) && ($x['zone'] ?? 'alta') !== 'baja' && !empty($x['wet'])
+    ? array_merge($x, ['detail' => ($x['detail'] ?? '') . ' · llueve en la parte alta, pero ' . ($satDry ? 'el satélite ve despejada la ciudad' : ($lowDry ? 'Ducupalta (parte baja) está seca' : 'el aeropuerto no ve lluvia')) . ': no cuenta para la ciudad; vigila los ríos']) : $x, $stations);
   $radarDry = ($rOk && empty($radar['intensity']) && empty($radar['near'])) || $satDry;
   $corro = ($rOk && (($radar['intensity'] ?? 0) > 0 || !empty($radar['near']))) || ($mOk && (($metar['intensity'] ?? 0) > 0 || (!empty($metar['near']) && !$radarDry))) || $satWet || $stWet;
   if ($mOk && empty($metar['intensity']) && !empty($metar['near']) && $radarDry) $metar = array_merge($metar, ['detail' => ($metar['detail'] ?? '') . ' · el ' . ($satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no la ve cerca de la ciudad') . ': no respalda a los pronósticos']);
@@ -451,8 +460,8 @@ function combine(array $remote, array $extra = []): array {
     if ($owm['intensity'] > $obsMax) $owm = array_merge($owm, ['intensity' => $obsMax, 'rainNow' => min($owm['rainNow'] ?? 0, INT_MM[$obsMax]), 'detail' => ($owm['detail'] ?? '') . ' · el radar/aeropuerto ven ' . mb_strtolower(INT_TXT[$obsMax]) . ': se cuenta así']);
   }
   $dryPre = ($rOk && empty($radar['intensity']) && empty($radar['near'])) || ($mOk && empty($metar['intensity']) && empty($metar['near'])) || $satDry;
-  $obsDry = !$corro && $dryPre;
-  $fcStrong = !$dryPre && !empty($wttr['ok']) && ($wttr['mm'] ?? 0) >= 2.5 && first_of($okM, fn($m) => ($m['rainNow'] ?? 0) >= 2.5);
+  $obsDry = !$corro && ($dryPre || $lowDry);
+  $fcStrong = !$dryPre && !$lowDry && !empty($wttr['ok']) && ($wttr['mm'] ?? 0) >= 2.5 && first_of($okM, fn($m) => ($m['rainNow'] ?? 0) >= 2.5);
   $n = count($okM);
   $need = $n >= 6 ? 3 : ($n >= 3 ? 2 : ($corro || $fcStrong ? 1 : 99));
   if ($obsDry) $need = max($need, (int)ceil($n * 0.6), 3);
@@ -468,7 +477,7 @@ function combine(array $remote, array $extra = []): array {
   $needTxt = $need > $n ? ($n < 3 ? 'con tan pocos modelos hace falta que el radar o el aeropuerto confirmen' : 'el radar/aeropuerto no ven lluvia: hace falta la mitad de los modelos') : "hacen falta $need";
   $detail = !$okM ? 'Sin conexión con los pronósticos (' . implode(' · ', $errs) . ')'
     : ($stale ? "Dato de Open-Meteo de hace {$stale['staleMin']} min ({$stale['staleWhy']}) · " : '') . count($raining) . " de $n modelos ven lluvia medible"
-      . ($raining ? ' (' . implode(', ', array_map(fn($m) => $m['name'], $raining)) . ')' : '') . "; $needTxt" . ($obsDry && $need <= $n ? ' (radar/aeropuerto secos)' : '')
+      . ($raining ? ' (' . implode(', ', array_map(fn($m) => $m['name'], $raining)) . ')' : '') . "; $needTxt" . ($obsDry && $need <= $n ? ' (' . ($lowDry ? 'Ducupalta/aeropuerto' : 'radar/aeropuerto') . ' secos)' : '')
       . ($clear && $raining ? ' · no cuenta: el cielo está casi despejado' : '') . ' · nubosidad ' . ($base['cloudCover'] ?? '—') . ' %';
   $modelSrc = ['id' => 'modelos', 'kind' => 'pronóstico', 'name' => "$provs · $n de " . count($models) . ' modelos', 'ok' => $n > 0, 'at' => $base['observedAt'] ?? null,
     'intensity' => $mInt, 'rainNow' => $mRain, 'detail' => $detail, 'error' => $okM ? null : ($models[0]['error'] ?? null),

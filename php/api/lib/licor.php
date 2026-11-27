@@ -6,8 +6,8 @@
 const LICOR = ['metric' => 'com.onset.sensordata.rain_si', 'base' => 'https://www.licor.cloud', 'ttl' => 300000, 'wetMm' => 0.5, 'freshMin' => 90];
 // Estaciones (tablero público + canal de lluvia). "note" se agrega al detalle.
 const LICOR_STATIONS = [
-  ['key' => 'licor1', 'name' => 'Estación HOBO 1 (LI-COR) · pluviómetro', 'dashboard' => '5e1f6cd5-0815-49b9-9d1a-a8777d544579', 'rain' => 'f869d179-1360-4b20-9eeb-e302646514e4', 'note' => 'la estación está en la parte alta (~450 m)'],
-  ['key' => 'licor2', 'name' => 'Estación Ducupalta (LI-COR) · pluviómetro', 'dashboard' => 'ac7e885a-8b1d-4add-b38b-917a7973446a', 'rain' => '326ce07c-c41d-45a9-ba50-0329483ace24', 'note' => 'estación de Ducupalta (~100 m)'],
+  ['key' => 'licor1', 'name' => 'Estación HOBO 1 (LI-COR) · pluviómetro', 'dashboard' => '5e1f6cd5-0815-49b9-9d1a-a8777d544579', 'rain' => 'f869d179-1360-4b20-9eeb-e302646514e4', 'note' => 'la estación está en la parte alta (~450 m)', 'zone' => 'alta'],
+  ['key' => 'licor2', 'name' => 'Estación Ducupalta (LI-COR) · pluviómetro', 'dashboard' => 'ac7e885a-8b1d-4add-b38b-917a7973446a', 'rain' => '326ce07c-c41d-45a9-ba50-0329483ace24', 'note' => 'estación de Ducupalta (~100 m)', 'zone' => 'baja'],
 ];
 const LICOR_UA = 'Mozilla/5.0 (compatible; AlertaVial/1.0; +https://www.emovttsr.gob.ec/alertavial/)';
 
@@ -41,6 +41,8 @@ function licor_summary(array $pts, int $now): array {
 }
 // "Llueve en la estación": con lecturas cada 5 min, ≥ 0,4 mm en la última media hora (≈ 0,8 mm/h) y el dato de hace ≤ 20 min;
 // si publica por hora, ≥ 0,5 mm en su última hora y el dato de hace ≤ 90 min; un canal diario no dice si llueve ahora
+// "Seco en la estación": dato reciente y nada (o casi nada) en la última media hora / última hora
+function licor_dry(array $s): bool { return $s['stepMin'] < 60 ? $s['ageMin'] <= 30 && $s['rain30m'] < 0.2 : $s['stepMin'] <= 60 && $s['ageMin'] <= LICOR['freshMin'] && $s['lastMm'] < 0.2; }
 function licor_wet(array $s): bool { return $s['stepMin'] < 60 ? $s['ageMin'] <= 20 && $s['rain30m'] >= 0.4 : $s['stepMin'] <= 60 && $s['ageMin'] <= LICOR['freshMin'] && $s['lastMm'] >= LICOR['wetMm']; }
 function licor_detail(array $s, string $note = ''): string {
   if ($s['stepMin'] > 60) return "Lluvia del día: {$s['lastMm']} mm (el canal publica un total diario, no sirve para saber si llueve ahora)" . ($note ? " · $note" : '');
@@ -77,6 +79,8 @@ function licor_source(array $st, int $i = 0): array {
   if (empty($c['sum']) || $now - ($c['okAt'] ?? 0) > 3 * 3600000) return $base + ['ok' => false, 'error' => ($c['error'] ?? '') ?: 'sin datos de la estación'];
   $s = $c['sum']; $s['ageMin'] = max(0, (int)round(($now - $s['lastTo']) / 60000));
   if (!isset($s['rain30m'])) { $s['rain30m'] = 0; $s['rain1h'] = $s['lastMm']; } // dato guardado por la versión anterior
-  $s['wet'] = licor_wet($s);
-  return $base + ['ok' => true, 'at' => gmdate('c', intdiv($s['lastTo'], 1000))] + $s + ['detail' => licor_detail($s, $st['note'])];
+  $s['wet'] = licor_wet($s); $s['dry'] = !$s['wet'] && licor_dry($s);
+  // El estado de la tarjeta muestra lo que mide la estación (su "intensity" queda en 0: no decide el nivel por sí sola)
+  $status = $s['wet'] ? 'Lloviendo en la estación · ' . ($s['stepMin'] < 60 ? $s['rain1h'] : $s['lastMm']) . ' mm en la última hora' : null;
+  return $base + ['ok' => true, 'zone' => $st['zone'] ?? 'alta', 'at' => gmdate('c', intdiv($s['lastTo'], 1000))] + $s + ['status' => $status, 'detail' => licor_detail($s, $st['note'])];
 }
