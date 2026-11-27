@@ -492,11 +492,11 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
   const metarDry = metar?.ok && !metar.intensity && !metar.near, highWet = sts.some(x => x.zone !== 'baja' && x.wet);
   const highBlocked = highWet && !lowWet && (lowDry || metarDry);
   const stWet = !satDry && (lowWet || (highWet && !highBlocked)); // con el cielo de la ciudad despejado (satélite), esa lluvia quedó en los cerros
-  if (highBlocked || (highWet && satDry)) stations = stations.map(x => x?.ok && x.zone !== 'baja' && x.wet ? { ...x, detail: `${x.detail} · llueve en la parte alta, pero ${satDry ? 'el satélite ve despejada la ciudad' : lowDry ? 'Ducupalta (parte baja) está seca' : 'el aeropuerto no ve lluvia'}: no cuenta para la ciudad; vigila los ríos` } : x);
+  if (highBlocked || (highWet && satDry)) stations = stations.map(x => x?.ok && x.zone !== 'baja' && x.wet ? { ...x, detail: `${x.detail} · llueve en los alrededores, pero ${satDry ? 'el satélite ve despejada la ciudad' : lowDry ? 'la estación El Guayabo está seca' : 'el aeropuerto no ve lluvia'}: no cuenta para la ciudad; vigila los ríos` } : x);
   const radarDry = (radar?.ok && !radar.intensity && !radar.near) || satDry;
-  // "Lluvia en los alrededores" del aeropuerto (VCSH) tampoco respalda si Ducupalta (parte baja) está seca: esa lluvia está en los cerros
+  // "Lluvia en los alrededores" del aeropuerto (VCSH) tampoco respalda si la estación El Guayabo está seca: esa lluvia está en los cerros
   const corro = (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || (metar.near && !radarDry && !lowDry))) || satWet || stWet;
-  if (metar?.ok && !metar.intensity && metar.near && (radarDry || lowDry)) metar = { ...metar, detail: `${metar.detail} · ${radarDry ? `el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no la ve cerca de la ciudad'}` : 'Ducupalta (parte baja) está seca'}: no respalda a los pronósticos` };
+  if (metar?.ok && !metar.intensity && metar.near && (radarDry || lowDry)) metar = { ...metar, detail: `${metar.detail} · ${radarDry ? `el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no la ve cerca de la ciudad'}` : 'la estación El Guayabo está seca'}: no respalda a los pronósticos` };
   // OpenWeatherMap: su "clima actual" es un modelo (marcaba lluvia con cielo seco). Su lluvia solo cuenta si el radar o el aeropuerto la confirman.
   if (owm?.ok && owm.intensity && !corro) owm = { ...owm, intensity: 0, rainNow: 0, detail: `${owm.detail} · el radar y el aeropuerto no ven lluvia: no cuenta` };
   // Y aun confirmada, OWM no puede decir que llueve más fuerte que lo que ven el radar o el aeropuerto (si solo la ven cerca: leve).
@@ -521,14 +521,14 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
   const modelSrc = { id: 'modelos', kind: 'pronóstico', name: `${provs} · ${okM.length} de ${models.length} modelos`, ok: okM.length > 0,
     at: base?.observedAt, intensity: mInt, rainNow: mRain,
     detail: !okM.length ? `Sin conexión con los pronósticos (${[...new Set(models.map(m => m.error).filter(Boolean))].join(' · ')})`
-      : `${stale ? `Dato de Open-Meteo de hace ${stale.staleMin} min (${stale.staleWhy}) · ` : ''}${raining.length} de ${okM.length} modelos ven lluvia medible${raining.length ? ` (${raining.map(m => m.name).join(', ')})` : ''}; ${need > okM.length ? (okM.length < 3 ? 'con tan pocos modelos hace falta que el radar o el aeropuerto confirmen' : 'el radar/aeropuerto no ven lluvia: hace falta la mitad de los modelos') : `hacen falta ${need}`}${obsDry && need <= okM.length ? ` (${lowDry ? 'Ducupalta/aeropuerto' : 'radar/aeropuerto'} secos)` : ''}${clear && raining.length ? ' · no cuenta: el cielo está casi despejado' : ''} · nubosidad ${base?.cloudCover ?? '—'} %`,
+      : `${stale ? `Dato de Open-Meteo de hace ${stale.staleMin} min (${stale.staleWhy}) · ` : ''}${raining.length} de ${okM.length} modelos ven lluvia medible${raining.length ? ` (${raining.map(m => m.name).join(', ')})` : ''}; ${need > okM.length ? (okM.length < 3 ? 'con tan pocos modelos hace falta que el radar o el aeropuerto confirmen' : 'el radar/aeropuerto no ven lluvia: hace falta la mitad de los modelos') : `hacen falta ${need}`}${obsDry && need <= okM.length ? ` (${lowDry ? 'El Guayabo/aeropuerto' : 'radar/aeropuerto'} secos)` : ''}${clear && raining.length ? ' · no cuenta: el cielo está casi despejado' : ''} · nubosidad ${base?.cloudCover ?? '—'} %`,
     error: okM.length ? undefined : models[0]?.error, models: models.map(m => ({ name: m.name, ok: m.ok, rainNow: m.rainNow ?? 0, intensity: m.intensity || 0, error: m.error, stale: m.stale ? m.staleMin : undefined })) };
   // El radar (imagen reciente) no ve lluvia sobre la ciudad ni cerca y ninguna otra observación la ve: los modelos son pronóstico
   // y por sí solos no pueden decir "está lloviendo ahora" (marcaban lluvia leve, y el semáforo en naranja, con el cielo solo nublado).
   // Lo mismo si los dos pluviómetros/observaciones junto a la ciudad están secos a la vez: Ducupalta (parte baja) y el aeropuerto.
   const groundDry = lowDry && !(metar?.ok && metar.intensity); // Ducupalta seca y el aeropuerto sin lluvia (o sin reporte: de noche no opera)
   if ((radarDry || groundDry) && !corro && modelSrc.intensity > 0)
-    Object.assign(modelSrc, { intensity: 0, rainNow: 0, detail: `${modelSrc.detail} · ${radarDry ? `el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca'}` : 'Ducupalta (pluviómetro) no ve lluvia'}: no cuenta como lluvia ahora` });
+    Object.assign(modelSrc, { intensity: 0, rainNow: 0, detail: `${modelSrc.detail} · ${radarDry ? `el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca'}` : 'el pluviómetro de El Guayabo no ve lluvia'}: no cuenta como lluvia ahora` });
   // Solo valores reales de Santa Rosa deciden si llueve ahora (pedido del 27-nov-2026): aeropuerto, pluviómetros, satélite, rayos,
   // equipo. Los modelos de Open-Meteo quedan solo como pronóstico de las próximas horas; OpenWeatherMap y wttr.in ya no se muestran.
   if (modelSrc.intensity > 0) Object.assign(modelSrc, { intensity: 0, rainNow: 0, detail: `${modelSrc.detail} · es pronóstico: no decide si llueve ahora` });
