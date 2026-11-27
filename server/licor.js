@@ -1,0 +1,49 @@
+// Estación meteorológica HOBO RX2100 (Onset/LI-COR) de Santa Rosa: pluviómetro real, publicado en un tablero público de
+// LI-COR Cloud. Se lee la lluvia por hora con la misma consulta que hace ese tablero (como mucho cada 5 min).
+// La estación está en la parte alta (~450 m, según su presión), no en el centro: su lluvia respalda a los pronósticos
+// y avisa de lo que va a bajar por los ríos, pero no enciende "lloviendo en la ciudad" por sí sola. Igual que php/api/lib/licor.php.
+export const LICOR = { dashboard: '5e1f6cd5-0815-49b9-9d1a-a8777d544579', rain: 'f869d179-1360-4b20-9eeb-e302646514e4', metric: 'com.onset.sensordata.rain_si',
+  base: 'https://www.licor.cloud', ttl: 300000, wetMm: 0.5, freshMin: 90 };
+const UA = 'Mozilla/5.0 (compatible; AlertaVial/1.0)';
+const r1 = x => Math.round(x * 10) / 10;
+const headers = cookie => ({ accept: 'application/json, text/plain, */*', origin: LICOR.base, referer: `${LICOR.base}/dashboards/public/${LICOR.dashboard}/true`, 'user-agent': UA, ...(cookie ? { cookie } : {}) });
+const query = (now, cookie) => fetch(`${LICOR.base}/api/v2/timeseriesdata`, { method: 'POST', signal: AbortSignal.timeout(12000), headers: { ...headers(cookie), 'content-type': 'application/json' },
+  body: JSON.stringify({ channels: [{ channelUUID: LICOR.rain, channelType: 'dataChannel', metricName: LICOR.metric, limit: 500, aggregationFunction: 'avg', aggregationInterval: { value: 1, unit: 'seconds' } }],
+    time: { absolute: { from: now - 26 * 3600000, to: now } }, dashboardUUID: LICOR.dashboard }) });
+export function licorSummary(pts, now) {
+  pts = pts.slice().sort((a, b) => a[0] - b[0]);
+  const d = pts.slice(1).map((p, i) => p[0] - pts[i][0]).sort((a, b) => a - b);
+  const step = d.length ? Math.max(300000, Math.min(3600000, d[Math.floor(d.length / 2)])) : 3600000;
+  const sum = h => r1(pts.reduce((s, [t, v]) => s + (t + step > now - h * 3600000 ? Math.max(0, v) : 0), 0));
+  const [lt, lv] = pts.at(-1), end = lt + step, age = Math.max(0, Math.round((now - end) / 60000));
+  return { lastMm: r1(Math.max(0, lv)), lastFrom: lt, lastTo: end, stepMin: Math.round(step / 60000), ageMin: age, rain3h: sum(3), rain6h: sum(6), rain12h: sum(12), rain24h: sum(24),
+    wet: age <= LICOR.freshMin && lv >= LICOR.wetMm };
+}
+const hm = ms => new Date(ms - 5 * 3600000).toISOString().slice(11, 16);
+export function licorDetail(s) {
+  const last = s.lastMm > 0 ? `llovió ${s.lastMm} mm entre las ${hm(s.lastFrom)} y las ${hm(s.lastTo)}` : `sin lluvia entre las ${hm(s.lastFrom)} y las ${hm(s.lastTo)}`;
+  return `${last[0].toUpperCase()}${last.slice(1)} · últimas 3 h: ${s.rain3h} mm · 24 h: ${s.rain24h} mm · la estación está en la parte alta (~450 m) y publica la lluvia por hora (dato de hace ${s.ageMin} min)`;
+}
+let c = { checked: 0, cookie: '', sum: null, error: '', okAt: 0 };
+export async function licorSource() {
+  const base = { id: 'estacion', kind: 'observación', name: 'Estación HOBO (LI-COR) · pluviómetro', intensity: 0, rainNow: 0 }, now = Date.now();
+  if (now - c.checked >= LICOR.ttl) {
+    c.checked = now;
+    try {
+      let r = await query(now, c.cookie), j = r.ok ? await r.json().catch(() => null) : null;
+      // El tablero público pide una sesión anónima: se abre la página para obtenerla y se reintenta
+      if (r.status === 401 || r.status === 403 || (r.ok && !j?.success)) {
+        const p = await fetch(`${LICOR.base}/dashboards/public/${LICOR.dashboard}/true`, { signal: AbortSignal.timeout(12000), headers: headers('') });
+        c.cookie = (p.headers.getSetCookie?.() || []).map(x => x.split(';')[0]).join('; ');
+        r = await query(now, c.cookie); j = r.ok ? await r.json().catch(() => null) : null;
+      }
+      if (!r.ok) throw new Error(`respondió con error ${r.status}`);
+      const pts = (j?.value?.records?.[0]?.datum?.valid || []).filter(p => Array.isArray(p) && p.length >= 2 && Number.isFinite(+p[0]) && Number.isFinite(+p[1])).map(p => [+p[0], +p[1]]);
+      if (!pts.length) throw new Error(j?.success ? 'sin lecturas de lluvia en las últimas 24 h' : 'el tablero no entregó datos');
+      c = { ...c, sum: licorSummary(pts, now), error: '', okAt: now };
+    } catch (e) { c.error = e.name === 'TimeoutError' ? 'no respondió a tiempo' : e.message; }
+  }
+  if (!c.sum || now - c.okAt > 3 * 3600000) return { ...base, ok: false, error: c.error || 'sin datos de la estación' };
+  const s = { ...c.sum }; s.ageMin = Math.max(0, Math.round((now - s.lastTo) / 60000)); s.wet = s.ageMin <= LICOR.freshMin && s.lastMm >= LICOR.wetMm;
+  return { ...base, ok: true, at: new Date(s.lastTo).toISOString(), ...s, detail: licorDetail(s) };
+}

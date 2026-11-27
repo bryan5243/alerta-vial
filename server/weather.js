@@ -228,6 +228,7 @@ async function metarSource(station) {
 import zlib from 'node:zlib';
 import { lightningSnapshot } from './lightning.js';
 import { satSource } from './sat.js';
+import { licorSource } from './licor.js';
 let radarCache = { at: 0, key: '', data: null };
 export function decodePng(buf) {
   if (buf.length < 33 || buf.readUInt32BE(0) !== 0x89504e47) throw new Error('imagen de radar no válida');
@@ -434,7 +435,7 @@ function applyRainLog(w, now = Date.now()) {
 // Combina modelos y observaciones. `extra` son fuentes locales (equipo, reportes) que arma el servidor.
 // Pide todas las fuentes a la vez (puede tardar hasta ~12 s si alguna no responde)
 async function fetchRemote(lat, lng, metarStation, owmKey) {
-  const [omModels, metno, metar, owm, radar, wttr, sat] = await Promise.all([
+  const [omModels, metno, metar, owm, radar, wttr, sat, station] = await Promise.all([
     openMeteoAll(lat, lng).catch(e => Object.keys(MODELS).map(m => ({ model: m, name: MODELS[m], ok: false, error: e.message, intensity: 0 }))),
     metnoSource(lat, lng),
     metarStation ? metarSource(metarStation) : Promise.resolve(null),
@@ -442,8 +443,9 @@ async function fetchRemote(lat, lng, metarStation, owmKey) {
     radarSource(lat, lng),
     wttrSource(lat, lng),
     radarBlind(lat, lng) ? satSource(lat, lng) : Promise.resolve(null),
+    licorSource().catch(() => null), // estación HOBO (LI-COR) con pluviómetro, en la parte alta
   ]);
-  return { models: [...omModels, metno], metar, owm, radar, wttr, sat, at: new Date().toISOString() };
+  return { models: [...omModels, metno], metar, owm, radar, wttr, sat, station, at: new Date().toISOString() };
 }
 let refreshing = null;
 // Combina modelos y observaciones. `extra` son fuentes locales (equipo, reportes) que arma el servidor.
@@ -465,7 +467,7 @@ export async function getWeather({ lat, lng, metarStation = 'SERO', owmKey = '' 
 const satDryOf = sat => !!(sat?.ok && sat.clear && !(sat.stormKm != null && sat.stormKm <= 25));
 const satWetOf = sat => !!(sat?.ok && sat.storm);
 const obsDryPre = (radar, metar, sat) => (radar?.ok && !radar.intensity && !radar.near) || (metar?.ok && !metar.intensity && !metar.near) || satDryOf(sat);
-export function combine({ models, metar, owm, radar, wttr, lightning, sat, at, verify }, extra = []) {
+export function combine({ models, metar, owm, radar, wttr, lightning, sat, station, at, verify }, extra = []) {
   // wttr.in es pronóstico: su "tormenta ahora" solo cuenta si el detector de rayos o el aeropuerto la confirman.
   if (wttr?.ok && wttr.thunderNow && !(lightning?.strikes15 > 0 || metar?.ts)) wttr = { ...wttr, thunderNow: false, detail: `${wttr.detail} · sin rayos detectados: no cuenta como tormenta` };
   // El aeropuerto reporta cada hora; el radar, cada 10 min. Si un radar al menos 30 min más reciente ya no ve lluvia ni sobre la ciudad
@@ -483,8 +485,10 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, at, v
   // si el radar, que mira la ciudad y sus alrededores, no ve nada: esa lluvia está lejos (cerros, campo).
   // Sin radar (Ecuador), el satélite hace su papel a medias: cielo sin nubes de lluvia = seco; nubes de tormenta sobre la ciudad = respaldo.
   const satDry = satDryOf(sat), satWet = satWetOf(sat);
+  // Pluviómetro de la estación (parte alta): si su última hora tuvo lluvia medible, respalda a los pronósticos (como la lluvia cerca del aeropuerto)
+  const stWet = !!(station?.ok && station.wet) && !satDry; // con el cielo de la ciudad despejado (satélite), esa lluvia quedó en los cerros
   const radarDry = (radar?.ok && !radar.intensity && !radar.near) || satDry;
-  const corro = (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || (metar.near && !radarDry))) || satWet;
+  const corro = (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || (metar.near && !radarDry))) || satWet || stWet;
   if (metar?.ok && !metar.intensity && metar.near && radarDry) metar = { ...metar, detail: `${metar.detail} · el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no la ve cerca de la ciudad'}: no respalda a los pronósticos` };
   // OpenWeatherMap: su "clima actual" es un modelo (marcaba lluvia con cielo seco). Su lluvia solo cuenta si el radar o el aeropuerto la confirman.
   if (owm?.ok && owm.intensity && !corro) owm = { ...owm, intensity: 0, rainNow: 0, detail: `${owm.detail} · el radar y el aeropuerto no ven lluvia: no cuenta` };
@@ -516,7 +520,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, at, v
   // y por sí solos no pueden decir "está lloviendo ahora" (marcaban lluvia leve, y el semáforo en naranja, con el cielo solo nublado).
   if (radarDry && !corro && modelSrc.intensity > 0)
     Object.assign(modelSrc, { intensity: 0, rainNow: 0, detail: `${modelSrc.detail} · el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca'}: no cuenta como lluvia ahora` });
-  let sources = [modelSrc, metar, owm, radar, sat, wttr, lightning, ...extra].filter(Boolean);
+  let sources = [modelSrc, metar, station, owm, radar, sat, wttr, lightning, ...extra].filter(Boolean);
   // El equipo marcó "no llueve" en el centro: lo ven en la calle, así que ni los pronósticos (modelos, OWM, wttr) ni el aeropuerto
   // (a unos 4 km) ni el radar (píxeles de ~1 km) encienden "lloviendo" mientras dure la marca. Los reportes ciudadanos siguen contando.
   if (extra.some(x => x.id === 'equipo' && x.ok && x.dry))
