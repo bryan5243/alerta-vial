@@ -450,8 +450,9 @@ function combine(array $remote, array $extra = []): array {
   if ($highBlocked || ($highWet && $satDry)) $stations = array_map(fn($x) => !empty($x['ok']) && ($x['zone'] ?? 'alta') !== 'baja' && !empty($x['wet'])
     ? array_merge($x, ['detail' => ($x['detail'] ?? '') . ' · llueve en la parte alta, pero ' . ($satDry ? 'el satélite ve despejada la ciudad' : ($lowDry ? 'Ducupalta (parte baja) está seca' : 'el aeropuerto no ve lluvia')) . ': no cuenta para la ciudad; vigila los ríos']) : $x, $stations);
   $radarDry = ($rOk && empty($radar['intensity']) && empty($radar['near'])) || $satDry;
-  $corro = ($rOk && (($radar['intensity'] ?? 0) > 0 || !empty($radar['near']))) || ($mOk && (($metar['intensity'] ?? 0) > 0 || (!empty($metar['near']) && !$radarDry))) || $satWet || $stWet;
-  if ($mOk && empty($metar['intensity']) && !empty($metar['near']) && $radarDry) $metar = array_merge($metar, ['detail' => ($metar['detail'] ?? '') . ' · el ' . ($satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no la ve cerca de la ciudad') . ': no respalda a los pronósticos']);
+  // "Lluvia en los alrededores" del aeropuerto (VCSH) tampoco respalda si Ducupalta (parte baja) está seca: esa lluvia está en los cerros
+  $corro = ($rOk && (($radar['intensity'] ?? 0) > 0 || !empty($radar['near']))) || ($mOk && (($metar['intensity'] ?? 0) > 0 || (!empty($metar['near']) && !$radarDry && !$lowDry))) || $satWet || $stWet;
+  if ($mOk && empty($metar['intensity']) && !empty($metar['near']) && ($radarDry || $lowDry)) $metar = array_merge($metar, ['detail' => ($metar['detail'] ?? '') . ' · ' . ($radarDry ? 'el ' . ($satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no la ve cerca de la ciudad') : 'Ducupalta (parte baja) está seca') . ': no respalda a los pronósticos']);
   // OpenWeatherMap: su "clima actual" es un modelo. Su lluvia solo cuenta si el radar o el aeropuerto la confirman.
   if (!empty($owm['ok']) && !empty($owm['intensity']) && !$corro) $owm = array_merge($owm, ['intensity' => 0, 'rainNow' => 0, 'detail' => ($owm['detail'] ?? '') . ' · el radar y el aeropuerto no ven lluvia: no cuenta']);
   // Y aun confirmada, OWM no puede decir que llueve más fuerte que lo que ven el radar o el aeropuerto (si solo la ven cerca: leve).
@@ -484,7 +485,7 @@ function combine(array $remote, array $extra = []): array {
     'models' => array_map(fn($m) => ['name' => $m['name'], 'ok' => $m['ok'], 'rainNow' => $m['rainNow'] ?? 0, 'intensity' => $m['intensity'] ?? 0, 'error' => $m['error'] ?? null, 'stale' => !empty($m['stale']) ? $m['staleMin'] : null], $models)];
   // El radar no ve lluvia sobre la ciudad ni cerca y ninguna otra observación la ve: los modelos (pronóstico) solos no dicen "está lloviendo ahora"
   // Lo mismo si las dos observaciones junto a la ciudad están secas a la vez: Ducupalta (parte baja) y el aeropuerto
-  $groundDry = $lowDry && !($mOk && (!empty($metar['intensity']) || !empty($metar['near']))); // Ducupalta seca y el aeropuerto sin lluvia (o sin reporte: de noche no opera)
+  $groundDry = $lowDry && !($mOk && !empty($metar['intensity'])); // Ducupalta seca y el aeropuerto sin lluvia (o sin reporte: de noche no opera)
   if (($radarDry || $groundDry) && !$corro && $modelSrc['intensity'] > 0)
     $modelSrc = array_merge($modelSrc, ['intensity' => 0, 'rainNow' => 0, 'detail' => $modelSrc['detail'] . ' · ' . ($radarDry ? 'el ' . ($satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca') : 'Ducupalta (pluviómetro) no ve lluvia') . ': no cuenta como lluvia ahora']);
   $sources = array_values(array_filter(array_merge([$modelSrc, $metar], $stations, [$owm, $radar, $sat, $wttr, $lightning], $extra)));
