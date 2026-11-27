@@ -495,7 +495,7 @@ function combine(array $remote, array $extra = []): array {
   // El pluviómetro de la parte baja (Ducupalta) sí dice cuánto llueve: su lluvia de la última hora da la intensidad
   $stations = array_map(function ($x) use ($satDry) {
     if (empty($x['ok']) || ($x['zone'] ?? 'alta') !== 'baja' || empty($x['wet']) || $satDry) return $x;
-    $mm = max(($x['stepMin'] ?? 60) < 60 ? ($x['rain1h'] ?? 0) : ($x['lastMm'] ?? 0), ($x['rain30m'] ?? 0) * 2);
+    $mm = ($x['stepMin'] ?? 60) < 60 ? ($x['rain1h'] ?? 0) : ($x['lastMm'] ?? 0); // lo medido en la última hora, sin extrapolar
     return array_merge($x, ['intensity' => $mm >= 7.6 ? 3 : ($mm >= 2.5 ? 2 : 1), 'rainNow' => r1($mm)]);
   }, $stations);
   $sources = array_values(array_filter(array_merge([$modelSrc, $metar], $stations, [$radar, $sat, $lightning], $extra)));
