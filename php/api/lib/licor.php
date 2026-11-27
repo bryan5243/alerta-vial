@@ -32,16 +32,20 @@ function licor_summary(array $pts, int $now): array {
   usort($pts, fn($a, $b) => $a[0] <=> $b[0]);
   $d = []; for ($i = 1; $i < count($pts); $i++) $d[] = $pts[$i][0] - $pts[$i - 1][0];
   sort($d); $step = $d ? max(300000, min(3600000, $d[intdiv(count($d), 2)])) : 3600000; // cada lectura cubre [hora, hora + paso)
-  $sum = function (int $h) use ($pts, $now, $step) { $s = 0; foreach ($pts as [$t, $v]) if ($t + $step > $now - $h * 3600000) $s += max(0, $v); return round($s, 1); };
+  $sum = function (float $h) use ($pts, $now, $step) { $s = 0; foreach ($pts as [$t, $v]) if ($t + $step > $now - $h * 3600000) $s += max(0, $v); return round($s, 1); };
   [$lt, $lv] = end($pts); $end = $lt + $step; $age = max(0, (int)round(($now - $end) / 60000));
-  return ['lastMm' => round(max(0, $lv), 1), 'lastFrom' => $lt, 'lastTo' => $end, 'stepMin' => (int)round($step / 60000), 'ageMin' => $age,
-    'rain3h' => $sum(3), 'rain6h' => $sum(6), 'rain12h' => $sum(12), 'rain24h' => $sum(24),
-    'wet' => $age <= LICOR['freshMin'] && $lv >= LICOR['wetMm']];
+  $s = ['lastMm' => round(max(0, $lv), 1), 'lastFrom' => $lt, 'lastTo' => $end, 'stepMin' => (int)round($step / 60000), 'ageMin' => $age,
+    'rain30m' => $sum(0.5), 'rain1h' => $sum(1), 'rain3h' => $sum(3), 'rain6h' => $sum(6), 'rain12h' => $sum(12), 'rain24h' => $sum(24)];
+  return $s + ['wet' => licor_wet($s)];
 }
+// "Llueve en la estación": con lecturas cada 5 min, ≥ 0,4 mm en la última media hora (≈ 0,8 mm/h) y el dato de hace ≤ 20 min;
+// si publica por hora, ≥ 0,5 mm en su última hora y el dato de hace ≤ 90 min
+function licor_wet(array $s): bool { return $s['stepMin'] < 60 ? $s['ageMin'] <= 20 && $s['rain30m'] >= 0.4 : $s['ageMin'] <= LICOR['freshMin'] && $s['lastMm'] >= LICOR['wetMm']; }
 function licor_detail(array $s): string {
   $hm = fn($ms) => gmdate('H:i', intdiv($ms, 1000) - 18000);
-  $last = $s['lastMm'] > 0 ? "llovió {$s['lastMm']} mm entre las {$hm($s['lastFrom'])} y las {$hm($s['lastTo'])}" : "sin lluvia entre las {$hm($s['lastFrom'])} y las {$hm($s['lastTo'])}";
-  return ucfirst($last) . " · últimas 3 h: {$s['rain3h']} mm · 24 h: {$s['rain24h']} mm · la estación está en la parte alta (~450 m) y publica la lluvia por hora (dato de hace {$s['ageMin']} min)";
+  $h1 = $s['stepMin'] < 60 ? $s['rain1h'] : $s['lastMm'];
+  $last = $h1 > 0 ? "Llovió $h1 mm en la última hora" . ($s['stepMin'] < 60 && $s['rain30m'] > 0 ? " ({$s['rain30m']} mm en la última media hora)" : '') : 'Sin lluvia en la última hora';
+  return "$last · últimas 3 h: {$s['rain3h']} mm · 24 h: {$s['rain24h']} mm · lectura de las {$hm($s['lastTo'])} (hace {$s['ageMin']} min) · la estación está en la parte alta (~450 m)";
 }
 function licor_source(): array {
   $base = ['id' => 'estacion', 'kind' => 'observación', 'name' => 'Estación HOBO (LI-COR) · pluviómetro', 'intensity' => 0, 'rainNow' => 0];
@@ -68,6 +72,8 @@ function licor_source(): array {
     cache_put('licor', $c);
   }
   if (empty($c['sum']) || $now - ($c['okAt'] ?? 0) > 3 * 3600000) return $base + ['ok' => false, 'error' => ($c['error'] ?? '') ?: 'sin datos de la estación'];
-  $s = $c['sum']; $s['ageMin'] = max(0, (int)round(($now - $s['lastTo']) / 60000)); $s['wet'] = $s['ageMin'] <= LICOR['freshMin'] && $s['lastMm'] >= LICOR['wetMm'];
+  $s = $c['sum']; $s['ageMin'] = max(0, (int)round(($now - $s['lastTo']) / 60000));
+  if (!isset($s['rain30m'])) { $s['rain30m'] = 0; $s['rain1h'] = $s['lastMm']; } // dato guardado por la versión anterior
+  $s['wet'] = licor_wet($s);
   return $base + ['ok' => true, 'at' => gmdate('c', intdiv($s['lastTo'], 1000))] + $s + ['detail' => licor_detail($s)];
 }
