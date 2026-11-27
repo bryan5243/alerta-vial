@@ -66,20 +66,28 @@ function goes_summary(callable $hAt, float $lat, float $lng): array {
 }
 // Imagen para el mapa (Mercator, colores por altura de la cima; transparente = despejado o nubes bajas)
 function goes_png(callable $hAt, float $lat, float $lng): ?string {
-  if (!function_exists('imagecreatetruecolor')) return null;
   $S = SAT['png']; $b = SAT['box']; $r = M_PI / 180;
   $COL = [[14, [224, 24, 45, 210]], [12, [255, 138, 0, 190]], [9, [255, 213, 74, 150]], [6, [127, 179, 255, 115]], [3, [255, 255, 255, 70]]];
-  $im = imagecreatetruecolor($S, $S); imagealphablending($im, false); imagesavealpha($im, true);
-  imagefill($im, 0, 0, imagecolorallocatealpha($im, 0, 0, 0, 127));
-  $my = fn($la) => log(tan(M_PI / 4 + $la * $r / 2)); $top = $my($lat + $b); $bot = $my($lat - $b);
+  $my = fn($la) => log(tan(M_PI / 4 + $la * $r / 2)); $top = $my($lat + $b); $bot = $my($lat - $b); $raw = '';
   for ($y = 0; $y < $S; $y++) {
-    $la = (2 * atan(exp($top - ($y + 0.5) / $S * ($top - $bot))) - M_PI / 2) / $r;
+    $la = (2 * atan(exp($top - ($y + 0.5) / $S * ($top - $bot))) - M_PI / 2) / $r; $raw .= "\0";
     for ($x = 0; $x < $S; $x++) {
-      $h = $hAt($la, $lng - $b + ($x + 0.5) / $S * 2 * $b) ?? 0;
-      foreach ($COL as [$min, $c]) if ($h >= $min) { imagesetpixel($im, $x, $y, imagecolorallocatealpha($im, $c[0], $c[1], $c[2], 127 - (int)round($c[3] / 255 * 127))); break; }
+      $h = $hAt($la, $lng - $b + ($x + 0.5) / $S * 2 * $b) ?? 0; $px = "\0\0\0\0";
+      foreach ($COL as [$min, $c]) if ($h >= $min) { $px = pack('C4', ...$c); break; }
+      $raw .= $px;
     }
   }
-  ob_start(); imagepng($im); imagedestroy($im); return ob_get_clean();
+  return png_encode($S, $S, $raw);
+}
+// PNG RGBA sin GD ni zlib (bloques "stored" de deflate): la imagen es diminuta (28×28)
+function png_encode(int $w, int $h, string $raw): string {
+  $a = 1; $b2 = 0; for ($i = 0, $n = strlen($raw); $i < $n; $i++) { $a = ($a + ord($raw[$i])) % 65521; $b2 = ($b2 + $a) % 65521; }
+  $z = "\x78\x01"; $len = strlen($raw);
+  for ($o = 0; $o < $len || $o === 0; $o += 65535) { $part = substr($raw, $o, 65535); $last = $o + 65535 >= $len ? 1 : 0;
+    $z .= chr($last) . pack('v', strlen($part)) . pack('v', ~strlen($part) & 0xffff) . $part; if ($last) break; }
+  $z .= pack('N', ($b2 << 16) | $a);
+  $chunk = fn($t, $d) => pack('N', strlen($d)) . $t . $d . pack('N', crc32($t . $d));
+  return "\x89PNG\r\n\x1a\n" . $chunk('IHDR', pack('NNCCCCC', $w, $h, 8, 6, 0, 0, 0)) . $chunk('IDAT', $z) . $chunk('IEND', '');
 }
 function sat_detail(array $s, int $ageMin): string {
   $txt = !empty($s['clear']) ? 'Sin nubes de lluvia sobre la ciudad (despejado o solo nubes bajas)'
