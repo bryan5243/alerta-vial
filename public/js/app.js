@@ -3,7 +3,7 @@ import { createGps, nearestOnLine, haversine, progressOn, isAhead } from './gps.
 import { createNav, setNoCar } from './nav.js';
 import { createWeatherFx } from './weather-fx.js';
 import { nearStreets } from './near-streets.js';
-import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, wxTime, toast, ICON, waveSvg, edgeFade, dec, rainHours, daysCards } from './common.js';
+import { RIVER, ZSEV, LEVELS, LEVEL_DESC, STATUS, PTYPE, SEV, esc, ago, wxTime, toast, ICON, waveSvg, edgeFade, dec, rainHours, daysCards, PASS, VEH, accessHtml } from './common.js';
 
 const $ = s => document.querySelector(s);
 let map, state, radarOn = false, radarFrames = [], radarTimer = null, picking = false, pickMarker = null, pickPos = null;
@@ -453,7 +453,7 @@ function render(reports) {
   for (const o of overflows) shapes.overflows.set(o.id, map.addOverflow({ lat: o.lat, lng: o.lng, iconSvg: ICON.wave,
     popup: `<b>Desborde de río</b><br>${esc(o.street || '')}<br>${esc(o.description)}<br><span style="color:#5A6B7D">Reportado ${ago(o.createdAt)} · verificado por EMOVTT</span>` }));
   renderOverflowBanner(overflows, rivers.filter(r => r.status === 'desbordado'));
-  for (const r of reports.filter(r => r.type !== 'desborde')) map.addMarker({ lat: r.lat, lng: r.lng, cls: 'report', icon: 'report', popup: `<b>Reporte ciudadano verificado</b>${r.photo ? `<br><img src="${esc(r.photo)}" alt="Foto del reporte" style="width:100%;max-width:220px;border-radius:8px;margin:6px 0">` : ''}<br>${esc(r.street)} · ${esc(r.level)}<br>${esc(r.description)}<br><span style="color:#5A6B7D">${ago(r.createdAt)}</span>` });
+  for (const r of reports.filter(r => r.type !== 'desborde')) map.addMarker({ lat: r.lat, lng: r.lng, cls: 'report', icon: 'report', popup: `<b>Reporte ciudadano verificado</b>${r.photo ? `<br><img src="${esc(r.photo)}" alt="Foto del reporte" style="width:100%;max-width:220px;border-radius:8px;margin:6px 0">` : ''}<br><b>${esc(r.street)}</b>${r.access ? `<br>${accessHtml(r.access, { small: true })}` : ''}${r.description ? `<br>${esc(r.description)}` : ''}<br><span style="color:#5A6B7D">${ago(r.createdAt)}</span>` });
   if (radarOn) applyRadar();
 }
 // Secciones que el equipo apagó en Admin → Configuración desaparecen del mapa público.
@@ -636,16 +636,16 @@ async function applyRadar() {
 }
 $('#btn-radar').addEventListener('click', () => { if (radarOn) return radarOff(); radarOn = true; $('#btn-radar').classList.add('on'); applyRadar(); });
 
-// Reporte ciudadano, por pasos: 1) dónde  2) qué y qué tan grave  3) foto y detalles
+// Reporte ciudadano, por pasos: 1) dónde  2) qué pasa (y si ya está registrado)  3) foto  4) cómo está el paso
 $('#r-ic-gps').innerHTML = ICON.nav; $('#r-ic-map').innerHTML = ICON.pin; $('#r-ic-flood').innerHTML = ICON.drop; $('#r-ic-river').innerHTML = ICON.wave;
-const R_TITLES = [['¿Dónde está el problema?', 'Tu reporte lo revisa el equipo municipal antes de publicarse en el mapa.'], ['¿Qué está pasando?', 'Elige el tipo de problema. La calle se completa sola.'], ['Foto y detalles', 'La foto ayuda al equipo a comprobar el reporte.']];
+const R_TITLES = [['¿Dónde está el problema?', 'Tu reporte lo revisa el equipo municipal antes de publicarse en el mapa.'], ['¿Qué está pasando?', 'Elige el tipo de problema. La calle se completa sola.'], ['Foto del lugar', 'La foto ayuda al equipo a comprobar el reporte.'], ['¿Se puede pasar?', 'Así avisamos a quienes van por esa calle.']];
 let rStep = 0;
 function repStep(n) {
   rStep = n;
   document.querySelectorAll('.r-pane').forEach(p => p.classList.toggle('on', +p.dataset.pane === n));
   document.querySelectorAll('#r-steps i').forEach((i, k) => i.classList.toggle('on', k <= n));
-  $('#r-count').textContent = `Paso ${n + 1} de 3`; $('#r-title').textContent = R_TITLES[n][0]; $('#r-sub').textContent = R_TITLES[n][1];
-  $('#r-back').textContent = n === 0 ? 'Cancelar' : 'Atrás'; $('#r-next').hidden = n !== 1; $('#r-send').hidden = n !== 2;
+  $('#r-count').textContent = `Paso ${n + 1} de ${R_TITLES.length}`; $('#r-title').textContent = R_TITLES[n][0]; $('#r-sub').textContent = R_TITLES[n][1];
+  $('#r-back').textContent = n === 0 ? 'Cancelar' : 'Atrás'; $('#r-next').hidden = n !== 1 && n !== 2; $('#r-send').hidden = n !== 3;
   $('#report-form .r-body').scrollTop = 0;
 }
 function openReport() {
@@ -657,7 +657,23 @@ function locationChosen(pos) {
   pickPos = pos;
   if (pickMarker) pickMarker.remove(); pickMarker = map.addMarker({ ...pos, cls: 'report', icon: 'report' });
   $('#r-coords').innerHTML = `${ICON.pin}<span>Ubicación marcada</span>`;
-  $('#sheet-bg').classList.add('open'); repStep(1); suggestStreets(pos);
+  $('#sheet-bg').classList.add('open'); repStep(1); suggestStreets(pos); checkKnown(pos);
+}
+// ¿Ya está registrado? Si hay un punto crítico o reportes recientes a menos de 80 m se avisa, para no crear puntos repetidos:
+// el reporte igual se puede enviar (confirma cómo está ahora) y el equipo lo suma al punto existente.
+let knownSeq = 0;
+async function checkKnown(pos) {
+  const box = $('#r-known'), my = ++knownSeq; box.hidden = true;
+  try {
+    const k = await (await fetch(`/api/public/report-check?lat=${pos.lat}&lng=${pos.lng}`, { signal: AbortSignal.timeout(6000) })).json();
+    if (my !== knownSeq || (!k.point && !k.reports)) return;
+    const n = k.reports, also = n ? ` y ${n === 1 ? 'otra persona ya lo reportó' : `${n} personas ya lo reportaron`} en las últimas horas` : '';
+    box.innerHTML = `<span class="rk-ic">${ICON.info}</span><span>${k.point
+      ? `<b>Este lugar ya está registrado</b> como punto crítico: <b>${esc(k.point.name)}</b> (a ${k.point.dist} m)${also}.`
+      : `<b>Este lugar ya fue reportado</b>: ${n === 1 ? 'otra persona lo reportó' : `${n} personas lo reportaron`} en las últimas horas.`}
+      <small>Puedes enviar tu reporte igual: nos dice cómo está ahora y se suma al ${k.point ? 'punto existente' : 'reporte anterior'}, sin crear otro.</small></span>`;
+    box.hidden = false;
+  } catch {}
 }
 // Calles y sector cercanos al punto marcado: un toque los escribe en "Calle o sector"
 let sugSeq = 0;
@@ -682,9 +698,11 @@ async function suggestStreets(pos) {
   // Se completa solo (la persona puede cambiarlo): intersección más cercana y sector
   const fill = (r, loading) => {
     if (my !== sugSeq) return;
-    const st = r.streets.map(s => s.name), inter = st.length >= 2 ? [`${st[0]} y ${st[1]}`] : [];
+    // Intersección real (dos calles que se cruzan) si está a ≤ 60 m; si no, la calle más cercana
+    const st = r.streets.map(s => s.name), x = r.inter?.streets?.length === 2 ? r.inter : null;
+    const cross = x ? `${x.streets[0]} y ${x.streets[1]}` : '', inter = cross ? [cross] : [];
     paint([...inter, ...st, ...local], r.sector, loading);
-    const inp = $('#r-street'), auto = inter[0] || st[0] || local[0] || '';
+    const inp = $('#r-street'), auto = (x && x.dist <= 60 ? cross : '') || st[0] || local[0] || '';
     if (!inp.value.trim() || inp.dataset.auto === '1') { inp.value = [auto, r.sector && `Sector ${r.sector}`].filter(Boolean).join(' · '); inp.dataset.auto = inp.value ? '1' : ''; }
     if (inp.value) $('#r-place').innerHTML = `${ICON.pin}<b>${esc(inp.value)}</b>`;
     else if (!loading) showStreetEdit(true); // no se encontró la calle: se pide escribirla
@@ -717,9 +735,27 @@ document.querySelectorAll('[data-rtype]').forEach(btn => btn.addEventListener('c
 // Calle automática: se muestra como texto; "Cambiar" abre el campo y las sugerencias
 const showStreetEdit = on => { $('#r-street-wrap').hidden = !on; $('#r-place-box').hidden = on; if (on) $('#r-street').focus({ preventScroll: true }); };
 $('#r-place-edit').addEventListener('click', () => showStreetEdit(true));
-$('#r-next').addEventListener('click', () => repStep(2));
+$('#r-next').addEventListener('click', () => {
+  if (rStep === 2 && !photoData) { $('#r-photo-err').textContent = 'Agrega una fotografía: es obligatoria para comprobar el reporte.'; $('#r-photo-box').classList.add('bad'); return; }
+  repStep(rStep + 1);
+});
+// Paso 4: cómo está el paso (uno) y quién puede pasar (varios; se proponen según el estado y la persona los ajusta)
+let rPass = null, rCan = new Set();
+$('#r-pass').innerHTML = Object.entries(PASS).map(([k, p]) => `<button type="button" class="r-pa" data-pass="${k}" role="radio" aria-checked="false" style="--c:${p.c}"><span class="r-pa-ic" aria-hidden="true">${p.ic}</span><span><b>${p.t}</b><small>${p.d}</small></span><i class="r-pa-ok" aria-hidden="true">${ICON.check}</i></button>`).join('');
+$('#r-veh').innerHTML = Object.entries(VEH).map(([k, [t, ic]]) => `<button type="button" class="r-vh" data-veh="${k}" aria-pressed="false"><span class="r-vh-ic" aria-hidden="true">${ic}</span><span class="r-vh-t">${t}</span><i aria-hidden="true">${ICON.check}</i></button>`).join('');
+function paintAccess() {
+  document.querySelectorAll('[data-pass]').forEach(b => { const on = b.dataset.pass === rPass; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
+  document.querySelectorAll('[data-veh]').forEach(b => { const on = rCan.has(b.dataset.veh); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
+  $('#r-veh-box').hidden = !rPass || rPass === 'cerrada';
+}
+document.querySelectorAll('[data-pass]').forEach(b => b.addEventListener('click', () => {
+  rPass = b.dataset.pass; rCan = new Set(PASS[rPass].can); $('#r-pass-err').textContent = ''; paintAccess();
+  if (rPass !== 'cerrada') requestAnimationFrame(() => $('#r-veh-box').scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+}));
+document.querySelectorAll('[data-veh]').forEach(b => b.addEventListener('click', () => { const v = b.dataset.veh; rCan.has(v) ? rCan.delete(v) : rCan.add(v); paintAccess(); }));
+const resetAccess = () => { rPass = null; rCan = new Set(); $('#r-pass-err').textContent = ''; paintAccess(); };
 $('#r-back').addEventListener('click', () => { if (rStep === 0) closeSheet(); else repStep(rStep - 1); });
-const closeSheet = () => { clearPhoto(); stopPick(); $('#sheet-bg').classList.remove('open'); if (pickMarker) { pickMarker.remove(); pickMarker = null; } pickPos = null; };
+const closeSheet = () => { clearPhoto(); resetAccess(); knownSeq++; $('#r-known').hidden = true; stopPick(); $('#sheet-bg').classList.remove('open'); if (pickMarker) { pickMarker.remove(); pickMarker = null; } pickPos = null; };
 $('#sheet-bg').addEventListener('click', e => { if (e.target === e.currentTarget) closeSheet(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet-bg').classList.contains('open')) closeSheet(); });
 // Foto del reporte: se reduce en el teléfono (máx. 1280 px, JPEG) para que suba rápido con datos móviles.
@@ -743,12 +779,14 @@ $('#r-photo-cam').addEventListener('change', onPhoto); $('#r-photo-gal').addEven
 $('#r-photo-del').addEventListener('click', clearPhoto);
 $('#report-form').addEventListener('submit', async e => {
   e.preventDefault(); $('#r-err').textContent = '';
-  if (!photoData) { $('#r-photo-err').textContent = 'Agrega una fotografía: es obligatoria para comprobar el reporte.'; $('#r-photo-box').classList.add('bad'); return; }
-  const body = { ...pickPos, type: rType, street: $('#r-street').value, description: $('#r-desc').value, photo: photoData };
+  if (!photoData) { repStep(2); $('#r-photo-err').textContent = 'Agrega una fotografía: es obligatoria para comprobar el reporte.'; $('#r-photo-box').classList.add('bad'); return; }
+  if (!rPass) { $('#r-pass-err').textContent = 'Elige cómo está el paso: así avisamos a quienes van por esa calle.'; return; }
+  const body = { ...pickPos, type: rType, street: $('#r-street').value, description: $('#r-desc').value, photo: photoData, access: { pass: rPass, can: [...rCan] } };
   const r = await fetch('/api/public/reports', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const j = await r.json();
   if (!r.ok) { $('#r-err').textContent = j.error; return; }
-  closeSheet(); e.target.reset(); clearPhoto(); toast('Gracias. Tu reporte fue enviado y será revisado.', 'ok');
+  closeSheet(); e.target.reset(); clearPhoto();
+  toast(j.nearPoint || j.dupOf ? 'Gracias. Tu reporte se suma al que ya está registrado en ese lugar y será revisado.' : 'Gracias. Tu reporte fue enviado y será revisado.', 'ok');
 });
 
 load().catch(err => { console.error(err); toast('No se pudo cargar la información. Reintenta en unos segundos.', 'err'); });

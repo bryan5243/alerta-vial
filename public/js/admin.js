@@ -2,7 +2,7 @@ import { createMap } from './map-provider.js';
 import { parseLayerFile, summarize, importable } from './layers.js';
 import { fetchWaterways, KIND } from './osm-rivers.js';
 import { autoDetoursFor, setNoCar } from './nav.js';
-import { RIVER, ZSEV, LEVELS, STATUS, PTYPE, SEV, esc, ago, fmtTime, wxTime, toast, confirmBox, ICON, waveSvg, edgeFade, rainHours } from './common.js';
+import { RIVER, ZSEV, LEVELS, STATUS, PTYPE, SEV, esc, ago, fmtTime, wxTime, toast, confirmBox, ICON, waveSvg, edgeFade, rainHours, PASS, accessHtml } from './common.js';
 
 const root = document.getElementById('root');
 let token = sessionStorage.getItem('av_token');
@@ -536,13 +536,18 @@ function secReports() {
   const hasPt = r => r.pointId && db.points.some(p => p.id === r.pointId);
   const act = reps.filter(r => r.type === 'desborde' && r.status === 'verificado' && !hasPt(r));
   const loose = reps.filter(r => r.status === 'verificado' && !hasPt(r));
+  // Reportes repetidos: punto crítico ya existente a ≤ 80 m y otros reportes del mismo lugar (12 h)
+  const others = r => reps.filter(x => x !== r && x.status !== 'descartado' && Math.abs(new Date(x.createdAt) - new Date(r.createdAt)) < 12 * 3600e3 && repDist(x, r) <= 80).length;
   col(`<p class="small muted">Reportes enviados por la ciudadanía desde el mapa público. Un reporte se ve en el mapa público solo durante <b>1 hora</b>. Al <b>aceptarlo</b> se convierte en <b>punto crítico de nivel medio</b> con su vía alterna: aparece cuando la alerta sube a <b>naranja o roja</b>, se retira <b>2 horas después de que para la lluvia</b> y queda guardado para las próximas lluvias. Los reportes no cambian el clima ni el semáforo.</p>
     ${loose.length ? `<div class="card" style="border-color:var(--naranja);background:#FFF6E8;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:200px"><b>${loose.length} reporte${loose.length > 1 ? 's' : ''} verificado${loose.length > 1 ? 's' : ''} todavía se ve${loose.length > 1 ? 'n' : ''} como reporte.</b> <span class="small muted">Conviértelos en puntos críticos automáticos.</span></span><button class="btn sm" id="crit-all">${ICON.pin} Convertir todos</button></div>` : ''}
     ${act.length ? `<div class="card" style="border-color:#1E88E5;background:#EEF6FE"><b>${act.length} desborde${act.length > 1 ? 's' : ''} activo${act.length > 1 ? 's' : ''} en el mapa público.</b> <span class="small muted">Retíralo cuando el agua haya bajado.</span></div>` : ''}
     <div class="list">${reps.length ? reps.map(r => `<div class="item" data-focus="${r.id}" style="cursor:pointer"><span class="dot ${r.level}" style="margin-top:6px"></span>
-      <div style="flex:1"><div class="title">${r.type === 'desborde' ? `<span class="chip roja">Desborde de río</span> ` : ''}${esc(r.street || 'Sin calle indicada')} <span class="chip ${chip(r.status)}">${r.status}</span></div><div class="meta">${esc(r.description)}</div>${r.photo ? `<a href="${esc(r.photo)}" target="_blank" rel="noopener"><img src="${esc(r.photo)}" alt="Foto del reporte" loading="lazy" style="display:block;margin-top:8px;width:100%;max-width:240px;border-radius:10px;border:1px solid var(--line,#DDE3EA)"></a>` : '<div class="meta" style="color:var(--naranja)">Sin fotografía</div>'}<div class="meta">${ago(r.createdAt)} · ${fmtTime(r.createdAt)}${Date.now() - new Date(r.createdAt) >= 3600e3 ? ' · <b>ya no se ve en el mapa (pasó 1 h)</b>' : ''}</div>
+      <div style="flex:1"><div class="title">${r.type === 'desborde' ? `<span class="chip roja">Desborde de río</span> ` : ''}${esc(r.street || 'Sin calle indicada')} <span class="chip ${chip(r.status)}">${r.status}</span></div>${accessHtml(r.access)}${r.description ? `<div class="meta">${esc(r.description)}</div>` : ''}${(() => { const np = !hasPt(r) && nearPoint(r), n = others(r);
+        return (np ? `<div class="meta" style="color:#8a5a00;font-weight:600">${ICON.pin} Ya existe el punto crítico <b>${esc(np.name)}</b> a ${Math.round(repDist(np, r))} m: súmalo a ese punto para no repetirlo.</div>` : '')
+          + (n ? `<div class="meta"><span class="chip neutral">${n + 1} reportes de este mismo lugar</span></div>` : ''); })()}${r.photo ? `<a href="${esc(r.photo)}" target="_blank" rel="noopener"><img src="${esc(r.photo)}" alt="Foto del reporte" loading="lazy" style="display:block;margin-top:8px;width:100%;max-width:240px;border-radius:10px;border:1px solid var(--line,#DDE3EA)"></a>` : '<div class="meta" style="color:var(--naranja)">Sin fotografía</div>'}<div class="meta">${ago(r.createdAt)} · ${fmtTime(r.createdAt)}${Date.now() - new Date(r.createdAt) >= 3600e3 ? ' · <b>ya no se ve en el mapa (pasó 1 h)</b>' : ''}</div>
         <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
           ${hasPt(r) ? `<span class="chip naranja">${ICON.pin} Punto crítico (nivel medio) · se activa con naranja/roja</span>`
+            : r.status !== 'descartado' && nearPoint(r) ? `<button class="btn sm" data-link="${r.id}" title="Marca el reporte como verificado y lo une al punto crítico que ya existe en ese lugar">${ICON.check} Sumar al punto existente</button><button class="btn ghost sm" data-crit="${r.id}">Crear otro punto</button>`
             : r.status !== 'descartado' ? `<button class="btn sm" data-crit="${r.id}" title="Crea un punto crítico que se activa solo con alerta naranja o roja, genera su vía alterna y deja de mostrarse como reporte">${ICON.check} Aceptar como punto crítico</button>` : ''}
           ${r.status === 'verificado' && !hasPt(r) ? `<button class="btn soft sm" data-rs="retirado" data-id="${r.id}">Retirar (el agua bajó)</button>` : ''}
           ${r.status !== 'descartado' && r.status !== 'retirado' && !hasPt(r) ? `<button class="btn ghost sm" data-rs="descartado" data-id="${r.id}">Descartar</button>` : ''}
@@ -552,6 +557,11 @@ function secReports() {
   q('[data-rs]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); await api(`/api/admin/reports/${b.dataset.id}`, { method: 'PUT', body: { status: b.dataset.rs } }); toast(`Reporte ${b.dataset.rs}`, 'ok'); refresh(); });
   q('[data-rdel]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); if (!await confirmBox({ title: 'Eliminar reporte', text: 'El reporte se borrará definitivamente. Si solo quieres ocultarlo del mapa, usa "Retirar" o "Descartar".', ok: 'Eliminar' })) return; await api(`/api/admin/reports/${b.dataset.rdel}`, { method: 'DELETE' }); refresh(); });
   q('[data-topoint]').forEach(b => b.onclick = ev => { ev.stopPropagation(); const r = db.reports.find(x => x.id === b.dataset.topoint); editing = { name: r.street, lat: r.lat, lng: r.lng, type: 'inundacion', severity: r.level === 'grave' ? 'alta' : r.level === 'moderado' ? 'media' : 'baja', description: r.description }; section = 'points'; renderShell(); });
+  q('[data-link]').forEach(b => b.onclick = async ev => {
+    ev.stopPropagation(); const r = db.reports.find(x => x.id === b.dataset.link), p = r && nearPoint(r); if (!p) return;
+    await api(`/api/admin/reports/${r.id}`, { method: 'PUT', body: { status: 'verificado', pointId: p.id } });
+    toast(`Reporte sumado al punto crítico "${p.name}". No se creó un punto nuevo.`, 'ok'); refresh();
+  });
   q('[data-focus]').forEach(b => b.onclick = () => { const r = db.reports.find(x => x.id === b.dataset.focus); map?.panTo(r, 16); });
   // Un clic: el reporte aprobado pasa a punto crítico automático (se enciende con naranja/roja) con su vía alterna
   q('[data-crit]').forEach(b => b.onclick = async ev => {
@@ -562,15 +572,25 @@ function secReports() {
   });
   if (id('crit-all')) id('crit-all').onclick = async () => {
     const b = id('crit-all'); b.disabled = true; b.textContent = 'Convirtiendo…'; const pts = [];
-    try { for (const r of loose) pts.push(await reportToPoint(r)); toast(`${pts.length} reporte(s) convertidos en puntos críticos automáticos. Generando vías alternas…`, 'ok'); await genAuto(pts, b); }
+    // Si ya hay un punto crítico a ≤ 80 m (o se acaba de crear uno por otro reporte del mismo lugar) se suma a ese, sin repetir
+    let linked = 0;
+    try { for (const r of loose) { const np = nearPoint(r); if (np) { await api(`/api/admin/reports/${r.id}`, { method: 'PUT', body: { status: 'verificado', pointId: np.id } }); r.pointId = np.id; linked++; } else pts.push(await reportToPoint(r)); }
+      toast(`${pts.length} punto(s) crítico(s) nuevo(s)${linked ? ` y ${linked} reporte(s) sumados a puntos que ya existían` : ''}.${pts.length ? ' Generando vías alternas…' : ''}`, 'ok'); if (pts.length) await genAuto(pts, b); else refresh(); }
     catch (e) { toast(e.message || 'No se pudo convertir todos los reportes.', 'err'); refresh(); }
   };
+}
+const repDist = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lng - b.lng) * 111320 * Math.cos(a.lat * Math.PI / 180));
+// Punto crítico ya registrado a ≤ 80 m del reporte (el más cercano)
+function nearPoint(r) {
+  let best = null, bd = 81;
+  for (const p of db.points || []) { const d = repDist(p, r); if (d < bd) { bd = d; best = p; } }
+  return best;
 }
 // Un reporte aceptado pasa a ser punto crítico automático: se enciende solo con naranja/roja y deja de verse como reporte
 async function reportToPoint(r) {
   const sev = 'media'; // los reportes ciudadanos pasan a puntos críticos de nivel medio
   const p = await api('/api/admin/points', { method: 'POST', body: { name: r.street || `Reporte ciudadano ${new Date(r.createdAt).toLocaleDateString('es-EC')}`, lat: r.lat, lng: r.lng,
-    type: r.type === 'desborde' ? 'riesgo' : 'inundacion', severity: sev, description: r.description || 'Creado a partir de un reporte ciudadano.', auto: true, active: false, source: 'reporte' } });
+    type: r.type === 'desborde' ? 'riesgo' : 'inundacion', severity: sev, description: [r.access && PASS[r.access.pass] ? `${PASS[r.access.pass].t} (según el reporte ciudadano).` : '', r.description].filter(Boolean).join(' ') || 'Creado a partir de un reporte ciudadano.', auto: true, active: false, source: 'reporte' } });
   await api(`/api/admin/reports/${r.id}`, { method: 'PUT', body: { status: 'verificado', pointId: p.id } });
   r.status = 'verificado'; r.pointId = p.id; db.points.push(p); return p;
 }
@@ -811,7 +831,7 @@ function drawAll(withReports) {
   for (const r of db.rivers || []) map.addPolyline({ coords: r.coords, status: 'rio_' + r.status, flow: 'river', weight: 8, popup: `<b>${esc(r.name)}</b><br>${RIVER[r.status]}` });
   for (const r of db.routes) map.addPolyline({ coords: r.coords, status: 'ruta', flow: 'route', weight: 6, popup: `<b>${esc(r.name)}</b>` });
   for (const p of db.points) map.addMarker({ lat: p.lat, lng: p.lng, cls: p.severity + (p.active ? '' : ' muted'), icon: p.type, popup: `<b>${esc(p.name)}</b><br>${PTYPE[p.type]}${p.active === false ? ' · inactivo' : ''}` });
-  if (withReports) for (const r of db.reports || []) map.addMarker({ lat: r.lat, lng: r.lng, cls: 'report', icon: 'report', popup: `<b>Reporte · ${esc(r.status)}</b><br>${esc(r.street)}<br>${esc(r.description)}` });
+  if (withReports) for (const r of db.reports || []) map.addMarker({ lat: r.lat, lng: r.lng, cls: 'report', icon: 'report', popup: `<b>Reporte · ${esc(r.status)}</b><br>${esc(r.street)}${r.access ? `<br>${accessHtml(r.access, { small: true })}` : ''}${r.description ? `<br>${esc(r.description)}` : ''}` });
   if (drawCoords.length) {
     if (section === 'zones' && drawCoords.length > 2) map.addPolygon({ coords: drawCoords, severity: id('sev')?.value || 'alta', draft: true });
     else if (drawCoords.length > 1) map.addPolyline({ coords: drawCoords, status: section === 'routes' ? 'ruta' : section === 'rivers' ? 'rio_' + (id('status')?.value || 'normal') : 'inundada', flow: section === 'routes' ? 'route' : section === 'rivers' ? 'river' : null, weight: 6 });

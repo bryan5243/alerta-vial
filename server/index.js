@@ -214,21 +214,46 @@ app.get('/photos/:name', (req, res) => {
   res.set('Cache-Control', 'public, max-age=86400').type('image/jpeg').sendFile(f);
 });
 const reportLimiter = new Map();
+// Transitabilidad que indica quien reporta: estado del paso y qué vehículos pueden pasar
+const PASS = ['cerrada', 'altos', 'lento', 'normal'], CAN = ['pie', 'moto', 'auto', 'camioneta', 'pesado'];
+function accessOf(a) {
+  if (!a || !PASS.includes(a.pass)) return null;
+  return { pass: a.pass, can: a.pass === 'cerrada' ? [] : CAN.filter(v => Array.isArray(a.can) && a.can.includes(v)) };
+}
+// ¿Ya está registrado este lugar? Punto crítico a ≤ 80 m o reportes recientes (12 h) a ≤ 80 m: evita puntos repetidos
+const REP_NEAR_M = 80;
+const mDist = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lng - b.lng) * 111320 * Math.cos(a.lat * Math.PI / 180));
+function reportKnown(db, pos) {
+  let point = null;
+  for (const p of db.points || []) { const d = mDist(p, pos); if (d <= REP_NEAR_M && (!point || d < point.dist)) point = { id: p.id, name: p.name || 'Punto crítico', dist: Math.round(d), active: p.active !== false }; }
+  const reps = (db.reports || []).filter(r => ['pendiente', 'verificado'].includes(r.status) && Date.now() - new Date(r.createdAt) < 12 * 3600e3 && mDist(r, pos) <= REP_NEAR_M)
+    .sort((a, b) => mDist(a, pos) - mDist(b, pos));
+  return { point, reports: reps.length, report: reps[0] ? { id: reps[0].dupOf || reps[0].id } : null };
+}
+app.get('/api/public/report-check', (req, res) => {
+  const lat = +req.query.lat, lng = +req.query.lng;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: 'Coordenadas inválidas' });
+  const k = reportKnown(load(), { lat, lng });
+  res.json({ point: k.point, reports: k.reports });
+});
 app.post('/api/public/reports', (req, res) => {
   const ip = req.ip;
   const recent = (reportLimiter.get(ip) || []).filter(t => Date.now() - t < 10 * 60 * 1000);
   if (recent.length >= 5) return res.status(429).json({ error: 'Has enviado muchos reportes seguidos. Espera unos minutos.' });
   if (!featuresCfg(load()).reports) return res.status(403).json({ error: 'Los reportes ciudadanos están desactivados por ahora.' });
-  const { lat, lng, description, level, street, type } = req.body || {};
+  const { lat, lng, description, street, type } = req.body || {};
   if (typeof lat !== 'number' || typeof lng !== 'number') return res.status(400).json({ error: 'Toca el mapa para indicar el lugar del reporte.' });
   const photo = parsePhoto(req.body?.photo);
   if (!photo) return res.status(400).json({ error: 'Adjunta una fotografía del lugar: es obligatoria para comprobar el reporte.' });
-  if (!description || description.trim().length < 5) return res.status(400).json({ error: 'Describe brevemente qué está pasando (mínimo 5 letras).' });
+  const access = accessOf(req.body?.access);
+  if (!access) return res.status(400).json({ error: 'Indica si se puede pasar por la calle.' });
   const db = load();
   db.reports ||= [];
+  const known = reportKnown(db, { lat, lng });
   const report = { id: nextId('rep'), lat, lng, street: String(street || '').slice(0, 120),
-    description: String(description).slice(0, 400), level: 'moderado', // la ciudadanía ya no elige gravedad: todo reporte aceptado es un punto crítico de nivel medio
-    type: type === 'desborde' ? 'desborde' : 'inundacion',
+    description: String(description || '').trim().slice(0, 400), level: 'moderado', // la ciudadanía ya no elige gravedad: todo reporte aceptado es un punto crítico de nivel medio
+    type: type === 'desborde' ? 'desborde' : 'inundacion', access,
+    ...(known.point ? { nearPoint: known.point.id } : {}), ...(known.report ? { dupOf: known.report.id } : {}),
     status: 'pendiente', createdAt: new Date().toISOString() };
   report.photo = `/photos/${report.id}.jpg`;
   fs.mkdirSync(PHOTOS, { recursive: true });
