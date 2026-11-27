@@ -16,13 +16,17 @@ export function licorSummary(pts, now) {
   const step = d.length ? Math.max(300000, Math.min(3600000, d[Math.floor(d.length / 2)])) : 3600000;
   const sum = h => r1(pts.reduce((s, [t, v]) => s + (t + step > now - h * 3600000 ? Math.max(0, v) : 0), 0));
   const [lt, lv] = pts.at(-1), end = lt + step, age = Math.max(0, Math.round((now - end) / 60000));
-  return { lastMm: r1(Math.max(0, lv)), lastFrom: lt, lastTo: end, stepMin: Math.round(step / 60000), ageMin: age, rain3h: sum(3), rain6h: sum(6), rain12h: sum(12), rain24h: sum(24),
-    wet: age <= LICOR.freshMin && lv >= LICOR.wetMm };
+  const s = { lastMm: r1(Math.max(0, lv)), lastFrom: lt, lastTo: end, stepMin: Math.round(step / 60000), ageMin: age, rain30m: sum(0.5), rain1h: sum(1), rain3h: sum(3), rain6h: sum(6), rain12h: sum(12), rain24h: sum(24) };
+  return { ...s, wet: licorWet(s) };
 }
+// "Llueve en la estación": con lecturas cada 5 min, ≥ 0,4 mm en la última media hora (≈ 0,8 mm/h) y el dato de hace ≤ 20 min;
+// si publica por hora, ≥ 0,5 mm en su última hora y el dato de hace ≤ 90 min
+export const licorWet = s => s.stepMin < 60 ? s.ageMin <= 20 && s.rain30m >= 0.4 : s.ageMin <= LICOR.freshMin && s.lastMm >= LICOR.wetMm;
 const hm = ms => new Date(ms - 5 * 3600000).toISOString().slice(11, 16);
 export function licorDetail(s) {
-  const last = s.lastMm > 0 ? `llovió ${s.lastMm} mm entre las ${hm(s.lastFrom)} y las ${hm(s.lastTo)}` : `sin lluvia entre las ${hm(s.lastFrom)} y las ${hm(s.lastTo)}`;
-  return `${last[0].toUpperCase()}${last.slice(1)} · últimas 3 h: ${s.rain3h} mm · 24 h: ${s.rain24h} mm · la estación está en la parte alta (~450 m) y publica la lluvia por hora (dato de hace ${s.ageMin} min)`;
+  const h1 = s.stepMin < 60 ? s.rain1h : s.lastMm;
+  const last = h1 > 0 ? `Llovió ${h1} mm en la última hora${s.stepMin < 60 && s.rain30m > 0 ? ` (${s.rain30m} mm en la última media hora)` : ''}` : 'Sin lluvia en la última hora';
+  return `${last} · últimas 3 h: ${s.rain3h} mm · 24 h: ${s.rain24h} mm · lectura de las ${hm(s.lastTo)} (hace ${s.ageMin} min) · la estación está en la parte alta (~450 m)`;
 }
 let c = { checked: 0, cookie: '', sum: null, error: '', okAt: 0 };
 export async function licorSource() {
@@ -44,6 +48,6 @@ export async function licorSource() {
     } catch (e) { c.error = e.name === 'TimeoutError' ? 'no respondió a tiempo' : e.message; }
   }
   if (!c.sum || now - c.okAt > 3 * 3600000) return { ...base, ok: false, error: c.error || 'sin datos de la estación' };
-  const s = { ...c.sum }; s.ageMin = Math.max(0, Math.round((now - s.lastTo) / 60000)); s.wet = s.ageMin <= LICOR.freshMin && s.lastMm >= LICOR.wetMm;
+  const s = { ...c.sum }; s.ageMin = Math.max(0, Math.round((now - s.lastTo) / 60000)); s.wet = licorWet(s);
   return { ...base, ok: true, at: new Date(s.lastTo).toISOString(), ...s, detail: licorDetail(s) };
 }
