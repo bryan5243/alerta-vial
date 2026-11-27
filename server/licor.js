@@ -5,8 +5,8 @@
 export const LICOR = { metric: 'com.onset.sensordata.rain_si', base: 'https://www.licor.cloud', ttl: 300000, wetMm: 0.5, freshMin: 90 };
 // Estaciones (tablero público + canal de lluvia). "note" se agrega al detalle.
 export const LICOR_STATIONS = [
-  { key: 'licor1', name: 'Estación HOBO 1 (LI-COR) · pluviómetro', dashboard: '5e1f6cd5-0815-49b9-9d1a-a8777d544579', rain: 'f869d179-1360-4b20-9eeb-e302646514e4', note: 'la estación está en la parte alta (~450 m)' },
-  { key: 'licor2', name: 'Estación Ducupalta (LI-COR) · pluviómetro', dashboard: 'ac7e885a-8b1d-4add-b38b-917a7973446a', rain: '326ce07c-c41d-45a9-ba50-0329483ace24', note: 'estación de Ducupalta (~100 m)' },
+  { key: 'licor1', name: 'Estación HOBO 1 (LI-COR) · pluviómetro', dashboard: '5e1f6cd5-0815-49b9-9d1a-a8777d544579', rain: 'f869d179-1360-4b20-9eeb-e302646514e4', note: 'la estación está en la parte alta (~450 m)', zone: 'alta' },
+  { key: 'licor2', name: 'Estación Ducupalta (LI-COR) · pluviómetro', dashboard: 'ac7e885a-8b1d-4add-b38b-917a7973446a', rain: '326ce07c-c41d-45a9-ba50-0329483ace24', note: 'estación de Ducupalta (~100 m)', zone: 'baja' },
 ];
 const UA = 'Mozilla/5.0 (compatible; AlertaVial/1.0)';
 const r1 = x => Math.round(x * 10) / 10;
@@ -25,6 +25,8 @@ export function licorSummary(pts, now) {
 }
 // "Llueve en la estación": con lecturas cada 5 min, ≥ 0,4 mm en la última media hora (≈ 0,8 mm/h) y el dato de hace ≤ 20 min;
 // si publica por hora, ≥ 0,5 mm en su última hora y el dato de hace ≤ 90 min; un canal diario no dice si llueve ahora
+// "Seco en la estación": dato reciente y nada (o casi nada) en la última media hora / última hora
+export const licorDry = s => s.stepMin < 60 ? s.ageMin <= 30 && s.rain30m < 0.2 : s.stepMin <= 60 && s.ageMin <= LICOR.freshMin && s.lastMm < 0.2;
 export const licorWet = s => s.stepMin < 60 ? s.ageMin <= 20 && s.rain30m >= 0.4 : s.stepMin <= 60 && s.ageMin <= LICOR.freshMin && s.lastMm >= LICOR.wetMm;
 const hm = ms => new Date(ms - 5 * 3600000).toISOString().slice(11, 16);
 export function licorDetail(s, note = '') {
@@ -55,6 +57,8 @@ export async function licorSource(st, i = 0) {
     } catch (e) { c.error = e.name === 'TimeoutError' ? 'no respondió a tiempo' : e.message; }
   }
   if (!c.sum || now - c.okAt > 3 * 3600000) return { ...base, ok: false, error: c.error || 'sin datos de la estación' };
-  const s = { ...c.sum }; s.ageMin = Math.max(0, Math.round((now - s.lastTo) / 60000)); s.wet = licorWet(s);
-  return { ...base, ok: true, at: new Date(s.lastTo).toISOString(), ...s, detail: licorDetail(s, st.note) };
+  const s = { ...c.sum }; s.ageMin = Math.max(0, Math.round((now - s.lastTo) / 60000)); s.wet = licorWet(s); s.dry = !s.wet && licorDry(s);
+  // El estado de la tarjeta muestra lo que mide la estación (su "intensity" queda en 0: no decide el nivel por sí sola)
+  const status = s.wet ? `Lloviendo en la estación · ${s.stepMin < 60 ? s.rain1h : s.lastMm} mm en la última hora` : null;
+  return { ...base, ok: true, zone: st.zone || 'alta', at: new Date(s.lastTo).toISOString(), ...s, status, detail: licorDetail(s, st.note) };
 }
