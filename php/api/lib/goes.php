@@ -153,11 +153,11 @@ function goes_glm(float $lat, float $lng): array {
             }
           }
           $c['seen'][] = $k; $c['lastFile'] = max($c['lastFile'] ?? 0, $t);
-        } catch (Throwable $e) { $c['seen'][] = $k; }
+        } catch (Throwable $e) { $c['seen'][] = $k; $fileErr = $e->getMessage(); }
       }
       $c['seen'] = array_slice($c['seen'] ?? [], -120);
       $c['strikes'] = array_values(array_filter($c['strikes'], fn($s) => $s['t'] >= $now - GLM_KEEP_MS));
-      $c['lastOk'] = $now; $c['error'] = '';
+      $c['lastOk'] = $now; $c['error'] = isset($fileErr) ? "no se pudo leer un archivo del satélite ($fileErr)" : '';
     } catch (Throwable $e) { $c['error'] = $e->getMessage(); }
     cache_put('glm', $c);
   }
