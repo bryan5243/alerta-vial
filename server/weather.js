@@ -571,7 +571,12 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, at, v
   Object.assign(w, describe(w));
   if (intensity !== w.intensity) Object.assign(w, { intensity, raining: intensity > 0, condition: intensity ? INT_TXT[intensity] : w.condition });
   // Sin lluvia: de día y despejado es "Soleado"; de noche, "Noche despejada"
+  // Modelos con cielo cubierto pero el sol pasando entre las nubes: "Resplandor"
+  if (!w.intensity && w.sun?.sky === 'parcial' && w.condition === 'Nublado') w.condition = 'Resplandor';
+  if (!w.intensity && w.sun?.sky === 'soleado' && w.condition === 'Nublado') w.condition = 'Soleado';
   if (!w.intensity && w.sun && ['Despejado', 'Parcialmente nublado'].includes(w.condition) && (w.condition === 'Despejado' || w.sun.sky === 'soleado')) w.condition = w.sun.sky === 'noche' ? 'Noche despejada' : 'Soleado';
+  // Sol muy fuerte (UV muy alto o radiación de cielo casi limpio): "Sol intenso"
+  if (w.condition === 'Soleado' && ((w.sun?.uvIndex ?? 0) >= 8 || (w.sun?.radiation ?? 0) >= 800)) w.condition = 'Sol intenso';
   w.outlook = outlookOf(w, { okM, metar, need, base, radarDry });
   if (w.outlook.level !== 'calma' && w.nowcast.note) w.outlook.reasons.push(w.nowcast.note);
   w.thunder = thunderOf(w, { okM, metar, radar, wttr, lightning, sat, extra });
@@ -777,7 +782,10 @@ function sunInfo(s, cloud, intensity) {
   const night = s.isDay === 0, c = cloud ?? 0;
   // Con mucha radiación o UV alto el sol "pega fuerte": es soleado aunque los modelos reporten algo de nube alta (c < 80)
   const strongSun = !night && c < 80 && ((s.radiation ?? 0) >= 550 || (s.uvIndex ?? 0) >= 4.5);
-  const sky = intensity > 0 ? 'lluvia' : night ? 'noche' : strongSun ? 'soleado' : c >= 80 ? 'nublado' : c >= 40 ? 'parcial' : 'soleado';
+  // Con el cielo cubierto según los modelos (≥ 80 %) pero el sol pasando (radiación ≥ 450 W/m² o UV ≥ 6), las nubes son finas o
+  // dejan claros: no es "nublado" sino sol entre nubes. (Con el cielo de verdad cubierto la radiación cae a 100–300 W/m².)
+  const sunThrough = !night && ((s.radiation ?? 0) >= 450 || (s.uvIndex ?? 0) >= 6);
+  const sky = intensity > 0 ? 'lluvia' : night ? 'noche' : strongSun ? 'soleado' : c >= 80 ? (sunThrough ? 'parcial' : 'nublado') : c >= 40 ? 'parcial' : 'soleado';
   const uv = s.uvIndex == null ? null : Math.round(s.uvIndex * 10) / 10;
   return { ...s, uvIndex: uv, uvMax: s.uvMax == null ? null : Math.round(s.uvMax * 10) / 10, radiation: s.radiation == null ? null : Math.round(s.radiation),
     sky, uv: uvLevel(night ? 0 : uv), uvMaxLevel: uvLevel(s.uvMax) };
