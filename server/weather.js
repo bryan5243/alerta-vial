@@ -494,8 +494,9 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
   const stWet = !satDry && (lowWet || (highWet && !highBlocked)); // con el cielo de la ciudad despejado (satélite), esa lluvia quedó en los cerros
   if (highBlocked || (highWet && satDry)) stations = stations.map(x => x?.ok && x.zone !== 'baja' && x.wet ? { ...x, detail: `${x.detail} · llueve en la parte alta, pero ${satDry ? 'el satélite ve despejada la ciudad' : lowDry ? 'Ducupalta (parte baja) está seca' : 'el aeropuerto no ve lluvia'}: no cuenta para la ciudad; vigila los ríos` } : x);
   const radarDry = (radar?.ok && !radar.intensity && !radar.near) || satDry;
-  const corro = (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || (metar.near && !radarDry))) || satWet || stWet;
-  if (metar?.ok && !metar.intensity && metar.near && radarDry) metar = { ...metar, detail: `${metar.detail} · el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no la ve cerca de la ciudad'}: no respalda a los pronósticos` };
+  // "Lluvia en los alrededores" del aeropuerto (VCSH) tampoco respalda si Ducupalta (parte baja) está seca: esa lluvia está en los cerros
+  const corro = (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || (metar.near && !radarDry && !lowDry))) || satWet || stWet;
+  if (metar?.ok && !metar.intensity && metar.near && (radarDry || lowDry)) metar = { ...metar, detail: `${metar.detail} · ${radarDry ? `el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no la ve cerca de la ciudad'}` : 'Ducupalta (parte baja) está seca'}: no respalda a los pronósticos` };
   // OpenWeatherMap: su "clima actual" es un modelo (marcaba lluvia con cielo seco). Su lluvia solo cuenta si el radar o el aeropuerto la confirman.
   if (owm?.ok && owm.intensity && !corro) owm = { ...owm, intensity: 0, rainNow: 0, detail: `${owm.detail} · el radar y el aeropuerto no ven lluvia: no cuenta` };
   // Y aun confirmada, OWM no puede decir que llueve más fuerte que lo que ven el radar o el aeropuerto (si solo la ven cerca: leve).
@@ -525,7 +526,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
   // El radar (imagen reciente) no ve lluvia sobre la ciudad ni cerca y ninguna otra observación la ve: los modelos son pronóstico
   // y por sí solos no pueden decir "está lloviendo ahora" (marcaban lluvia leve, y el semáforo en naranja, con el cielo solo nublado).
   // Lo mismo si los dos pluviómetros/observaciones junto a la ciudad están secos a la vez: Ducupalta (parte baja) y el aeropuerto.
-  const groundDry = lowDry && !(metar?.ok && (metar.intensity || metar.near)); // Ducupalta seca y el aeropuerto sin lluvia (o sin reporte: de noche no opera)
+  const groundDry = lowDry && !(metar?.ok && metar.intensity); // Ducupalta seca y el aeropuerto sin lluvia (o sin reporte: de noche no opera)
   if ((radarDry || groundDry) && !corro && modelSrc.intensity > 0)
     Object.assign(modelSrc, { intensity: 0, rainNow: 0, detail: `${modelSrc.detail} · ${radarDry ? `el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca'}` : 'Ducupalta (pluviómetro) no ve lluvia'}: no cuenta como lluvia ahora` });
   let sources = [modelSrc, metar, ...stations, owm, radar, sat, wttr, lightning, ...extra].filter(Boolean);
