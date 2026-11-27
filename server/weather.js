@@ -286,10 +286,9 @@ export function radarEcho(img, px, py, lat, z = 7) {
 // RainViewer no tiene radares en Ecuador ni en Perú (rainviewer.com/coverage.html): ahí su imagen sale vacía aunque llueva,
 // y el sistema creía que "el radar no ve lluvia". En esa zona el radar no se usa.
 export const radarBlind = (lat, lng) => lat > -18.5 && lat < 1.6 && lng > -81.5 && lng < -68.5;
-const RADAR_BLIND = 'RainViewer no tiene radares en Ecuador ni en Perú: su imagen sale vacía aunque llueva, así que esta fuente no se usa aquí';
 async function radarSource(lat, lng) {
   const base = { id: 'radar', kind: 'observación', name: 'Radar de lluvia (RainViewer)' };
-  if (radarBlind(lat, lng)) return { ...base, ok: false, disabled: true, intensity: 0, error: RADAR_BLIND };
+  if (radarBlind(lat, lng)) return null; // ni se usa ni se muestra: lo reemplaza el satélite (sat.js)
   const ck = `${lat},${lng}`;
   if (radarCache.data && radarCache.key === ck && Date.now() - radarCache.at < 4 * 60 * 1000) return radarCache.data;
   let d;
