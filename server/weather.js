@@ -485,8 +485,14 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
   // si el radar, que mira la ciudad y sus alrededores, no ve nada: esa lluvia está lejos (cerros, campo).
   // Sin radar (Ecuador), el satélite hace su papel a medias: cielo sin nubes de lluvia = seco; nubes de tormenta sobre la ciudad = respaldo.
   const satDry = satDryOf(sat), satWet = satWetOf(sat);
-  // Pluviómetro de la estación (parte alta): si su última hora tuvo lluvia medible, respalda a los pronósticos (como la lluvia cerca del aeropuerto)
-  const stWet = stations.some(x => x?.ok && x.wet) && !satDry; // con el cielo de la ciudad despejado (satélite), esa lluvia quedó en los cerros
+  // Pluviómetros LI-COR. La estación de la parte baja (Ducupalta, cerca del nivel de la ciudad) manda: si llueve ahí respalda
+  // a los pronósticos y si está seca cuenta como observación "no llueve". La de la parte alta solo respalda si ni la parte baja
+  // ni el aeropuerto dicen que está seco: si no, esa lluvia está en los cerros (avisa de lo que bajará por los ríos, no de la ciudad).
+  const sts = stations.filter(x => x?.ok), lowWet = sts.some(x => x.zone === 'baja' && x.wet), lowDry = !lowWet && sts.some(x => x.zone === 'baja' && x.dry);
+  const metarDry = metar?.ok && !metar.intensity && !metar.near, highWet = sts.some(x => x.zone !== 'baja' && x.wet);
+  const highBlocked = highWet && !lowWet && (lowDry || metarDry);
+  const stWet = !satDry && (lowWet || (highWet && !highBlocked)); // con el cielo de la ciudad despejado (satélite), esa lluvia quedó en los cerros
+  if (highBlocked || (highWet && satDry)) stations = stations.map(x => x?.ok && x.zone !== 'baja' && x.wet ? { ...x, detail: `${x.detail} · llueve en la parte alta, pero ${satDry ? 'el satélite ve despejada la ciudad' : lowDry ? 'Ducupalta (parte baja) está seca' : 'el aeropuerto no ve lluvia'}: no cuenta para la ciudad; vigila los ríos` } : x);
   const radarDry = (radar?.ok && !radar.intensity && !radar.near) || satDry;
   const corro = (radar?.ok && (radar.intensity > 0 || radar.near)) || (metar?.ok && (metar.intensity > 0 || (metar.near && !radarDry))) || satWet || stWet;
   if (metar?.ok && !metar.intensity && metar.near && radarDry) metar = { ...metar, detail: `${metar.detail} · el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no la ve cerca de la ciudad'}: no respalda a los pronósticos` };
@@ -498,11 +504,11 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
     if (owm.intensity > obsMax) owm = { ...owm, intensity: obsMax, rainNow: Math.min(owm.rainNow || 0, INT_MM[obsMax]), detail: `${owm.detail} · el radar/aeropuerto ven ${INT_TXT[obsMax].toLowerCase()}: se cuenta así` };
   }
   // Observación que dice "no llueve": radar sin ecos cerca o aeropuerto sin precipitación
-  const obsDry = !corro && ((radar?.ok && !radar.intensity && !radar.near) || (metar?.ok && !metar.intensity && !metar.near) || satDry);
+  const obsDry = !corro && ((radar?.ok && !radar.intensity && !radar.near) || (metar?.ok && !metar.intensity && !metar.near) || satDry || lowDry);
   // Con Open-Meteo (9 modelos) hacen falta 3 que coincidan; si solo responden 1-2 modelos, no confirman lluvia sin una observación.
   // Si una observación dice que no llueve, hace falta que la mitad de los modelos vea lluvia.
   // Excepción: si el modelo y wttr.in coinciden en lluvia moderada o más (≥ 2,5 mm/h), se acepta aunque no haya radar (no es una simple llovizna de pronóstico).
-  const fcStrong = !obsDryPre(radar, metar, sat) && wttr?.ok && wttr.mm >= 2.5 && okM.some(m => m.rainNow >= 2.5);
+  const fcStrong = !obsDryPre(radar, metar, sat) && !lowDry && wttr?.ok && wttr.mm >= 2.5 && okM.some(m => m.rainNow >= 2.5);
   let need = okM.length >= 6 ? 3 : okM.length >= 3 ? 2 : corro || fcStrong ? 1 : 99;
   if (obsDry) need = Math.max(need, Math.ceil(okM.length * 0.6), 3);
   const kth = arr => { const v = arr.slice().sort((x, y) => y - x); return v.length >= need ? v[need - 1] : 0; };
@@ -514,7 +520,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
   const modelSrc = { id: 'modelos', kind: 'pronóstico', name: `${provs} · ${okM.length} de ${models.length} modelos`, ok: okM.length > 0,
     at: base?.observedAt, intensity: mInt, rainNow: mRain,
     detail: !okM.length ? `Sin conexión con los pronósticos (${[...new Set(models.map(m => m.error).filter(Boolean))].join(' · ')})`
-      : `${stale ? `Dato de Open-Meteo de hace ${stale.staleMin} min (${stale.staleWhy}) · ` : ''}${raining.length} de ${okM.length} modelos ven lluvia medible${raining.length ? ` (${raining.map(m => m.name).join(', ')})` : ''}; ${need > okM.length ? (okM.length < 3 ? 'con tan pocos modelos hace falta que el radar o el aeropuerto confirmen' : 'el radar/aeropuerto no ven lluvia: hace falta la mitad de los modelos') : `hacen falta ${need}`}${obsDry && need <= okM.length ? ' (radar/aeropuerto secos)' : ''}${clear && raining.length ? ' · no cuenta: el cielo está casi despejado' : ''} · nubosidad ${base?.cloudCover ?? '—'} %`,
+      : `${stale ? `Dato de Open-Meteo de hace ${stale.staleMin} min (${stale.staleWhy}) · ` : ''}${raining.length} de ${okM.length} modelos ven lluvia medible${raining.length ? ` (${raining.map(m => m.name).join(', ')})` : ''}; ${need > okM.length ? (okM.length < 3 ? 'con tan pocos modelos hace falta que el radar o el aeropuerto confirmen' : 'el radar/aeropuerto no ven lluvia: hace falta la mitad de los modelos') : `hacen falta ${need}`}${obsDry && need <= okM.length ? ` (${lowDry ? 'Ducupalta/aeropuerto' : 'radar/aeropuerto'} secos)` : ''}${clear && raining.length ? ' · no cuenta: el cielo está casi despejado' : ''} · nubosidad ${base?.cloudCover ?? '—'} %`,
     error: okM.length ? undefined : models[0]?.error, models: models.map(m => ({ name: m.name, ok: m.ok, rainNow: m.rainNow ?? 0, intensity: m.intensity || 0, error: m.error, stale: m.stale ? m.staleMin : undefined })) };
   // El radar (imagen reciente) no ve lluvia sobre la ciudad ni cerca y ninguna otra observación la ve: los modelos son pronóstico
   // y por sí solos no pueden decir "está lloviendo ahora" (marcaban lluvia leve, y el semáforo en naranja, con el cielo solo nublado).
