@@ -529,7 +529,13 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
   const groundDry = lowDry && !(metar?.ok && metar.intensity); // Ducupalta seca y el aeropuerto sin lluvia (o sin reporte: de noche no opera)
   if ((radarDry || groundDry) && !corro && modelSrc.intensity > 0)
     Object.assign(modelSrc, { intensity: 0, rainNow: 0, detail: `${modelSrc.detail} · ${radarDry ? `el ${satDry ? 'satélite no ve nubes de lluvia sobre la ciudad' : 'radar no ve lluvia sobre la ciudad ni cerca'}` : 'Ducupalta (pluviómetro) no ve lluvia'}: no cuenta como lluvia ahora` });
-  let sources = [modelSrc, metar, ...stations, owm, radar, sat, wttr, lightning, ...extra].filter(Boolean);
+  // Solo valores reales de Santa Rosa deciden si llueve ahora (pedido del 27-nov-2026): aeropuerto, pluviómetros, satélite, rayos,
+  // equipo. Los modelos de Open-Meteo quedan solo como pronóstico de las próximas horas; OpenWeatherMap y wttr.in ya no se muestran.
+  if (modelSrc.intensity > 0) Object.assign(modelSrc, { intensity: 0, rainNow: 0, detail: `${modelSrc.detail} · es pronóstico: no decide si llueve ahora` });
+  modelSrc.forecastOnly = true;
+  // El pluviómetro de la parte baja (Ducupalta) sí dice cuánto llueve: su lluvia de la última hora da la intensidad
+  stations = stations.map(x => x?.ok && x.zone === 'baja' && x.wet && !satDry ? (mm => ({ ...x, intensity: mm >= 7.6 ? 3 : mm >= 2.5 ? 2 : 1, rainNow: r1(mm) }))(Math.max(x.stepMin < 60 ? x.rain1h || 0 : x.lastMm || 0, (x.rain30m || 0) * 2)) : x);
+  let sources = [modelSrc, metar, ...stations, radar, sat, lightning, ...extra].filter(Boolean);
   // El equipo marcó "no llueve" en el centro: lo ven en la calle, así que ni los pronósticos (modelos, OWM, wttr) ni el aeropuerto
   // (a unos 4 km) ni el radar (píxeles de ~1 km) encienden "lloviendo" mientras dure la marca. Los reportes ciudadanos siguen contando.
   if (extra.some(x => x.id === 'equipo' && x.ok && x.dry))
@@ -542,6 +548,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
   // Milímetros de las últimas/próximas horas: el valor en que coinciden los modelos; si responden muy pocos, el mayor de ellos
   const pick = k => { const v = okM.map(m => m[k] || 0); return r1(v.length >= need ? kth(v) : Math.max(0, ...v)); };
   const baseCode = base?.weatherCode ?? 0, baseRainy = baseCode >= 50; // códigos de lluvia del modelo
+  const gauge = stations.find(x => x?.ok && x.zone === 'baja' && x.rain3h != null);
   const w = {
     ok: true, sources, checkedAt: at, modelsNeeded: need,
     decidedBy: intensity > 0 ? top.name : null,
@@ -550,7 +557,9 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
     // Temperatura: la medida en el aeropuerto si hay reporte reciente; si no, la del modelo
     temperature: (metar?.ok ? metar.temperature : null) ?? base?.temperature ?? okM.find(m => m.temperature != null)?.temperature ?? owm?.temperature, cloudCover: Math.max(base?.cloudCover ?? 0, owm?.cloudCover ?? 0, intensity ? 95 : 0),
     rainNow: intensity ? r1(Math.max(...live.map(s => (s.intensity ? s.rainNow || 0 : 0)))) : 0,
-    rainPast3h: Math.max(pick('rainPast3h'), intensity >= 2 ? INT_MM[intensity] : 0), rainPast6h: pick('rainPast6h'), rainPast12h: pick('rainPast12h'), wetHours: pick('wetHours'),
+    // Acumulados: los mide el pluviómetro de la parte baja (Ducupalta); sin él, lo observado por el sistema (registro, ver withHistory)
+    ...(gauge ? { rainPast3h: Math.max(gauge.rain3h || 0, intensity >= 2 ? INT_MM[intensity] : 0), rainPast6h: gauge.rain6h || 0, rainPast12h: gauge.rain12h || 0, wetHours: 0 }
+      : { rainPast3h: intensity >= 2 ? INT_MM[intensity] : 0, rainPast6h: 0, rainPast12h: 0, wetHours: 0 }),
     rainNext3h: pick('rainNext3h'), rainNext24h: pick('rainNext24h'),
     probNext3h: null, maxProbability24h: null,
     // Si nadie confirma lluvia, el ícono no puede decir "llovizna": se muestra nublado (3) o el cielo del modelo.
@@ -906,7 +915,8 @@ export function levelWhy(w, cfg) {
   const p3 = w.rainPast3h || 0, p6 = w.rainPast6h || 0, p12 = w.rainPast12h || 0, wet = w.wetHours || 0, now = w.rainNow || 0;
   const it = ['', 'lluvia leve', 'lluvia moderada', 'lluvia fuerte'][i];
   // Los acumulados solo cuentan mientras sigue lloviendo: cuando para, el semáforo baja de a un color (stepDown en index.js).
-  if (!i) return (w.probNext3h ?? 0) >= 80 && w.rainNext3h >= t / 2 ? { level: 'amarilla', why: `lluvia casi segura en las próximas 3 h (${w.probNext3h} %)` } : { level: 'normal', why: '' };
+  // Sin lluvia medida no hay color: el pronóstico ya no sube el semáforo (solo valores reales, 27-nov-2026); queda como aviso
+  if (!i) return { level: 'normal', why: '' };
   // Roja: aguacero fuerte ahora, o lluvia moderada/fuerte sobre mucha agua acumulada. Con lluvia leve ya no se queda en roja
   // por lo que cayó antes: baja a naranja (de a un color cada 45 min) aunque siga lloviznando.
   if (now >= t * 3) return { level: 'roja', why: `${it} de ${mmTxt(now)}/h` };
