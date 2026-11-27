@@ -53,6 +53,23 @@ function photos_dir(): string { return data_dir() . '/photos'; }
 // En la base se guarda "/photos/x.jpg" (igual que Node); al entregarlo se antepone la subcarpeta si la app no está en la raíz
 function base_path(): string { $b = rtrim(str_replace('\\', '/', dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '/api/index.php'))), '/'); return $b === '.' ? '' : $b; }
 function rep_out(array $r): array { if (!empty($r['photo']) && $r['photo'][0] === '/') $r['photo'] = base_path() . $r['photo']; return $r; }
+// Transitabilidad que indica quien reporta: estado del paso y qué vehículos pueden pasar
+const REP_PASS = ['cerrada', 'altos', 'lento', 'normal']; const REP_CAN = ['pie', 'moto', 'auto', 'camioneta', 'pesado']; const REP_NEAR_M = 80;
+function access_of($a): ?array {
+  if (!is_array($a) || !in_array($a['pass'] ?? null, REP_PASS, true)) return null;
+  $can = is_array($a['can'] ?? null) ? $a['can'] : [];
+  return ['pass' => $a['pass'], 'can' => $a['pass'] === 'cerrada' ? [] : array_values(array_filter(REP_CAN, fn($v) => in_array($v, $can, true)))];
+}
+function m_dist($a, $b): float { return hypot(($a['lat'] - $b['lat']) * 111320, ($a['lng'] - $b['lng']) * 111320 * cos($a['lat'] * M_PI / 180)); }
+// ¿Ya está registrado este lugar? Punto crítico a ≤ 80 m o reportes recientes (12 h) a ≤ 80 m: evita puntos repetidos
+function report_known(array $db, array $pos): array {
+  $point = null;
+  foreach ($db['points'] ?? [] as $p) { if (!isset($p['lat'], $p['lng'])) continue; $d = m_dist($p, $pos);
+    if ($d <= REP_NEAR_M && (!$point || $d < $point['dist'])) $point = ['id' => $p['id'], 'name' => ($p['name'] ?? '') ?: 'Punto crítico', 'dist' => (int)round($d), 'active' => ($p['active'] ?? true) !== false]; }
+  $reps = array_values(array_filter($db['reports'] ?? [], fn($r) => in_array($r['status'] ?? '', ['pendiente', 'verificado'], true) && now_ms() - strtotime($r['createdAt']) * 1000 < 12 * 3600000 && m_dist($r, $pos) <= REP_NEAR_M));
+  usort($reps, fn($a, $b) => m_dist($a, $pos) <=> m_dist($b, $pos));
+  return ['point' => $point, 'reports' => count($reps), 'report' => $reps ? ['id' => ($reps[0]['dupOf'] ?? '') ?: $reps[0]['id']] : null];
+}
 function parse_photo($d): ?string {
   if (!is_string($d) || !preg_match('#^data:image/jpeg;base64,([A-Za-z0-9+/=]+)$#', $d, $m)) return null;
   $buf = base64_decode($m[1], true);
@@ -222,11 +239,15 @@ try {
     if (!is_num($b['lat'] ?? null) || !is_num($b['lng'] ?? null)) fail(400, 'Toca el mapa para indicar el lugar del reporte.');
     $photo = parse_photo($b['photo'] ?? null);
     if ($photo === null) fail(400, 'Adjunta una fotografía del lugar: es obligatoria para comprobar el reporte.');
-    if (mb_strlen(trim((string)($b['description'] ?? ''))) < 5) fail(400, 'Describe brevemente qué está pasando (mínimo 5 letras).');
+    $access = access_of($b['access'] ?? null);
+    if (!$access) fail(400, 'Indica si se puede pasar por la calle.');
     db_lock(); $db = &db(); $db['reports'] ??= [];
+    $known = report_known($db, ['lat' => (float)$b['lat'], 'lng' => (float)$b['lng']]);
     // la ciudadanía ya no elige gravedad: todo reporte aceptado es un punto crítico de nivel medio
-    $r = ['id' => next_id('rep'), 'lat' => $b['lat'], 'lng' => $b['lng'], 'street' => s_val($b['street'] ?? '', 120), 'description' => s_val($b['description'], 400),
-      'level' => 'moderado', 'type' => ($b['type'] ?? '') === 'desborde' ? 'desborde' : 'inundacion', 'status' => 'pendiente', 'createdAt' => now_iso()];
+    $r = ['id' => next_id('rep'), 'lat' => $b['lat'], 'lng' => $b['lng'], 'street' => s_val($b['street'] ?? '', 120), 'description' => s_val(trim((string)($b['description'] ?? '')), 400),
+      'level' => 'moderado', 'type' => ($b['type'] ?? '') === 'desborde' ? 'desborde' : 'inundacion', 'access' => $access]
+      + ($known['point'] ? ['nearPoint' => $known['point']['id']] : []) + ($known['report'] ? ['dupOf' => $known['report']['id']] : [])
+      + ['status' => 'pendiente', 'createdAt' => now_iso()];
     $r['photo'] = '/photos/' . $r['id'] . '.jpg';
     @mkdir(photos_dir(), 0775, true);
     if (file_put_contents(photos_dir() . '/' . $r['id'] . '.jpg', $photo) === false) fail(500, 'No se pudo guardar la fotografía. Intenta otra vez.');
@@ -245,6 +266,11 @@ try {
     header('Content-Type: image/jpeg'); header('Cache-Control: public, max-age=86400'); header('Content-Length: ' . filesize($file)); readfile($file); exit;
   }
   if ($route === 'public/rev' && $method === 'GET') out(['rev' => (cache_get('rev')['rev'] ?? 0), 'mapVersion' => db_load()['config']['mapVersion'] ?? 0]);
+  if ($route === 'public/report-check' && $method === 'GET') {
+    if (!is_numeric($_GET['lat'] ?? null) || !is_numeric($_GET['lng'] ?? null)) fail(400, 'Coordenadas inválidas');
+    $k = report_known(db_load(), ['lat' => (float)$_GET['lat'], 'lng' => (float)$_GET['lng']]);
+    out(['point' => $k['point'], 'reports' => $k['reports']]);
+  }
   if ($route === 'public/near' && $method === 'GET') {
     $lat = (float)($_GET['lat'] ?? 'x'); $lng = (float)($_GET['lng'] ?? 'x');
     if (!is_numeric($_GET['lat'] ?? null) || !is_numeric($_GET['lng'] ?? null) || abs($lat) > 90 || abs($lng) > 180) fail(400, 'Coordenadas inválidas');
