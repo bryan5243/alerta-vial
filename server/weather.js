@@ -165,6 +165,7 @@ async function metnoSource(lat, lng) {
 }
 
 // METAR: reporte del aeropuerto. Ej. "SERO 142300Z 24005KT 3000 +TSRA BKN010CB 24/23 Q1010"
+const CLOUD_TXT = c => (c >= 100 ? 'cielo cubierto' : c >= 75 ? 'mayormente nublado' : c >= 45 ? 'parcialmente nublado' : c > 0 ? 'pocas nubes' : 'cielo despejado');
 export function parseMetar(raw) {
   const body = String(raw || '').split(/\sRMK\s/)[0];
   let intensity = 0, near = false, txt = '';
@@ -194,6 +195,13 @@ export function metarAir(body) {
   }
   const w = /\b(?:\d{3}|VRB)(\d{2,3})(?:G\d{2,3})?(KT|MPS)\b/.exec(body);
   if (w) out.wind = Math.round(+w[1] * (w[2] === 'KT' ? 1.852 : 3.6));
+  // Nubes que ve el aeropuerto: FEW 1–2/8, SCT 3–4/8, BKN 5–7/8, OVC 8/8 (VV = cielo tapado por niebla). CAVOK/NSC/SKC = sin nubes.
+  const OK = { FEW: 20, SCT: 45, BKN: 75, OVC: 100, VV: 100 };
+  for (const g of body.split(/\s+/)) {
+    const c = /^(FEW|SCT|BKN|OVC|VV)(\d{3}|\/\/\/)/.exec(g);
+    if (c) out.cloud = Math.max(out.cloud ?? 0, OK[c[1]]);
+    else if (/^(CAVOK|NSC|SKC|CLR|NCD)$/.test(g)) out.cloud = out.cloud ?? 0;
+  }
   return out;
 }
 async function metarSource(station) {
@@ -215,8 +223,8 @@ async function metarSource(station) {
     const fresh = ageMin <= 90;
     d = { ...base, ok: fresh, stale: !fresh, at: last.at.toISOString(), ageMin, raw: last.raw, intensity: fresh ? p.intensity : 0, rainNow: fresh ? INT_MM[p.intensity] : 0,
       near: fresh && !!p.near, cb: fresh && /\b(FEW|SCT|BKN|OVC)\d{3}(CB|TCU)\b/.test(last.raw), ts: fresh && /\b(VC)?TS/.test(last.raw.replace(/^\S+\s+\S+\s+/, '')),
-      detail: `${p.text} · reporte de hace ${ageMin} min`, error: fresh ? undefined : `último reporte hace ${ageMin} min`,
-      temperature: fresh ? p.temperature : undefined, humidity: fresh ? p.humidity : undefined, wind: fresh ? p.wind : undefined };
+      detail: `${p.text}${p.cloud != null ? ` · ${CLOUD_TXT(p.cloud)}` : ''} · reporte de hace ${ageMin} min`, error: fresh ? undefined : `último reporte hace ${ageMin} min`,
+      temperature: fresh ? p.temperature : undefined, humidity: fresh ? p.humidity : undefined, wind: fresh ? p.wind : undefined, cloud: fresh ? p.cloud : undefined };
   } catch (e) { d = { ...base, ok: false, intensity: 0, error: e.message }; }
   metarCache = { at: d.ok ? Date.now() : Date.now() - TTL + 3 * 60e3, data: d }; // si falla, se reintenta en 3 min
   return d;
@@ -555,7 +563,7 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
     source: live.map(s => s.id === 'modelos' ? `${provs} (${okM.length} modelos)` : s.name).join(' + '),
     observedAt: (intensity > 0 ? top.at : base?.observedAt) || at,
     // Temperatura: la medida en el aeropuerto si hay reporte reciente; si no, la del modelo
-    temperature: (metar?.ok ? metar.temperature : null) ?? base?.temperature ?? okM.find(m => m.temperature != null)?.temperature ?? owm?.temperature, cloudCover: Math.max(base?.cloudCover ?? 0, owm?.cloudCover ?? 0, intensity ? 95 : 0),
+    temperature: (metar?.ok ? metar.temperature : null) ?? base?.temperature ?? okM.find(m => m.temperature != null)?.temperature ?? owm?.temperature, cloudCover: cloudNow(base, owm, metar, sat, intensity),
     rainNow: intensity ? r1(Math.max(...live.map(s => (s.intensity ? s.rainNow || 0 : 0)))) : 0,
     // Acumulados: los mide el pluviómetro de la parte baja (Ducupalta); sin él, lo observado por el sistema (registro, ver withHistory)
     ...(gauge ? { rainPast3h: Math.max(gauge.rain3h || 0, intensity >= 2 ? INT_MM[intensity] : 0), rainPast6h: gauge.rain6h || 0, rainPast12h: gauge.rain12h || 0, wetHours: 0 }
@@ -588,7 +596,8 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
     // La de Open-Meteo suma también el sol directo del mediodía y daba 6–8 °C de más (p. ej. 41 °C con 34 °C de aire).
     w.apparent = apparentTemp(w.temperature, w.humidity, (w.wind || 0) / 3.6);
   }
-  w.sun = sunInfo(base?.sun || okM.find(m => m.sun?.uvIndex != null)?.sun, w.cloudCover, intensity);
+  w.cloudFrom = cloudFrom(metar, sat);
+  w.sun = sunInfo(base?.sun || okM.find(m => m.sun?.uvIndex != null)?.sun, w.cloudCover, intensity, !!w.cloudFrom);
   w.heat = heatInfo(w.apparent, w.sun?.isDay === 0);
   Object.assign(w, describe(w));
   if (intensity !== w.intensity) Object.assign(w, { intensity, raining: intensity > 0, condition: intensity ? INT_TXT[intensity] : w.condition });
@@ -807,9 +816,28 @@ const UV = [[11, 'extremo', 'Extremo', 'Evita salir al sol; si sales, protector,
   [0, 'bajo', 'Bajo', 'Sin riesgo por el sol.']];
 export const uvLevel = v => { const u = UV.find(([min]) => (v ?? 0) >= min); return { key: u[1], label: u[2], advice: u[3] }; };
 // Estado del cielo para el mapa y el panel: soleado, parcial, nublado, lluvia o noche
-function sunInfo(s, cloud, intensity) {
+// Nubosidad del momento: manda lo que ven el aeropuerto (nubes del reporte) y el satélite (nubes medias y altas sobre la ciudad).
+// Los modelos solo se usan si no hay ninguna observación. (Antes los modelos decían "soleado" con la ciudad nublada.)
+const metarCloud = metar => (metar?.ok && metar.cloud != null ? metar.cloud : null);
+const satCloud = sat => (sat?.ok && sat.cloudShare != null ? sat.cloudShare : null);
+function cloudFrom(metar, sat) { return metarCloud(metar) != null ? 'aeropuerto' : satCloud(sat) != null && satCloud(sat) >= 40 ? 'satélite' : null; }
+function cloudNow(base, owm, metar, sat, intensity) {
+  const m = metarCloud(metar), st = satCloud(sat), rain = intensity ? 95 : 0;
+  if (m != null) return Math.max(m, st ?? 0, rain);
+  if (st != null && st >= 40) return Math.max(st, base?.cloudCover ?? 0, rain);
+  return Math.max(base?.cloudCover ?? 0, owm?.cloudCover ?? 0, rain);
+}
+function sunInfo(s, cloud, intensity, observed = false) {
   if (!s) return null;
   const night = s.isDay === 0, c = cloud ?? 0;
+  // Con nubes observadas (aeropuerto o satélite), el cielo sale de lo que se ve, no de la radiación que calculan los modelos
+  if (observed) {
+    const sky = intensity > 0 ? 'lluvia' : night ? 'noche' : c >= 75 ? 'nublado' : c >= 40 ? 'parcial' : 'soleado';
+    const uv = s.uvIndex == null ? null : Math.round(s.uvIndex * 10) / 10 * (c >= 75 ? 0.5 : 1);
+    const u = uv == null ? null : Math.round(uv * 10) / 10;
+    return { ...s, uvIndex: u, uvMax: s.uvMax == null ? null : Math.round(s.uvMax * 10) / 10, radiation: s.radiation == null ? null : Math.round(s.radiation),
+      sky, uv: uvLevel(night ? 0 : u), uvMaxLevel: uvLevel(s.uvMax) };
+  }
   // Con mucha radiación o UV alto el sol "pega fuerte": es soleado aunque los modelos reporten algo de nube alta (c < 80)
   const strongSun = !night && c < 80 && ((s.radiation ?? 0) >= 550 || (s.uvIndex ?? 0) >= 4.5);
   // Con el cielo cubierto según los modelos (≥ 80 %) pero el sol pasando (radiación ≥ 450 W/m² o UV ≥ 6), las nubes son finas o
