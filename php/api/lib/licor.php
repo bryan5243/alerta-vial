@@ -36,19 +36,22 @@ function licor_summary(array $pts, int $now): array {
   $sum = function (float $h) use ($pts, $now, $step) { $s = 0; foreach ($pts as [$t, $v]) if ($t + $step > $now - $h * 3600000) $s += max(0, $v); return round($s, 1); };
   [$lt, $lv] = end($pts); $end = $lt + $step; $age = max(0, (int)round(($now - $end) / 60000));
   $s = ['lastMm' => round(max(0, $lv), 1), 'lastFrom' => $lt, 'lastTo' => $end, 'stepMin' => (int)round($step / 60000), 'ageMin' => $age,
-    'rain30m' => $sum(0.5), 'rain1h' => $sum(1), 'rain3h' => $sum(3), 'rain6h' => $sum(6), 'rain12h' => $sum(12), 'rain24h' => $sum(24)];
+    'rain15m' => round(array_sum(array_map(fn($p) => $p[0] >= $end - 900000 ? max(0, $p[1]) : 0, $pts)), 1), 'rain30m' => $sum(0.5), 'rain1h' => $sum(1), 'rain3h' => $sum(3), 'rain6h' => $sum(6), 'rain12h' => $sum(12), 'rain24h' => $sum(24)];
   return $s + ['wet' => licor_wet($s)];
 }
 // "Llueve en la estación": con lecturas cada 5 min, ≥ 0,4 mm en la última media hora (≈ 0,8 mm/h) y el dato de hace ≤ 20 min;
 // si publica por hora, ≥ 0,5 mm en su última hora y el dato de hace ≤ 90 min; un canal diario no dice si llueve ahora
 // "Seco en la estación": dato reciente y nada (o casi nada) en la última media hora / última hora
-function licor_dry(array $s): bool { return $s['stepMin'] < 60 ? $s['ageMin'] <= 30 && $s['rain30m'] < 0.2 : $s['stepMin'] <= 60 && $s['ageMin'] <= LICOR['freshMin'] && $s['lastMm'] < 0.2; }
-function licor_wet(array $s): bool { return $s['stepMin'] < 60 ? $s['ageMin'] <= 20 && $s['rain30m'] >= 0.4 : $s['stepMin'] <= 60 && $s['ageMin'] <= LICOR['freshMin'] && $s['lastMm'] >= LICOR['wetMm']; }
+// Lo que cuenta es el momento: las lecturas de los últimos 15 min
+function licor_dry(array $s): bool { return $s['stepMin'] < 60 ? $s['ageMin'] <= 30 && ($s['rain15m'] ?? 0) < 0.2 : $s['stepMin'] <= 60 && $s['ageMin'] <= LICOR['freshMin'] && $s['lastMm'] < 0.2; }
+function licor_wet(array $s): bool { return $s['stepMin'] < 60 ? $s['ageMin'] <= 20 && ($s['rain15m'] ?? 0) >= 0.2 : $s['stepMin'] <= 60 && $s['ageMin'] <= LICOR['freshMin'] && $s['lastMm'] >= LICOR['wetMm']; }
 function licor_detail(array $s, string $note = ''): string {
   if ($s['stepMin'] > 60) return "Lluvia del día: {$s['lastMm']} mm (el canal publica un total diario, no sirve para saber si llueve ahora)" . ($note ? " · $note" : '');
   $hm = fn($ms) => gmdate('H:i', intdiv($ms, 1000) - 18000);
   $h1 = $s['stepMin'] < 60 ? $s['rain1h'] : $s['lastMm'];
-  $last = $h1 > 0 ? "Llovió $h1 mm en la última hora" . ($s['stepMin'] < 60 && $s['rain30m'] > 0 ? " ({$s['rain30m']} mm en la última media hora)" : '') : 'Sin lluvia en la última hora';
+  $r15 = $s['rain15m'] ?? 0;
+  $now = $s['stepMin'] < 60 ? ($r15 > 0 ? "Ahora: $r15 mm en los últimos 15 min (≈" . round($r15 * 4, 1) . ' mm/h) · ' : 'Ahora: sin lluvia en los últimos 15 min · ') : '';
+  $last = $now . ($h1 > 0 ? "$h1 mm en la última hora" : 'sin lluvia en la última hora');
   return "$last · últimas 3 h: {$s['rain3h']} mm · 24 h: {$s['rain24h']} mm · lectura de las {$hm($s['lastTo'])} (hace {$s['ageMin']} min)" . ($note ? " · $note" : '');
 }
 function licor_sources(): array { $out = []; foreach (LICOR_STATIONS as $i => $st) $out[] = licor_source($st, $i); return $out; }
@@ -81,6 +84,6 @@ function licor_source(array $st, int $i = 0): array {
   if (!isset($s['rain30m'])) { $s['rain30m'] = 0; $s['rain1h'] = $s['lastMm']; } // dato guardado por la versión anterior
   $s['wet'] = licor_wet($s); $s['dry'] = !$s['wet'] && licor_dry($s);
   // El estado de la tarjeta muestra lo que mide la estación (su "intensity" queda en 0: no decide el nivel por sí sola)
-  $status = $s['wet'] ? 'Lloviendo en la estación · ' . ($s['stepMin'] < 60 ? $s['rain1h'] : $s['lastMm']) . ' mm en la última hora' : null;
+  $status = $s['wet'] ? 'Lloviendo ahora en la estación · ≈' . ($s['stepMin'] < 60 ? round($s['rain15m'] * 4, 1) : $s['lastMm']) . ' mm/h' : null;
   return $base + ['ok' => true, 'zone' => $st['zone'] ?? 'alta', 'at' => gmdate('c', intdiv($s['lastTo'], 1000))] + $s + ['status' => $status, 'detail' => licor_detail($s, $st['note'])];
 }
