@@ -533,8 +533,8 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
   // equipo. Los modelos de Open-Meteo quedan solo como pronóstico de las próximas horas; OpenWeatherMap y wttr.in ya no se muestran.
   if (modelSrc.intensity > 0) Object.assign(modelSrc, { intensity: 0, rainNow: 0, detail: `${modelSrc.detail} · es pronóstico: no decide si llueve ahora` });
   modelSrc.forecastOnly = true;
-  // El pluviómetro de la parte baja (Ducupalta) sí dice cuánto llueve: su lluvia de la última hora da la intensidad
-  stations = stations.map(x => x?.ok && x.zone === 'baja' && x.wet && !satDry ? (mm => ({ ...x, intensity: mm >= 7.6 ? 3 : mm >= 2.5 ? 2 : 1, rainNow: r1(mm) }))(x.stepMin < 60 ? x.rain1h || 0 : x.lastMm || 0) : x);
+  // El pluviómetro que decide (El Guayabo) dice cuánto llueve AHORA: lo de los últimos 15 min, en mm/h, da la intensidad
+  stations = stations.map(x => x?.ok && x.zone === 'baja' && x.wet && !satDry ? (mm => ({ ...x, intensity: mm >= 7.6 ? 3 : mm >= 2.5 ? 2 : 1, rainNow: r1(mm) }))(x.stepMin < 60 ? (x.rain15m || 0) * 4 : x.lastMm || 0) : x);
   let sources = [modelSrc, metar, ...stations, radar, sat, lightning, ...extra].filter(Boolean);
   // El equipo marcó "no llueve" en el centro: lo ven en la calle, así que ni los pronósticos (modelos, OWM, wttr) ni el aeropuerto
   // (a unos 4 km) ni el radar (píxeles de ~1 km) encienden "lloviendo" mientras dure la marca. Los reportes ciudadanos siguen contando.

@@ -20,19 +20,21 @@ export function licorSummary(pts, now) {
   const step = d.length ? Math.max(300000, Math.min(86400000, d[Math.floor(d.length / 2)])) : 3600000; // 5 min, 1 h o 1 día
   const sum = h => r1(pts.reduce((s, [t, v]) => s + (t + step > now - h * 3600000 ? Math.max(0, v) : 0), 0));
   const [lt, lv] = pts.at(-1), end = lt + step, age = Math.max(0, Math.round((now - end) / 60000));
-  const s = { lastMm: r1(Math.max(0, lv)), lastFrom: lt, lastTo: end, stepMin: Math.round(step / 60000), ageMin: age, rain30m: sum(0.5), rain1h: sum(1), rain3h: sum(3), rain6h: sum(6), rain12h: sum(12), rain24h: sum(24) };
+  const s = { lastMm: r1(Math.max(0, lv)), lastFrom: lt, lastTo: end, stepMin: Math.round(step / 60000), ageMin: age, rain15m: r1(pts.reduce((a, [t, v]) => a + (t >= end - 900000 ? Math.max(0, v) : 0), 0)), rain30m: sum(0.5), rain1h: sum(1), rain3h: sum(3), rain6h: sum(6), rain12h: sum(12), rain24h: sum(24) };
   return { ...s, wet: licorWet(s) };
 }
 // "Llueve en la estación": con lecturas cada 5 min, ≥ 0,4 mm en la última media hora (≈ 0,8 mm/h) y el dato de hace ≤ 20 min;
 // si publica por hora, ≥ 0,5 mm en su última hora y el dato de hace ≤ 90 min; un canal diario no dice si llueve ahora
 // "Seco en la estación": dato reciente y nada (o casi nada) en la última media hora / última hora
-export const licorDry = s => s.stepMin < 60 ? s.ageMin <= 30 && s.rain30m < 0.2 : s.stepMin <= 60 && s.ageMin <= LICOR.freshMin && s.lastMm < 0.2;
-export const licorWet = s => s.stepMin < 60 ? s.ageMin <= 20 && s.rain30m >= 0.4 : s.stepMin <= 60 && s.ageMin <= LICOR.freshMin && s.lastMm >= LICOR.wetMm;
+// Lo que cuenta es el momento: las lecturas de los últimos 15 min (antes: la última hora, y seguía "lloviendo" cuando ya había parado)
+export const licorDry = s => s.stepMin < 60 ? s.ageMin <= 30 && (s.rain15m ?? 0) < 0.2 : s.stepMin <= 60 && s.ageMin <= LICOR.freshMin && s.lastMm < 0.2;
+export const licorWet = s => s.stepMin < 60 ? s.ageMin <= 20 && (s.rain15m ?? 0) >= 0.2 : s.stepMin <= 60 && s.ageMin <= LICOR.freshMin && s.lastMm >= LICOR.wetMm;
 const hm = ms => new Date(ms - 5 * 3600000).toISOString().slice(11, 16);
 export function licorDetail(s, note = '') {
   if (s.stepMin > 60) return `Lluvia del día: ${s.lastMm} mm (el canal publica un total diario, no sirve para saber si llueve ahora)${note ? ` · ${note}` : ''}`;
   const h1 = s.stepMin < 60 ? s.rain1h : s.lastMm;
-  const last = h1 > 0 ? `Llovió ${h1} mm en la última hora${s.stepMin < 60 && s.rain30m > 0 ? ` (${s.rain30m} mm en la última media hora)` : ''}` : 'Sin lluvia en la última hora';
+  const now = s.stepMin < 60 ? ((s.rain15m ?? 0) > 0 ? `Ahora: ${s.rain15m} mm en los últimos 15 min (≈${r1(s.rain15m * 4)} mm/h) · ` : 'Ahora: sin lluvia en los últimos 15 min · ') : '';
+  const last = now + (h1 > 0 ? `${h1} mm en la última hora` : 'sin lluvia en la última hora');
   return `${last} · últimas 3 h: ${s.rain3h} mm · 24 h: ${s.rain24h} mm · lectura de las ${hm(s.lastTo)} (hace ${s.ageMin} min)${note ? ` · ${note}` : ''}`;
 }
 const cache = {};
@@ -59,6 +61,6 @@ export async function licorSource(st, i = 0) {
   if (!c.sum || now - c.okAt > 3 * 3600000) return { ...base, ok: false, error: c.error || 'sin datos de la estación' };
   const s = { ...c.sum }; s.ageMin = Math.max(0, Math.round((now - s.lastTo) / 60000)); s.wet = licorWet(s); s.dry = !s.wet && licorDry(s);
   // El estado de la tarjeta muestra lo que mide la estación (su "intensity" queda en 0: no decide el nivel por sí sola)
-  const status = s.wet ? `Lloviendo en la estación · ${s.stepMin < 60 ? s.rain1h : s.lastMm} mm en la última hora` : null;
+  const status = s.wet ? `Lloviendo ahora en la estación · ≈${s.stepMin < 60 ? r1(s.rain15m * 4) : s.lastMm} mm/h` : null;
   return { ...base, ok: true, zone: st.zone || 'alta', at: new Date(s.lastTo).toISOString(), ...s, status, detail: licorDetail(s, st.note) };
 }
