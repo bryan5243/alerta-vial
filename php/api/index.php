@@ -108,7 +108,9 @@ function compute_status(): array {
   $riverLevel = in_array('EXTREME', $sev, true) || $over >= 2 || ($over >= 1 && ($weather['intensity'] ?? 0) >= 2) ? 'roja'
     : (in_array('SEVERE', $sev, true) || $over >= 1 ? 'naranja' : (in_array('ABOVE_NORMAL', $sev, true) || $high >= 1 ? 'amarilla' : 'normal'));
   // El índice combinado no deja la roja con lluvia leve o sin lluvia: como mucho naranja
+  // y sin lluvia medida en la ciudad, como mucho amarilla (los ríos tienen su propio nivel)
   $riskLevel = $risk['level'] === 'roja' && ($weather['intensity'] ?? 0) < 2 ? 'naranja' : $risk['level'];
+  if (!(($weather['intensity'] ?? 0) > 0) && LV[$riskLevel] > 1) $riskLevel = 'amarilla';
   $wl = level_why($weather, $cfg);
   $suggested = max_level(max_level($wl['level'], $riskLevel), $riverLevel);
   $why = $suggested === 'normal' ? '' : (LV[$riverLevel] >= LV[$suggested] && $riverLevel !== 'normal'
@@ -117,7 +119,7 @@ function compute_status(): array {
   // Durante una simulación el nivel publicado sigue al clima simulado, aunque la alerta esté en manual.
   // La simulación es solo una prueba: muestra el nivel simulado pero no deja huella (ni bajada gradual ni drenaje)
   $sim = (bool)sim_on();
-  $effective = $sim ? $suggested : ($db['alert']['mode'] === 'manual' ? $db['alert']['level'] : step_down($suggested));
+  $effective = $sim ? $suggested : ($db['alert']['mode'] === 'manual' ? $db['alert']['level'] : step_down($suggested, $weather));
   $drain = $sim ? ['draining' => false, 'until' => null, 'reportOn' => LV[$effective] >= 2] : sync_auto_points($effective, $weather);
   // Bajada gradual: desde qué hora paró la lluvia intensa y a qué hora pasa a cada color
   $now = now_ms(); $a = db_load()['alert'];
@@ -133,12 +135,14 @@ function compute_status(): array {
 }
 // Al dejar de llover el semáforo no cae de golpe: baja un color cada cierto tiempo (por defecto 45 min),
 // porque el agua tarda en irse. Si vuelve a llover, sube de inmediato.
-function step_down(string $suggested): string {
+// Si ya no hay lluvia medida en la ciudad (intensidad 0), el semáforo sigue al momento y baja de una vez:
+// los puntos críticos siguen encendidos el tiempo de drenaje, así que no hace falta arrastrar el color.
+function step_down(string $suggested, ?array $weather = null): string {
   $db = db_load(); $a = $db['alert']; $now = now_ms();
   $cur = isset(LV[$a['autoLevel'] ?? '']) ? $a['autoLevel'] : $suggested;
   $hold = ((float)($db['config']['weather']['stepDownMin'] ?? 0) ?: 45) * 60000;
   $next = $cur; $stepAt = $a['autoStepAt'] ?? 0;
-  if (LV[$suggested] >= LV[$cur]) { $next = $suggested; $stepAt = $now; }
+  if (LV[$suggested] >= LV[$cur] || !(($weather['intensity'] ?? 0) > 0)) { $next = $suggested; $stepAt = $now; }
   elseif ($now - $stepAt >= $hold) { $next = array_search(LV[$cur] - 1, LV, true); $stepAt = $now; }
   // autoStepAt solo se guarda cuando cambia el nivel o cuando sube/se mantiene alto (cada minuto como mucho)
   if ($next !== ($a['autoLevel'] ?? null) || ($stepAt !== ($a['autoStepAt'] ?? 0) && $now - ($a['autoStepAt'] ?? 0) > 60000)) {
