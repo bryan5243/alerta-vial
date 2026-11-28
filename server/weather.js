@@ -587,9 +587,9 @@ export function combine({ models, metar, owm, radar, wttr, lightning, sat, stati
     // Sensación térmica a la sombra (Steadman: temperatura + humedad − viento), como la publica el INAMHI.
     // La de Open-Meteo suma también el sol directo del mediodía y daba 6–8 °C de más (p. ej. 41 °C con 34 °C de aire).
     w.apparent = apparentTemp(w.temperature, w.humidity, (w.wind || 0) / 3.6);
-    w.heat = heatInfo(w.apparent);
   }
   w.sun = sunInfo(base?.sun || okM.find(m => m.sun?.uvIndex != null)?.sun, w.cloudCover, intensity);
+  w.heat = heatInfo(w.apparent, w.sun?.isDay === 0);
   Object.assign(w, describe(w));
   if (intensity !== w.intensity) Object.assign(w, { intensity, raining: intensity > 0, condition: intensity ? INT_TXT[intensity] : w.condition });
   // Sin lluvia: de día y despejado es "Soleado"; de noche, "Noche despejada"
@@ -762,6 +762,11 @@ function thunderOf(w, { okM, metar, radar, wttr, lightning, sat, extra = [] }) {
     const rate = lg?.strikes10 || 0, lv = dbz >= 50 || rm >= 8 || rate >= 20 ? 3 : dbz >= 45 || rm >= 2.5 || rate >= 6 ? 2 : 1;
     activity = { level: lv, label: ['', 'Tormenta leve', 'Tormenta moderada', 'Tormenta intensa'][lv], mm: r1(rm) };
   }
+  // Sin nada que se vea ahora (rayos, satélite, aeropuerto, radar o el equipo) es solo pronóstico: como mucho "moderada",
+  // y si el satélite ve la ciudad sin nubes de tormenta, como mucho "baja". Los modelos exageraban las tormentas de noche.
+  const seen = !!((metar?.ok && metar.cb) || (radar?.ok && (radar.dbz >= 45 || radar.dbzNear >= 45)) || (sat?.ok && (sat.storm || (sat.stormKm != null && sat.stormKm <= 40)))
+    || (lg && (lg.strikes15 > 0 || lg.strikes30 > 0 || lg.strikes60 > 0)) || team);
+  if (!now && !seen) { const cap = sat?.ok && sat.clear ? 30 : 60; if (p > cap) { p = cap; reasons.push(sat?.ok && sat.clear ? 'solo lo dice el pronóstico: el satélite no ve nubes de tormenta sobre la ciudad' : 'solo lo dice el pronóstico: ningún rayo, satélite ni el aeropuerto ve tormenta ahora'); } }
   p = now ? Math.max(90, Math.round(p)) : Math.max(0, Math.min(90, Math.round(p / 5) * 5));
   const level = now ? 'activa' : p >= 70 ? 'alta' : p >= 40 ? 'moderada' : p >= 15 ? 'baja' : 'nula';
   const label = { activa: 'Tormenta ahora', alta: 'Alta', moderada: 'Moderada', baja: 'Baja', nula: 'Muy baja' }[level];
@@ -781,8 +786,11 @@ export function apparentTemp(t, rh, ws) {
   return r1(t + 0.33 * e - 0.70 * (ws || 0) - 4);
 }
 // Nivel de calor según la sensación térmica y consejo para la gente
-export function heatInfo(app) {
+// De noche no hay sol: el calor húmedo se avisa como "noche calurosa" (nunca en rojo) y sin consejos de sol o mediodía.
+export function heatInfo(app, night = false) {
   if (app == null) return null;
+  if (night && app >= 27) return app >= 32 ? { key: 'caluroso', label: 'Noche muy calurosa', advice: 'Noche calurosa y húmeda: ventila la casa, toma agua y cuida a niños y adultos mayores.' }
+    : { key: 'caluroso', label: 'Noche calurosa', advice: 'Ventila la casa y toma agua antes de dormir.' };
   const L = [[41, 'peligro', 'Calor peligroso', 'Evita el sol y el esfuerzo; hidrátate y busca lugares frescos. Riesgo de golpe de calor.'],
     [32, 'extremo', 'Muy caluroso', 'Toma agua seguido, descansa a la sombra y evita actividad intensa al mediodía.'],
     [27, 'caluroso', 'Caluroso', 'Hidrátate y usa ropa ligera. Cuida a niños y adultos mayores.'],

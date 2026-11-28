@@ -129,7 +129,7 @@ function weatherCard(w) {
       ${pos != null && !night ? `<div class="wx-hours-h"><span class="wx-hours-t">Sol e índice UV</span><span class="wx-hours-k">ahora ${dec(s.uvIndex)} · ${esc(s.uv.label.toLowerCase())}</span></div><div class="uv-scale" role="img" aria-label="Índice UV ${dec(s.uvIndex)} de 11 o más"><i style="left:${pos}%"></i></div><div class="uv-ticks"><span>Bajo</span><span>Moderado</span><span>Alto</span><span>Muy alto</span><span>Extremo</span></div>` : ''}
       <div class="wx-sun-meta">
         ${!night && s.radiation != null ? `<span>${WX_IC.sun}Radiación <b>${s.radiation} W/m²</b></span>` : ''}
-        ${s.uvMax != null ? `<span>Máx. hoy <b>UV ${dec(s.uvMax)}</b></span>` : ''}
+        ${s.uvMax != null && !night ? `<span>Máx. hoy <b>UV ${dec(s.uvMax)}</b></span>` : ''}
         ${s.sunrise ? `<span>${night ? 'Amanece' : 'Sol'} <b>${wxTime(s.sunrise)}${night ? '' : `–${wxTime(s.sunset)}`}</b></span>` : ''}
       </div>
       ${!night && s.uvIndex >= 3 && !(w.intensity > 0) && s.uv.advice ? `<p class="uv-tip uv-${s.uv.key}">${esc(s.uv.advice)}</p>` : ''}
