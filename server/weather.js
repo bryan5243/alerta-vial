@@ -921,6 +921,8 @@ export function levelWhy(w, cfg) {
   // por lo que cayó antes: baja a naranja (de a un color cada 45 min) aunque siga lloviznando.
   if (now >= t * 3) return { level: 'roja', why: `${it} de ${mmTxt(now)}/h` };
   if (i >= 2 && (p3 >= t3 * 2 || p6 >= t3 * 3 || p12 >= t3 * 5)) return { level: 'roja', why: `${it} con ${mmTxt(p3 >= t3 * 2 ? p3 : p6 >= t3 * 3 ? p6 : p12)} acumulados en ${p3 >= t3 * 2 ? 3 : p6 >= t3 * 3 ? 6 : 12} h` };
+  // Lluvia leve medida = amarilla, aunque antes haya llovido mucho (pedido del 27-nov-2026: lo que cuenta es el momento)
+  if (i < 2) return { level: 'amarilla', why: `${it} en curso` };
   if (now >= t || i >= 3) return { level: 'naranja', why: `${it} de ${mmTxt(now)}/h` };
   if (p3 >= t3 || p6 >= t3 * 1.6 || p12 >= t3 * 2.7) return { level: 'naranja', why: `sigue la ${it} con ${mmTxt(p3 >= t3 ? p3 : p6 >= t3 * 1.6 ? p6 : p12)} acumulados en ${p3 >= t3 ? 3 : p6 >= t3 * 1.6 ? 6 : 12} h` };
   if (wet >= 3 && p6 >= t3 * 0.9) return { level: 'naranja', why: `${wet} h seguidas lloviendo (${mmTxt(p6)} en 6 h)` };
