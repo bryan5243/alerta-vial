@@ -141,6 +141,7 @@ function metno_parse(array $res): array {
 }
 
 // ---------- METAR (aeropuerto) ----------
+function cloud_txt($c): string { return $c >= 100 ? 'cielo cubierto' : ($c >= 75 ? 'mayormente nublado' : ($c >= 45 ? 'parcialmente nublado' : ($c > 0 ? 'pocas nubes' : 'cielo despejado'))); }
 function parse_metar($raw): array {
   $body = preg_split('/\sRMK\s/', (string)$raw)[0]; $intensity = 0; $near = false; $txt = '';
   foreach (preg_split('/\s+/', $body) as $t) {
@@ -167,6 +168,12 @@ function metar_air(string $body): array {
     $out['temperature'] = $T; $out['humidity'] = (int)round(100 * exp(17.625 * $D / (243.04 + $D)) / exp(17.625 * $T / (243.04 + $T)));
   }
   if (preg_match('/\b(?:\d{3}|VRB)(\d{2,3})(?:G\d{2,3})?(KT|MPS)\b/', $body, $w)) $out['wind'] = (int)round((int)$w[1] * ($w[2] === 'KT' ? 1.852 : 3.6));
+  // Nubes que ve el aeropuerto: FEW 1–2/8, SCT 3–4/8, BKN 5–7/8, OVC 8/8 (VV = cielo tapado por niebla). CAVOK/NSC/SKC = sin nubes.
+  $OK = ['FEW' => 20, 'SCT' => 45, 'BKN' => 75, 'OVC' => 100, 'VV' => 100];
+  foreach (preg_split('/\s+/', $body) as $g) {
+    if (preg_match('#^(FEW|SCT|BKN|OVC|VV)(\d{3}|///)#', $g, $c)) $out['cloud'] = max($out['cloud'] ?? 0, $OK[$c[1]]);
+    elseif (preg_match('/^(CAVOK|NSC|SKC|CLR|NCD)$/', $g)) $out['cloud'] = $out['cloud'] ?? 0;
+  }
   return $out;
 }
 // Dos servidores a la vez (aviationweather.gov y NOAA): gana el reporte más reciente que llegue
@@ -187,8 +194,8 @@ function metar_parse(?array $awc, ?array $noaa, string $station): array {
     return $base + ['ok' => $fresh, 'stale' => !$fresh, 'at' => gmdate('c', $last['at']), 'ageMin' => $ageMin, 'raw' => $last['raw'], 'intensity' => $fresh ? $p['intensity'] : 0, 'rainNow' => $fresh ? INT_MM[$p['intensity']] : 0,
       'near' => $fresh && !empty($p['near']), 'cb' => $fresh && (bool)preg_match('/\b(FEW|SCT|BKN|OVC)\d{3}(CB|TCU)\b/', $last['raw']),
       'ts' => $fresh && (bool)preg_match('/\b(VC)?TS/', preg_replace('/^\S+\s+\S+\s+/', '', $last['raw'])),
-      'detail' => "{$p['text']} · reporte de hace $ageMin min", 'error' => $fresh ? null : "último reporte hace $ageMin min",
-      'temperature' => $fresh ? ($p['temperature'] ?? null) : null, 'humidity' => $fresh ? ($p['humidity'] ?? null) : null, 'wind' => $fresh ? ($p['wind'] ?? null) : null];
+      'detail' => $p['text'] . (($p['cloud'] ?? null) !== null ? ' · ' . cloud_txt($p['cloud']) : '') . " · reporte de hace $ageMin min", 'error' => $fresh ? null : "último reporte hace $ageMin min",
+      'temperature' => $fresh ? ($p['temperature'] ?? null) : null, 'humidity' => $fresh ? ($p['humidity'] ?? null) : null, 'wind' => $fresh ? ($p['wind'] ?? null) : null, 'cloud' => $fresh ? ($p['cloud'] ?? null) : null];
   } catch (Throwable $e) { return $base + ['ok' => false, 'intensity' => 0, 'error' => $e->getMessage()]; }
 }
 
@@ -515,7 +522,7 @@ function combine(array $remote, array $extra = []): array {
   $w = ['ok' => true, 'sources' => $sources, 'checkedAt' => $at, 'modelsNeeded' => $need, 'decidedBy' => $intensity > 0 ? $top['name'] : null,
     'source' => implode(' + ', array_map(fn($s) => $s['id'] === 'modelos' ? "$provs ($n modelos)" : $s['name'], $live)),
     'observedAt' => ($intensity > 0 ? ($top['at'] ?? null) : ($base['observedAt'] ?? null)) ?: $at,
-    'temperature' => (!empty($metar['ok']) ? ($metar['temperature'] ?? null) : null) ?? $pk('temperature') ?? ($owm['temperature'] ?? null), 'cloudCover' => max($base['cloudCover'] ?? 0, $owm['cloudCover'] ?? 0, $intensity ? 95 : 0),
+    'temperature' => (!empty($metar['ok']) ? ($metar['temperature'] ?? null) : null) ?? $pk('temperature') ?? ($owm['temperature'] ?? null), 'cloudCover' => cloud_now($base, $owm, $metar, $sat, $intensity),
     'rainNow' => $intensity ? r1(max(array_map(fn($s) => !empty($s['intensity']) ? ($s['rainNow'] ?? 0) : 0, $live))) : 0,
     // Acumulados: los mide el pluviómetro de la parte baja (Ducupalta); sin él, lo observado por el sistema (registro)
     'rainPast3h' => max($gauge ? ($gauge['rain3h'] ?? 0) : 0, $intensity >= 2 ? INT_MM[$intensity] : 0), 'rainPast6h' => $gauge ? ($gauge['rain6h'] ?? 0) : 0, 'rainPast12h' => $gauge ? ($gauge['rain12h'] ?? 0) : 0, 'wetHours' => 0,
@@ -538,7 +545,8 @@ function combine(array $remote, array $extra = []): array {
   // Sensación térmica a la sombra (Steadman), como la publica el INAMHI. La de Open-Meteo suma el sol directo y daba 6–8 °C de más.
   $w['apparent'] = apparent_temp($w['temperature'], $w['humidity'], ($w['wind'] ?? 0) / 3.6);
   $sunSrc = $base['sun'] ?? null; if (!$sunSrc) { $m = first_of($okM, fn($m) => ($m['sun']['uvIndex'] ?? null) !== null); $sunSrc = $m['sun'] ?? null; }
-  $w['sun'] = sun_info($sunSrc, $w['cloudCover'], $intensity);
+  $w['cloudFrom'] = cloud_from($metar, $sat);
+  $w['sun'] = sun_info($sunSrc, $w['cloudCover'], $intensity, (bool)$w['cloudFrom']);
   $w['heat'] = heat_info($w['apparent'], ($w['sun']['isDay'] ?? null) === 0);
   $w = array_merge($w, describe($w));
   if ($intensity !== $w['intensity']) $w = array_merge($w, ['intensity' => $intensity, 'raining' => $intensity > 0, 'condition' => $intensity ? INT_TXT[$intensity] : $w['condition']]);
@@ -730,9 +738,27 @@ function uv_level($v): array {
     if (($v ?? 0) >= $u[0]) return ['key' => $u[1], 'label' => $u[2], 'advice' => $u[3]];
   return ['key' => 'bajo', 'label' => 'Bajo', 'advice' => 'Sin riesgo por el sol.'];
 }
-function sun_info($s, $cloud, $intensity) {
+// Nubosidad del momento: manda lo que ven el aeropuerto (nubes del reporte) y el satélite (nubes medias y altas sobre la ciudad).
+// Los modelos solo se usan si no hay ninguna observación. (Antes los modelos decían "soleado" con la ciudad nublada.)
+function metar_cloud($metar) { return !empty($metar['ok']) && ($metar['cloud'] ?? null) !== null ? $metar['cloud'] : null; }
+function sat_cloud($sat) { return !empty($sat['ok']) && ($sat['cloudShare'] ?? null) !== null ? $sat['cloudShare'] : null; }
+function cloud_from($metar, $sat) { return metar_cloud($metar) !== null ? 'aeropuerto' : (sat_cloud($sat) !== null && sat_cloud($sat) >= 40 ? 'satélite' : null); }
+function cloud_now($base, $owm, $metar, $sat, $intensity) {
+  $m = metar_cloud($metar); $st = sat_cloud($sat); $rain = $intensity ? 95 : 0;
+  if ($m !== null) return max($m, $st ?? 0, $rain);
+  if ($st !== null && $st >= 40) return max($st, $base['cloudCover'] ?? 0, $rain);
+  return max($base['cloudCover'] ?? 0, $owm['cloudCover'] ?? 0, $rain);
+}
+function sun_info($s, $cloud, $intensity, bool $observed = false) {
   if (!$s) return null;
   $night = ($s['isDay'] ?? null) === 0; $c = $cloud ?? 0;
+  // Con nubes observadas (aeropuerto o satélite), el cielo sale de lo que se ve, no de la radiación que calculan los modelos
+  if ($observed) {
+    $sky = $intensity > 0 ? 'lluvia' : ($night ? 'noche' : ($c >= 75 ? 'nublado' : ($c >= 40 ? 'parcial' : 'soleado')));
+    $u = ($s['uvIndex'] ?? null) === null ? null : round(round($s['uvIndex'] * 10) / 10 * ($c >= 75 ? 0.5 : 1) * 10) / 10;
+    return array_merge($s, ['uvIndex' => $u, 'uvMax' => ($s['uvMax'] ?? null) === null ? null : round($s['uvMax'] * 10) / 10, 'radiation' => ($s['radiation'] ?? null) === null ? null : (int)round($s['radiation']),
+      'sky' => $sky, 'uv' => uv_level($night ? 0 : $u), 'uvMaxLevel' => uv_level($s['uvMax'] ?? null)]);
+  }
   $strong = !$night && $c < 80 && (($s['radiation'] ?? 0) >= 550 || ($s['uvIndex'] ?? 0) >= 4.5);
   // Cielo cubierto según los modelos pero el sol pasando (radiación ≥ 450 W/m² o UV ≥ 6): sol entre nubes, no "nublado"
   $through = !$night && (($s['radiation'] ?? 0) >= 450 || ($s['uvIndex'] ?? 0) >= 6);
