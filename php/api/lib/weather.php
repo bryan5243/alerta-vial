@@ -537,9 +537,9 @@ function combine(array $remote, array $extra = []): array {
   $w['humidity'] = $hum === null ? null : (int)round($hum); $w['wind'] = $wind === null ? null : (int)round($wind); $w['gust'] = $gust === null ? null : (int)round($gust);
   // Sensación térmica a la sombra (Steadman), como la publica el INAMHI. La de Open-Meteo suma el sol directo y daba 6–8 °C de más.
   $w['apparent'] = apparent_temp($w['temperature'], $w['humidity'], ($w['wind'] ?? 0) / 3.6);
-  $w['heat'] = heat_info($w['apparent']);
   $sunSrc = $base['sun'] ?? null; if (!$sunSrc) { $m = first_of($okM, fn($m) => ($m['sun']['uvIndex'] ?? null) !== null); $sunSrc = $m['sun'] ?? null; }
   $w['sun'] = sun_info($sunSrc, $w['cloudCover'], $intensity);
+  $w['heat'] = heat_info($w['apparent'], ($w['sun']['isDay'] ?? null) === 0);
   $w = array_merge($w, describe($w));
   if ($intensity !== $w['intensity']) $w = array_merge($w, ['intensity' => $intensity, 'raining' => $intensity > 0, 'condition' => $intensity ? INT_TXT[$intensity] : $w['condition']]);
   // Modelos con cielo cubierto pero el sol pasando entre las nubes: "Resplandor"
@@ -688,6 +688,12 @@ function thunder_of(array $w, array $okM, $metar, $radar, $wttr, $lightning, arr
     $lv = $dbz >= 50 || $rm >= 8 || $rate >= 20 ? 3 : ($dbz >= 45 || $rm >= 2.5 || $rate >= 6 ? 2 : 1);
     $activity = ['level' => $lv, 'label' => ['', 'Tormenta leve', 'Tormenta moderada', 'Tormenta intensa'][$lv], 'mm' => r1($rm)];
   }
+  // Sin nada que se vea ahora (rayos, satélite, aeropuerto, radar o el equipo) es solo pronóstico: como mucho "moderada",
+  // y si el satélite ve la ciudad sin nubes de tormenta, como mucho "baja". Los modelos exageraban las tormentas de noche.
+  $sOk = !empty($sat['ok']);
+  $seen = ($mOk && !empty($metar['cb'])) || ($rOk && (($radar['dbz'] ?? -1) >= 45 || ($radar['dbzNear'] ?? -1) >= 45)) || ($sOk && (!empty($sat['storm']) || (($sat['stormKm'] ?? null) !== null && $sat['stormKm'] <= 40)))
+    || ($lg && (($lg['strikes15'] ?? 0) > 0 || ($lg['strikes30'] ?? 0) > 0 || ($lg['strikes60'] ?? 0) > 0)) || $team;
+  if (!$now && !$seen) { $cap = $sOk && !empty($sat['clear']) ? 30 : 60; if ($p > $cap) { $p = $cap; $reasons[] = $sOk && !empty($sat['clear']) ? 'solo lo dice el pronóstico: el satélite no ve nubes de tormenta sobre la ciudad' : 'solo lo dice el pronóstico: ningún rayo, satélite ni el aeropuerto ve tormenta ahora'; } }
   $p = $now ? max(90, (int)round($p)) : max(0, min(90, (int)(round($p / 5) * 5)));
   $level = $now ? 'activa' : ($p >= 70 ? 'alta' : ($p >= 40 ? 'moderada' : ($p >= 15 ? 'baja' : 'nula')));
   $label = ['activa' => 'Tormenta ahora', 'alta' => 'Alta', 'moderada' => 'Moderada', 'baja' => 'Baja', 'nula' => 'Muy baja'][$level];
@@ -706,8 +712,11 @@ function apparent_temp($t, $rh, $ws) {
   $e = $rh / 100 * 6.105 * exp(17.27 * $t / (237.7 + $t));
   return r1($t + 0.33 * $e - 0.70 * ($ws ?: 0) - 4);
 }
-function heat_info($app): ?array {
+// De noche no hay sol: el calor húmedo se avisa como "noche calurosa" (nunca en rojo) y sin consejos de sol o mediodía.
+function heat_info($app, bool $night = false): ?array {
   if ($app === null) return null;
+  if ($night && $app >= 27) return $app >= 32 ? ['key' => 'caluroso', 'label' => 'Noche muy calurosa', 'advice' => 'Noche calurosa y húmeda: ventila la casa, toma agua y cuida a niños y adultos mayores.']
+    : ['key' => 'caluroso', 'label' => 'Noche calurosa', 'advice' => 'Ventila la casa y toma agua antes de dormir.'];
   foreach ([[41, 'peligro', 'Calor peligroso', 'Evita el sol y el esfuerzo; hidrátate y busca lugares frescos. Riesgo de golpe de calor.'],
     [32, 'extremo', 'Muy caluroso', 'Toma agua seguido, descansa a la sombra y evita actividad intensa al mediodía.'],
     [27, 'caluroso', 'Caluroso', 'Hidrátate y usa ropa ligera. Cuida a niños y adultos mayores.'],
