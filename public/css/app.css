@@ -754,7 +754,8 @@ button,a,.item,label.switch{-webkit-tap-highlight-color:transparent}
 .wf-m{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:.82rem;color:var(--muted);align-items:center} .wf-m b{color:var(--ink)}
 .wf-tag{padding:2px 10px;border-radius:999px;font-weight:700;font-size:.76rem;color:#fff;background:var(--fc)}
 .wx-feel p{margin:8px 0 0;font-size:.84rem;line-height:1.4;color:var(--ink)}
-.wx-feel{color:var(--ink)} .wf-h>b{color:var(--ink)}
+/* Las tarjetas blancas dentro del clima de noche (fondo azul, texto blanco) usan su propio texto oscuro */
+.wx-card .wx-feel,.wx-card .wx-thunder,.wx-card .risk,.wx-card .src{color:var(--ink)} .wf-h>b,.th-h>b{color:var(--ink)}
 .hf-scale{position:relative;height:8px;border-radius:4px;margin-top:12px;background:linear-gradient(90deg,#1C8FD6 0 10%,#2A8C5A 10% 40%,#E3B100 40% 56.7%,#E36A17 56.7% 86.7%,#C62E2E 86.7%)}
 .hf-scale i{position:absolute;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:#fff;border:3px solid var(--fc);box-shadow:0 1px 4px rgb(15 34 56/.3);transition:left .8s var(--ease)}
 .hf-ticks{display:grid;grid-template-columns:10fr 30fr 16.7fr 30fr 13.3fr;font-size:.66rem;color:var(--muted);margin-top:4px;white-space:nowrap}
