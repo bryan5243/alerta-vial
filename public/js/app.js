@@ -138,7 +138,7 @@ function weatherCard(w) {
     </div>` : '';
   return `<div class="wx-card sky-${sky}">
     <div class="wx-now"><span class="wx-big">${WX_IC[skyIcon(w)]}</span>
-      <div class="wx-now-t"><b>${esc(w.condition || 'Clima')}</b><small>${w.temperature != null ? `${Math.round(w.temperature)}°C${w.apparent != null ? ` · sensación ${Math.round(w.apparent)}°C` : ''} · ` : ''}dato de las ${wxTime(w.observedAt)}</small></div>${uvBadge}</div>
+      <div class="wx-now-t"><b>${esc(w.condition || 'Clima')}</b><small>${w.temperature != null ? `${Math.round(w.temperature)}°C${w.apparent != null ? ` · sensación ${Math.round(w.apparent)}°C` : ''} · ` : ''}dato de las ${wxTime(w.observedAt)}${w.cloudFrom && !(w.intensity > 0) ? ` · cielo según ${w.cloudFrom === 'aeropuerto' ? 'el aeropuerto' : 'el satélite'}` : ''}</small></div>${uvBadge}</div>
     <div class="wx-auto${w.raining ? ' on' : ''}" role="status"><i aria-hidden="true"></i><b>${w.raining ? 'Lloviendo ahora' : 'No está lloviendo'}</b><small>detección automática${w.models?.length ? ` · ${w.models.filter(m => m.ok).length} fuentes` : ''}</small></div>
     <div class="wx-stats">
       <div class="stat${w.raining ? ' rain' : ''}"><b>${dec(w.rainNow)}<small> mm/h</small></b><span>Lluvia ahora</span></div>
