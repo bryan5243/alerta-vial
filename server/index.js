@@ -105,7 +105,9 @@ async function computeStatus() {
   const riverLevel = gaugeSev.includes('EXTREME') || over >= 2 || (over >= 1 && (weather?.intensity || 0) >= 2) ? 'roja'
     : gaugeSev.includes('SEVERE') || over >= 1 ? 'naranja' : gaugeSev.includes('ABOVE_NORMAL') || high >= 1 ? 'amarilla' : 'normal';
   // El índice combinado no deja la roja con lluvia leve o sin lluvia (sería por acumulados o marea): como mucho naranja.
-  const riskLevel = risk.level === 'roja' && (weather?.intensity || 0) < 2 ? 'naranja' : risk.level;
+  // y sin lluvia medida en la ciudad, como mucho amarilla (los ríos tienen su propio nivel).
+  let riskLevel = risk.level === 'roja' && (weather?.intensity || 0) < 2 ? 'naranja' : risk.level;
+  if (!(weather?.intensity > 0) && LV[riskLevel] > 1) riskLevel = 'amarilla';
   const wl = levelWhy(weather, db.config.weather);
   const suggested = maxLevel(maxLevel(wl.level, riskLevel), riverLevel);
   // Por qué está en ese color (se muestra en el mapa)
@@ -116,7 +118,7 @@ async function computeStatus() {
   // La simulación es solo una prueba: muestra el nivel simulado pero no deja huella (ni bajada gradual ni drenaje).
   // Antes, al terminar una simulación en roja, el semáforo se quedaba en roja y bajaba de a un color cada 45 min.
   const sim = !!simOn();
-  const effective = sim ? suggested : db.alert.mode === 'manual' ? db.alert.level : stepDown(db, suggested);
+  const effective = sim ? suggested : db.alert.mode === 'manual' ? db.alert.level : stepDown(db, suggested, Date.now(), weather);
   const drain = sim ? { draining: false, until: null, reportOn: LV[effective] >= 2 } : syncAutoPoints(db, effective, Date.now(), weather);
   // Bajada gradual: desde qué hora paró la lluvia intensa y a qué hora pasa a cada color (uno cada 45 min)
   const now = Date.now(), a = db.alert;
@@ -132,11 +134,13 @@ async function computeStatus() {
 }
 // Al dejar de llover el semáforo no cae de golpe: baja un color cada cierto tiempo (por defecto 45 min),
 // porque el agua tarda en irse. Si vuelve a llover, sube de inmediato.
-function stepDown(db, suggested, now = Date.now()) {
+// Si ya no hay lluvia medida en la ciudad (intensidad 0), el semáforo sigue al momento y baja de una vez:
+// los puntos críticos siguen encendidos el tiempo de drenaje, así que no hace falta arrastrar el color.
+function stepDown(db, suggested, now = Date.now(), weather = null) {
   const a = db.alert, cur = a.autoLevel && LV[a.autoLevel] != null ? a.autoLevel : suggested;
   const hold = (+db.config.weather?.stepDownMin || 45) * 60e3;
   let next = cur;
-  if (LV[suggested] >= LV[cur]) { next = suggested; a.autoStepAt = now; }
+  if (LV[suggested] >= LV[cur] || !(weather?.intensity > 0)) { next = suggested; a.autoStepAt = now; }
   else if (now - (a.autoStepAt || 0) >= hold) { next = Object.keys(LV).find(k => LV[k] === LV[cur] - 1); a.autoStepAt = now; }
   if (next !== a.autoLevel) { a.autoLevel = next; save(); }
   return next;
