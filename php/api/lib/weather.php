@@ -816,6 +816,8 @@ function level_why(array $w, array $cfg): array {
   if (!$i) return ['level' => 'normal', 'why' => ''];
   if ($now >= $t * 3) return ['level' => 'roja', 'why' => "$it de " . mm_txt($now) . '/h'];
   if ($i >= 2 && ($p3 >= $t3 * 2 || $p6 >= $t3 * 3 || $p12 >= $t3 * 5)) { [$v, $h] = $p3 >= $t3 * 2 ? [$p3, 3] : ($p6 >= $t3 * 3 ? [$p6, 6] : [$p12, 12]); return ['level' => 'roja', 'why' => "$it con " . mm_txt($v) . " acumulados en $h h"]; }
+  // Lluvia leve medida = amarilla, aunque antes haya llovido mucho (lo que cuenta es el momento)
+  if ($i < 2) return ['level' => 'amarilla', 'why' => "$it en curso"];
   if ($now >= $t || $i >= 3) return ['level' => 'naranja', 'why' => "$it de " . mm_txt($now) . '/h'];
   if ($p3 >= $t3 || $p6 >= $t3 * 1.6 || $p12 >= $t3 * 2.7) { [$v, $h] = $p3 >= $t3 ? [$p3, 3] : ($p6 >= $t3 * 1.6 ? [$p6, 6] : [$p12, 12]); return ['level' => 'naranja', 'why' => "sigue la $it con " . mm_txt($v) . " acumulados en $h h"]; }
   if ($wet >= 3 && $p6 >= $t3 * 0.9) return ['level' => 'naranja', 'why' => "$wet h seguidas lloviendo (" . mm_txt($p6) . ' en 6 h)'];
